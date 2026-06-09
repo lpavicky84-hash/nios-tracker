@@ -1,13 +1,7 @@
 import time
 import logging
-import os
-import subprocess
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+import asyncio
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -26,176 +20,56 @@ STATUS_COLORS = {
     "unknown":                {"hex": "F5F5F5", "label": "Unknown"},
 }
 
-def get_status_color(status_text: str) -> dict:
-    if not status_text:
-        return STATUS_COLORS["unknown"]
-    s = status_text.lower()
+def get_status_label(text: str) -> str:
+    if not text:
+        return "Unknown"
+    t = text.lower()
     for key, val in STATUS_COLORS.items():
-        if key in s:
-            return val
-    return STATUS_COLORS["unknown"]
+        if key in t:
+            return val["label"]
+    return "Unknown"
 
-def find_chrome_binary():
-    """Find Chrome/Chromium binary on Railway (Nix) or local."""
-    candidates = [
-        "/run/current-system/sw/bin/chromium",
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-        "/nix/var/nix/profiles/default/bin/chromium",
-    ]
-    # Also try which
-    for name in ["chromium", "chromium-browser", "google-chrome"]:
-        try:
-            result = subprocess.run(["which", name], capture_output=True, text=True)
-            if result.returncode == 0:
-                path = result.stdout.strip()
-                if path:
-                    logger.info(f"Found Chrome via which: {path}")
-                    return path
-        except Exception:
-            pass
-
-    for path in candidates:
-        if os.path.exists(path):
-            logger.info(f"Found Chrome at: {path}")
-            return path
-
-    # Try nix-specific path
-    try:
-        result = subprocess.run(
-            ["find", "/nix", "-name", "chromium", "-type", "f"],
-            capture_output=True, text=True, timeout=10
-        )
-        lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
-        if lines:
-            logger.info(f"Found Chrome via find: {lines[0]}")
-            return lines[0]
-    except Exception:
-        pass
-
-    logger.warning("Chrome binary not found!")
-    return None
-
-def find_chromedriver():
-    """Find chromedriver binary."""
-    candidates = [
-        "/run/current-system/sw/bin/chromedriver",
-        "/usr/bin/chromedriver",
-        "/nix/var/nix/profiles/default/bin/chromedriver",
-    ]
-    for name in ["chromedriver"]:
-        try:
-            result = subprocess.run(["which", name], capture_output=True, text=True)
-            if result.returncode == 0:
-                path = result.stdout.strip()
-                if path:
-                    logger.info(f"Found chromedriver via which: {path}")
-                    return path
-        except Exception:
-            pass
-
-    for path in candidates:
-        if os.path.exists(path):
-            logger.info(f"Found chromedriver at: {path}")
-            return path
-
-    try:
-        result = subprocess.run(
-            ["find", "/nix", "-name", "chromedriver", "-type", "f"],
-            capture_output=True, text=True, timeout=10
-        )
-        lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
-        if lines:
-            logger.info(f"Found chromedriver via find: {lines[0]}")
-            return lines[0]
-    except Exception:
-        pass
-
-    return None
-
-def create_driver():
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1280,900")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
-
-    chrome_bin = find_chrome_binary()
-    if chrome_bin:
-        options.binary_location = chrome_bin
-
-    chromedriver_path = find_chromedriver()
-    if chromedriver_path:
-        service = Service(chromedriver_path)
-    else:
-        # Last resort: try default
-        service = Service()
-
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.execute_script(
-        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    )
-    return driver
-
-def fetch_status_for_reference(driver, reference_no: str) -> dict:
+def fetch_status_for_reference(page, reference_no: str) -> dict:
     result = {
         "reference_no": reference_no,
-        "status": "error",
+        "status": "Fetch Error",
         "raw_text": "",
         "success": False,
     }
     try:
-        driver.get(NIOS_URL)
-        wait = WebDriverWait(driver, 20)
+        page.goto(NIOS_URL, wait_until="networkidle", timeout=30000)
 
-        # Wait for Reference No input
-        ref_input = wait.until(EC.presence_of_element_located((
-            By.XPATH,
-            "//input[@placeholder='Reference No' or contains(@id,'reference') "
-            "or contains(@name,'reference') or contains(@placeholder,'Reference')]"
-        )))
-        ref_input.clear()
-        ref_input.send_keys(str(reference_no).strip())
+        # Fill Reference No input
+        ref_input = page.locator(
+            "input[placeholder*='Reference'], input[id*='reference'], input[name*='reference']"
+        ).first
+        ref_input.wait_for(timeout=15000)
+        ref_input.fill(str(reference_no).strip())
         time.sleep(0.5)
 
         # Click Submit
-        submit_btn = driver.find_element(
-            By.XPATH,
-            "//button[@type='submit' or contains(text(),'Submit')] | //input[@type='submit']"
-        )
-        submit_btn.click()
+        page.locator("button[type='submit'], input[type='submit']").first.click()
+
+        # Wait for result
         time.sleep(3)
 
-        # Grab result text
+        # Try to get result text
         try:
-            result_area = wait.until(EC.presence_of_element_located((
-                By.XPATH,
-                "//*[contains(@class,'status') or contains(@class,'result') "
-                "or contains(@class,'admission') or contains(@id,'result') "
-                "or contains(@id,'status') or contains(@class,'alert')]"
-            )))
-            raw_text = result_area.text.strip()
+            result_el = page.locator(
+                ".status, .result, .admission, [id*='result'], [id*='status'], .alert, .card-body"
+            ).first
+            raw_text = result_el.inner_text(timeout=5000).strip()
         except Exception:
-            raw_text = driver.find_element(By.TAG_NAME, "body").text
+            raw_text = page.locator("body").inner_text(timeout=5000)
 
-        if not raw_text or len(raw_text) < 5:
-            result["status"] = "Not Found"
-            result["raw_text"] = "No result returned"
-        else:
+        if raw_text and len(raw_text) > 5:
             result["raw_text"] = raw_text[:500]
-            color_info = get_status_color(raw_text)
-            result["status"] = color_info["label"]
+            result["status"] = get_status_label(raw_text)
             result["success"] = True
+            logger.info(f"  {reference_no} → {result['status']}")
+        else:
+            result["status"] = "Not Found"
+            result["raw_text"] = "No result text found"
 
     except Exception as e:
         logger.error(f"Error fetching {reference_no}: {e}")
@@ -206,22 +80,47 @@ def fetch_status_for_reference(driver, reference_no: str) -> dict:
 def scrape_all_students(reference_numbers: list) -> list:
     logger.info(f"Starting scrape for {len(reference_numbers)} students...")
     results = []
-    driver = None
+
     try:
-        driver = create_driver()
-        for i, ref_no in enumerate(reference_numbers):
-            logger.info(f"[{i+1}/{len(reference_numbers)}] Checking: {ref_no}")
-            res = fetch_status_for_reference(driver, ref_no)
-            results.append(res)
-            time.sleep(2)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-blink-features=AutomationControlled",
+                ]
+            )
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                )
+            )
+            page = context.new_page()
+
+            for i, ref_no in enumerate(reference_numbers):
+                logger.info(f"[{i+1}/{len(reference_numbers)}] Checking: {ref_no}")
+                res = fetch_status_for_reference(page, ref_no)
+                results.append(res)
+                time.sleep(2)  # polite delay
+
+            browser.close()
+
     except Exception as e:
-        logger.error(f"Driver-level error: {e}")
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
+        logger.error(f"Playwright error: {e}")
+        # Return error results for any remaining
+        checked = {r["reference_no"] for r in results}
+        for ref in reference_numbers:
+            if ref not in checked:
+                results.append({
+                    "reference_no": ref,
+                    "status": "Fetch Error",
+                    "raw_text": str(e)[:200],
+                    "success": False,
+                })
 
     logger.info(f"Scrape complete. {len(results)} results.")
     return results

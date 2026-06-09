@@ -31,7 +31,6 @@ bearer  = HTTPBearer()
 app = FastAPI(title="NIOS Status Tracker", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# ── HTML embedded directly ────────────────────────────────────────────────────
 PORTAL_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -487,19 +486,45 @@ PORTAL_HTML = """<!DOCTYPE html>
     <section id="page-upload" class="page-section">
       <div class="topbar"><h1>📤 Upload Excel</h1></div>
       <div class="card">
-        <div class="upload-zone" onclick="document.getElementById('excel-file').click()" id="upload-zone">
+        <!-- Drag & Drop Zone -->
+        <div class="upload-zone" id="upload-zone"
+          onclick="document.getElementById('excel-file').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--primary)';this.style.background='#F3F8FF'"
+          ondragleave="this.style.borderColor='';this.style.background=''"
+          ondrop="handleDrop(event)">
           <div class="icon">📊</div>
-          <p><strong>Click to upload</strong> your students Excel file</p>
-          <p style="font-size:12px;margin-top:6px">Supports .xlsx — must have "Reference No" column</p>
+          <p><strong>Click to upload</strong> or drag & drop your Excel file here</p>
+          <p style="font-size:12px;margin-top:6px;color:var(--muted)">Supports .xlsx — must have "Reference No" column</p>
         </div>
         <input type="file" id="excel-file" accept=".xlsx,.xls" style="display:none" onchange="uploadExcel(event)">
         <div id="upload-status" style="margin-top:16px;font-size:14px;text-align:center"></div>
+
+        <!-- Student Preview (shown after upload) -->
+        <div id="upload-preview" style="display:none;margin-top:24px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <h4 style="font-size:15px">👥 Students Detected</h4>
+            <button class="btn-sm btn-success" onclick="confirmAndRunNow()" id="confirm-run-btn">
+              ✅ Confirm & Run Now
+            </button>
+          </div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th><th>Name</th><th>Phone No</th><th>Reference No</th>
+                </tr>
+              </thead>
+              <tbody id="preview-body"></tbody>
+            </table>
+          </div>
+          <p id="preview-count" style="margin-top:10px;font-size:13px;color:var(--muted);text-align:center"></p>
+        </div>
 
         <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--border)">
           <h4 style="margin-bottom:12px;font-size:14px">📌 Required Excel Format</h4>
           <p style="font-size:13px;color:var(--muted);line-height:1.8">
             Your Excel must have at least a <strong>"Reference No"</strong> column.<br>
-            Optional columns detected automatically: <strong>Name / Student Name, Class / Class Level</strong><br>
+            Optional columns detected automatically: <strong>Name / Student Name, Phone No</strong><br>
             The tracker will add these columns automatically:<br>
             <code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">NIOS Status</code> &nbsp;
             <code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">Last Checked</code> &nbsp;
@@ -862,11 +887,24 @@ async function loadRunLogs() {
 }
 
 // ══ Upload Excel ══════════════════════════════════════════════════════════
+function handleDrop(event) {
+  event.preventDefault();
+  const zone = document.getElementById("upload-zone");
+  zone.style.borderColor = ""; zone.style.background = "";
+  const file = event.dataTransfer.files[0];
+  if (file) processExcelFile(file);
+}
+
 async function uploadExcel(event) {
   const file = event.target.files[0];
-  if (!file) return;
+  if (file) processExcelFile(file);
+}
+
+async function processExcelFile(file) {
   const statusEl = document.getElementById("upload-status");
   statusEl.textContent = "⏳ Uploading...";
+  document.getElementById("upload-preview").style.display = "none";
+
   const formData = new FormData();
   formData.append("file", file);
   try {
@@ -878,10 +916,71 @@ async function uploadExcel(event) {
     if (!r.ok) throw new Error((await r.json()).detail);
     const data = await r.json();
     statusEl.innerHTML = `<span style="color:var(--success)">✅ ${data.message}</span>`;
-    showToast("✅ Excel uploaded! Click 'Run Now' to start checking.");
+    // Show preview
+    await showUploadPreview(data);
   } catch (e) {
     statusEl.innerHTML = `<span style="color:var(--danger)">❌ ${e.message}</span>`;
   }
+}
+
+async function showUploadPreview(uploadData) {
+  try {
+    // Fetch students list to preview
+    const d = await apiFetch("/api/students?page=1&per_page=200");
+    if (!d.students || d.students.length === 0) {
+      // Students not in DB yet — show run prompt
+      document.getElementById("upload-preview").style.display = "block";
+      document.getElementById("preview-body").innerHTML =
+        `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">
+          Click "Confirm & Run Now" to fetch statuses from NIOS website
+        </td></tr>`;
+      document.getElementById("preview-count").textContent = `File uploaded. Students will be loaded after first run.`;
+      return;
+    }
+    const tbody = document.getElementById("preview-body");
+    tbody.innerHTML = d.students.map((s, i) => `
+      <tr>
+        <td style="color:var(--muted)">${i+1}</td>
+        <td>${s.student_name || "—"}</td>
+        <td>—</td>
+        <td><code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">${s.reference_no}</code></td>
+      </tr>`).join("");
+    document.getElementById("preview-count").textContent =
+      `${d.total} students loaded. Click "Confirm & Run Now" to check NIOS status.`;
+    document.getElementById("upload-preview").style.display = "block";
+  } catch(e) {
+    // After first upload DB is empty — just show confirm button
+    document.getElementById("upload-preview").style.display = "block";
+    document.getElementById("preview-body").innerHTML =
+      `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">
+        File ready. Click "Confirm & Run Now" to fetch NIOS statuses.
+      </td></tr>`;
+  }
+}
+
+async function confirmAndRunNow() {
+  const btn = document.getElementById("confirm-run-btn");
+  btn.disabled = true; btn.textContent = "⏳ Running...";
+  try {
+    const r = await apiFetch("/api/run-now", "POST");
+    showToast("🚀 " + r.message);
+    btn.textContent = "✅ Run Started!";
+    // Switch to dashboard after 2s
+    setTimeout(() => {
+      document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+      document.querySelectorAll(".nav-item")[0].classList.add("active");
+      showPage2("dashboard");
+      loadDashboard();
+    }, 2000);
+  } catch(e) {
+    showToast("❌ " + e.message);
+    btn.disabled = false; btn.textContent = "✅ Confirm & Run Now";
+  }
+}
+
+function showPage2(name) {
+  document.querySelectorAll(".page-section").forEach(s => s.classList.remove("active"));
+  document.getElementById("page-" + name).classList.add("active");
 }
 
 async function downloadExcel() {
