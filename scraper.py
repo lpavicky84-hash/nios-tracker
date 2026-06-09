@@ -40,30 +40,72 @@ SESSION_HEADERS = {
     "Referer": NIOS_URL,
 }
 
-def get_csrf_token(session: requests.Session) -> str:
-    """Load the page and extract CSRF token."""
-    try:
-        resp = session.get(NIOS_URL, headers=SESSION_HEADERS, timeout=20)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        # Try meta tag
-        meta = soup.find("meta", {"name": "_csrf"}) or soup.find("meta", {"name": "csrf-token"})
-        if meta:
-            token = meta.get("content", "")
-            logger.info(f"CSRF from meta: {token[:20]}...")
-            return token
-        # Try hidden input
+def get_csrf_and_fields(session: requests.Session):
+    """Load the page, extract CSRF token and all form fields."""
+    resp = session.get(NIOS_URL, headers=SESSION_HEADERS, timeout=20)
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Get CSRF
+    csrf = ""
+    meta = soup.find("meta", {"name": "_csrf"}) or soup.find("meta", {"name": "csrf-token"})
+    if meta:
+        csrf = meta.get("content", "")
+    else:
         inp = soup.find("input", {"name": "_csrf"}) or soup.find("input", {"name": "csrf_token"})
         if inp:
-            token = inp.get("value", "")
-            logger.info(f"CSRF from input: {token[:20]}...")
-            return token
-        logger.warning("CSRF token not found")
-        return ""
-    except Exception as e:
-        logger.error(f"Error getting CSRF: {e}")
-        return ""
+            csrf = inp.get("value", "")
 
-def fetch_status_for_reference(session: requests.Session, reference_no: str, csrf_token: str) -> dict:
+    # Get ALL form fields (to send complete form)
+    form = soup.find("form")
+    form_fields = {}
+    if form:
+        for inp in form.find_all("input"):
+            name = inp.get("name", "")
+            val  = inp.get("value", "")
+            if name:
+                form_fields[name] = val
+
+    logger.info(f"CSRF: {csrf[:20]}... | Form fields: {list(form_fields.keys())}")
+    return csrf, form_fields, resp.cookies
+
+def debug_fetch_one(reference_no: str) -> str:
+    """Debug: fetch one reference and return raw HTML snippet."""
+    session = requests.Session()
+    csrf, form_fields, cookies = get_csrf_and_fields(session)
+
+    # Try different field name combinations
+    payloads_to_try = [
+        {"_csrf": csrf, "referenceNo": reference_no},
+        {"_csrf": csrf, "reference_no": reference_no},
+        {"_csrf": csrf, "refNo": reference_no},
+        {"_csrf": csrf, "enrollmentNo": "", "email": "", "referenceNo": reference_no},
+    ]
+
+    results = []
+    for payload in payloads_to_try:
+        try:
+            resp = session.post(
+                NIOS_URL,
+                data=payload,
+                headers={**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+                timeout=20
+            )
+            soup = BeautifulSoup(resp.text, "html.parser")
+            # Remove scripts/styles
+            for tag in soup(["script", "style", "nav", "header", "footer"]):
+                tag.decompose()
+            text = soup.get_text(separator="\n", strip=True)
+            # Get first 1000 chars of meaningful text
+            lines = [l.strip() for l in text.split("\n") if l.strip() and len(l.strip()) > 3]
+            snippet = "\n".join(lines[:30])
+            results.append(f"PAYLOAD {list(payload.keys())}: {snippet[:500]}")
+        except Exception as e:
+            results.append(f"PAYLOAD ERROR: {e}")
+
+    return "\n\n---\n\n".join(results)
+
+def fetch_status_for_reference(session: requests.Session, reference_no: str, 
+                                csrf: str, form_fields: dict) -> dict:
     result = {
         "reference_no": reference_no,
         "status": "Fetch Error",
@@ -71,42 +113,64 @@ def fetch_status_for_reference(session: requests.Session, reference_no: str, csr
         "success": False,
     }
     try:
-        payload = {
-            "_csrf": csrf_token,
-            "referenceNo": str(reference_no).strip(),
-        }
-        headers = {**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
-        resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=20)
+        # Build payload with all original form fields + our reference
+        payload = dict(form_fields)
+        payload["_csrf"] = csrf
+        # Try to find the right field name for reference number
+        payload["referenceNo"] = reference_no
+        # Clear other search fields
+        for key in ["email", "Email", "enrollmentNo", "EnrollmentNo"]:
+            if key in payload:
+                payload[key] = ""
+
+        resp = session.post(
+            NIOS_URL,
+            data=payload,
+            headers={**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+            timeout=20
+        )
+
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Try to find status in response
+        # Remove noise
+        for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
+            tag.decompose()
+
+        # Try specific result containers first
         status_text = ""
-        for selector in [
-            ".alert", ".status", ".result", ".admission-status",
-            "[class*='status']", "[class*='result']", "[class*='alert']",
-            "table", ".card-body", ".panel-body"
-        ]:
-            el = soup.select_one(selector)
-            if el:
+        selectors = [
+            ".alert-success", ".alert-danger", ".alert-warning", ".alert-info",
+            ".alert", "#result", "#status", ".status-result",
+            "table tbody tr", ".admission-status", ".card .card-body",
+            "[class*='admission']", "[class*='status']", "[id*='result']",
+            "h3", "h4", ".well", ".panel-body"
+        ]
+        for sel in selectors:
+            els = soup.select(sel)
+            for el in els:
                 txt = el.get_text(strip=True)
-                if txt and len(txt) > 5:
+                if txt and len(txt) > 8 and any(
+                    kw in txt.lower() for kw in [
+                        "pending", "verified", "rejected", "admitted", "confirmed",
+                        "approved", "verification", "status", "admission", "document"
+                    ]
+                ):
                     status_text = txt
+                    logger.info(f"  Found via selector '{sel}': {txt[:100]}")
                     break
+            if status_text:
+                break
 
+        # Fallback: all page text
         if not status_text:
-            # Fallback: get all visible text
-            for tag in soup(["script", "style", "nav", "header", "footer"]):
-                tag.decompose()
-            status_text = soup.get_text(separator=" ", strip=True)
+            all_text = soup.get_text(separator=" ", strip=True)
+            status_text = all_text[:800]
+            logger.info(f"  Fallback text for {reference_no}: {all_text[:200]}")
 
-        if status_text and len(status_text) > 5:
-            result["raw_text"] = status_text[:500]
-            result["status"] = get_status_label(status_text)
-            result["success"] = True
-            logger.info(f"  {reference_no} → {result['status']}")
-        else:
-            result["status"] = "Not Found"
-            result["raw_text"] = "Empty response"
+        result["raw_text"] = status_text[:500]
+        result["status"] = get_status_label(status_text)
+        result["success"] = True
+        logger.info(f"  {reference_no} → {result['status']} | text: {status_text[:80]}")
 
     except Exception as e:
         logger.error(f"Error fetching {reference_no}: {e}")
@@ -120,17 +184,15 @@ def scrape_all_students(reference_numbers: list) -> list:
 
     try:
         session = requests.Session()
-        # Get fresh CSRF token
-        csrf_token = get_csrf_token(session)
+        csrf, form_fields, _ = get_csrf_and_fields(session)
 
         for i, ref_no in enumerate(reference_numbers):
             logger.info(f"[{i+1}/{len(reference_numbers)}] Checking: {ref_no}")
-            # Refresh CSRF every 10 requests
             if i > 0 and i % 10 == 0:
-                csrf_token = get_csrf_token(session)
-            res = fetch_status_for_reference(session, ref_no, csrf_token)
+                csrf, form_fields, _ = get_csrf_and_fields(session)
+            res = fetch_status_for_reference(session, ref_no, csrf, form_fields)
             results.append(res)
-            time.sleep(1.5)  # polite delay
+            time.sleep(1.5)
 
     except Exception as e:
         logger.error(f"Session error: {e}")
@@ -138,10 +200,8 @@ def scrape_all_students(reference_numbers: list) -> list:
         for ref in reference_numbers:
             if ref not in checked:
                 results.append({
-                    "reference_no": ref,
-                    "status": "Fetch Error",
-                    "raw_text": str(e)[:200],
-                    "success": False,
+                    "reference_no": ref, "status": "Fetch Error",
+                    "raw_text": str(e)[:200], "success": False,
                 })
 
     logger.info(f"Scrape complete. {len(results)} results.")
