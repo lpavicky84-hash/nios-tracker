@@ -13,6 +13,7 @@ STATUS_FILL_MAP = {
     "Documents Verification In Progress":   "FFE0B2",   # Light Orange
     "Verified":                             "C8E6C9",   # Light Green
     "Approved":                             "B2DFDB",   # Teal Light
+    "Admission Confirmed":                  "69F0AE",   # Bright Green ✅
     "Admitted":                             "BBDEFB",   # Light Blue
     "Rejected":                             "FFCDD2",   # Light Red/Pink
     "Fetch Error":                          "E0E0E0",   # Grey

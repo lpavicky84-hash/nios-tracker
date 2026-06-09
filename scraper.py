@@ -18,6 +18,7 @@ STATUS_COLORS = {
     "documents verification":      {"hex": "FFE0B2", "label": "Documents Verification In Progress"},
     "verified":                     {"hex": "C8E6C9", "label": "Verified"},
     "approved":                     {"hex": "B2DFDB", "label": "Approved"},
+    "admission confirmed":          {"hex": "69F0AE", "label": "Admission Confirmed"},
     "admitted":                     {"hex": "BBDEFB", "label": "Admitted"},
     "rejected":                     {"hex": "FFCDD2", "label": "Rejected"},
     "error":                        {"hex": "E0E0E0", "label": "Fetch Error"},
