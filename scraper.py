@@ -1,7 +1,7 @@
 import time
 import logging
-import asyncio
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+import requests
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,41 @@ def get_status_label(text: str) -> str:
             return val["label"]
     return "Unknown"
 
-def fetch_status_for_reference(page, reference_no: str) -> dict:
+SESSION_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Referer": NIOS_URL,
+}
+
+def get_csrf_token(session: requests.Session) -> str:
+    """Load the page and extract CSRF token."""
+    try:
+        resp = session.get(NIOS_URL, headers=SESSION_HEADERS, timeout=20)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        # Try meta tag
+        meta = soup.find("meta", {"name": "_csrf"}) or soup.find("meta", {"name": "csrf-token"})
+        if meta:
+            token = meta.get("content", "")
+            logger.info(f"CSRF from meta: {token[:20]}...")
+            return token
+        # Try hidden input
+        inp = soup.find("input", {"name": "_csrf"}) or soup.find("input", {"name": "csrf_token"})
+        if inp:
+            token = inp.get("value", "")
+            logger.info(f"CSRF from input: {token[:20]}...")
+            return token
+        logger.warning("CSRF token not found")
+        return ""
+    except Exception as e:
+        logger.error(f"Error getting CSRF: {e}")
+        return ""
+
+def fetch_status_for_reference(session: requests.Session, reference_no: str, csrf_token: str) -> dict:
     result = {
         "reference_no": reference_no,
         "status": "Fetch Error",
@@ -37,43 +71,46 @@ def fetch_status_for_reference(page, reference_no: str) -> dict:
         "success": False,
     }
     try:
-        page.goto(NIOS_URL, wait_until="networkidle", timeout=30000)
+        payload = {
+            "_csrf": csrf_token,
+            "referenceNo": str(reference_no).strip(),
+        }
+        headers = {**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
+        resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=20)
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Fill Reference No input
-        ref_input = page.locator(
-            "input[placeholder*='Reference'], input[id*='reference'], input[name*='reference']"
-        ).first
-        ref_input.wait_for(timeout=15000)
-        ref_input.fill(str(reference_no).strip())
-        time.sleep(0.5)
+        # Try to find status in response
+        status_text = ""
+        for selector in [
+            ".alert", ".status", ".result", ".admission-status",
+            "[class*='status']", "[class*='result']", "[class*='alert']",
+            "table", ".card-body", ".panel-body"
+        ]:
+            el = soup.select_one(selector)
+            if el:
+                txt = el.get_text(strip=True)
+                if txt and len(txt) > 5:
+                    status_text = txt
+                    break
 
-        # Click Submit
-        page.locator("button[type='submit'], input[type='submit']").first.click()
+        if not status_text:
+            # Fallback: get all visible text
+            for tag in soup(["script", "style", "nav", "header", "footer"]):
+                tag.decompose()
+            status_text = soup.get_text(separator=" ", strip=True)
 
-        # Wait for result
-        time.sleep(3)
-
-        # Try to get result text
-        try:
-            result_el = page.locator(
-                ".status, .result, .admission, [id*='result'], [id*='status'], .alert, .card-body"
-            ).first
-            raw_text = result_el.inner_text(timeout=5000).strip()
-        except Exception:
-            raw_text = page.locator("body").inner_text(timeout=5000)
-
-        if raw_text and len(raw_text) > 5:
-            result["raw_text"] = raw_text[:500]
-            result["status"] = get_status_label(raw_text)
+        if status_text and len(status_text) > 5:
+            result["raw_text"] = status_text[:500]
+            result["status"] = get_status_label(status_text)
             result["success"] = True
             logger.info(f"  {reference_no} → {result['status']}")
         else:
             result["status"] = "Not Found"
-            result["raw_text"] = "No result text found"
+            result["raw_text"] = "Empty response"
 
     except Exception as e:
         logger.error(f"Error fetching {reference_no}: {e}")
-        result["raw_text"] = str(e)[:300]
+        result["raw_text"] = str(e)[:200]
 
     return result
 
@@ -82,36 +119,21 @@ def scrape_all_students(reference_numbers: list) -> list:
     results = []
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-blink-features=AutomationControlled",
-                ]
-            )
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                )
-            )
-            page = context.new_page()
+        session = requests.Session()
+        # Get fresh CSRF token
+        csrf_token = get_csrf_token(session)
 
-            for i, ref_no in enumerate(reference_numbers):
-                logger.info(f"[{i+1}/{len(reference_numbers)}] Checking: {ref_no}")
-                res = fetch_status_for_reference(page, ref_no)
-                results.append(res)
-                time.sleep(2)  # polite delay
-
-            browser.close()
+        for i, ref_no in enumerate(reference_numbers):
+            logger.info(f"[{i+1}/{len(reference_numbers)}] Checking: {ref_no}")
+            # Refresh CSRF every 10 requests
+            if i > 0 and i % 10 == 0:
+                csrf_token = get_csrf_token(session)
+            res = fetch_status_for_reference(session, ref_no, csrf_token)
+            results.append(res)
+            time.sleep(1.5)  # polite delay
 
     except Exception as e:
-        logger.error(f"Playwright error: {e}")
-        # Return error results for any remaining
+        logger.error(f"Session error: {e}")
         checked = {r["reference_no"] for r in results}
         for ref in reference_numbers:
             if ref not in checked:
