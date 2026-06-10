@@ -97,16 +97,32 @@ def _extract_fields(soup):
         if low in ("admission status", "reference no", "reference number",
                    "enrollment no", "name of candidate", "academic year") and i + 1 < len(lines):
             data[low] = lines[i + 1].strip()
-    # capture any remark/notification/comment text
-    remark = ""
-    for i, line in enumerate(lines):
-        if any(k in line.lower() for k in ["remark", "comment", "notification", "reason", "required"]):
-            if i + 1 < len(lines):
-                remark = lines[i + 1].strip()
-            else:
-                remark = line.strip()
-            break
+    remark = _extract_remark(lines)
     return data, lines, remark
+
+def _extract_remark(lines):
+    """Find the actual RC Comment (the long instruction sentence)."""
+    # Locate RC Comments section
+    start = -1
+    for i, l in enumerate(lines):
+        ll = l.lower()
+        if "rc comment" in ll or ll == "comment":
+            start = i
+            break
+    search = lines[start + 1:] if start >= 0 else lines
+    # The real comment is the longest sentence-like line
+    skip = {"date", "comment", "basic details", "admission details", "#"}
+    best = ""
+    for l in search:
+        if l.lower() in skip:
+            continue
+        if len(l) > 25 and " " in l and any(c.isalpha() for c in l):
+            # Stop at "Basic Details" section (after comments)
+            if l.lower() == "basic details":
+                break
+            if len(l) > len(best):
+                best = l
+    return best[:400]
 
 def fetch_status(session, ref_no, email, csrf, token):
     """Check by reference if available else by email. Returns result dict."""
@@ -148,7 +164,7 @@ def fetch_status(session, ref_no, email, csrf, token):
 
         result["status"] = label
         result["raw_text"] = status_text[:300]
-        result["remark"] = remark[:300] if label == "Document Required" else ""
+        result["remark"] = remark[:400] if remark else ""
         result["success"] = (label != "Unknown")
         logger.info(f"  {ref_no or email} -> {label}" + (f" | remark: {remark[:50]}" if remark else ""))
 

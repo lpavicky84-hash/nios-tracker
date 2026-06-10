@@ -2,7 +2,7 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import logging
-from datetime import datetime
+from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,15 @@ def read_students_from_excel(filepath):
     def cell(row, col):
         return str(ws.cell(row, col).value or "").strip() if col else ""
 
+    def session_cell(row, col):
+        """Format session: dates become 'Month YYYY', text stays as-is."""
+        if not col:
+            return ""
+        v = ws.cell(row, col).value
+        if isinstance(v, (datetime, date)):
+            return v.strftime("%B %Y")   # e.g. April 2027
+        return str(v or "").strip()
+
     students = []
     for row in range(2, ws.max_row + 1):
         ref   = cell(row, ref_col)
@@ -76,8 +85,7 @@ def read_students_from_excel(filepath):
             "student_name": cell(row, name_col),
             "mobile":       cell(row, mobile_col),
             "class_level":  cell(row, class_col),
-            "session":      cell(row, session_col),
-            # row_key uniquely identifies a row even if no reference yet
+            "session":      session_cell(row, session_col),
             "row_key":      ref if ref else f"email:{email}",
         })
     wb.close()

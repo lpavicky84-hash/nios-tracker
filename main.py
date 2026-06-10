@@ -38,1028 +38,668 @@ PORTAL_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NIOS Status Tracker — MVS Foundation</title>
 <style>
-  :root {
-    --primary: #1565C0;
-    --primary-light: #1976D2;
-    --accent: #FF6F00;
-    --bg: #F0F4F8;
-    --card: #FFFFFF;
-    --text: #212121;
-    --muted: #757575;
-    --border: #E0E0E0;
-    --success: #2E7D32;
-    --warning: #F57F17;
-    --danger: #C62828;
-    --radius: 12px;
-    --shadow: 0 2px 12px rgba(0,0,0,0.08);
+  :root{
+    --primary:#4F46E5; --primary-dark:#4338CA; --primary-light:#EEF2FF;
+    --sidebar:#1E293B; --sidebar-hover:#334155;
+    --bg:#F1F5F9; --card:#FFFFFF; --border:#E2E8F0; --text:#0F172A;
+    --muted:#64748B; --success:#16A34A; --danger:#DC2626; --warn:#EA580C;
+    --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+    --shadow-lg:0 10px 25px rgba(0,0,0,.08);
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+  a{text-decoration:none}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px}
 
-  /* ── Login ── */
-  #login-page {
-    min-height: 100vh; display: flex; align-items: center;
-    justify-content: center; background: linear-gradient(135deg, #1565C0 0%, #0D47A1 100%);
-  }
-  .login-card {
-    background: white; border-radius: 20px; padding: 48px 40px;
-    width: 100%; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-    text-align: center;
-  }
-  .login-card .logo { font-size: 48px; margin-bottom: 8px; }
-  .login-card h1 { font-size: 22px; color: var(--primary); margin-bottom: 4px; }
-  .login-card p  { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
-  .form-group { margin-bottom: 16px; text-align: left; }
-  .form-group label { display: block; font-size: 12px; font-weight: 600;
-    color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
-  .form-group input {
-    width: 100%; padding: 12px 16px; border: 2px solid var(--border);
-    border-radius: 8px; font-size: 15px; transition: border-color .2s;
-  }
-  .form-group input:focus { outline: none; border-color: var(--primary); }
-  .btn-primary {
-    width: 100%; padding: 14px; background: var(--primary); color: white;
-    border: none; border-radius: 8px; font-size: 15px; font-weight: 600;
-    cursor: pointer; transition: background .2s; margin-top: 8px;
-  }
-  .btn-primary:hover { background: var(--primary-light); }
-  .btn-primary:disabled { background: #BDBDBD; cursor: not-allowed; }
-  .error-msg { color: var(--danger); font-size: 13px; margin-top: 12px; }
+  #login-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);z-index:1000}
+  .login-card{background:#fff;border-radius:18px;padding:42px;width:380px;
+    box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .login-card .logo{width:60px;height:60px;background:linear-gradient(135deg,#4F46E5,#7C3AED);
+    border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 18px}
+  .login-card h2{text-align:center;font-size:21px;margin-bottom:4px}
+  .login-card p.sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:26px}
+  .login-card label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:#334155}
+  .login-card input{width:100%;padding:12px 14px;border:2px solid var(--border);
+    border-radius:10px;font-size:14px;margin-bottom:16px;transition:.2s}
+  .login-card input:focus{outline:none;border-color:var(--primary)}
+  .login-card button{width:100%;padding:13px;background:var(--primary);color:#fff;border:none;
+    border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:.2s}
+  .login-card button:hover{background:var(--primary-dark)}
+  #login-error{color:var(--danger);font-size:13px;text-align:center;margin-top:12px;min-height:18px}
 
-  /* ── App Shell ── */
-  #app { display: none; min-height: 100vh; }
+  #app{display:none;min-height:100vh}
+  .sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;background:var(--sidebar);
+    padding:20px 0;display:flex;flex-direction:column;z-index:100}
+  .sidebar .brand{padding:0 22px 22px;display:flex;align-items:center;gap:10px;
+    border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:14px}
+  .sidebar .brand .ic{width:38px;height:38px;background:linear-gradient(135deg,#4F46E5,#7C3AED);
+    border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px}
+  .sidebar .brand .tx b{color:#fff;font-size:15px;display:block}
+  .sidebar .brand .tx span{color:#94A3B8;font-size:11px}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:12px 22px;color:#CBD5E1;
+    cursor:pointer;font-size:14px;font-weight:500;transition:.15s;border-left:3px solid transparent}
+  .nav-item:hover{background:var(--sidebar-hover);color:#fff}
+  .nav-item.active{background:var(--sidebar-hover);color:#fff;border-left-color:#818CF8}
+  .nav-item .ic{font-size:17px;width:20px;text-align:center}
+  .nav-item .badge-count{margin-left:auto;background:var(--danger);color:#fff;
+    font-size:11px;padding:1px 7px;border-radius:10px;font-weight:700;display:none}
+  .nav-sep{padding:14px 22px 6px;color:#64748B;font-size:11px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.5px}
 
-  /* Sidebar */
-  .sidebar {
-    position: fixed; left: 0; top: 0; bottom: 0; width: 240px;
-    background: var(--primary); color: white; display: flex;
-    flex-direction: column; z-index: 100; box-shadow: 2px 0 12px rgba(0,0,0,0.15);
-  }
-  .sidebar-header {
-    padding: 24px 20px; border-bottom: 1px solid rgba(255,255,255,0.15);
-  }
-  .sidebar-header h2 { font-size: 17px; font-weight: 700; }
-  .sidebar-header p  { font-size: 12px; opacity: .7; margin-top: 3px; }
-  .nav-menu { flex: 1; padding: 16px 0; }
-  .nav-item {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 20px; cursor: pointer; font-size: 14px;
-    transition: background .15s; border-left: 3px solid transparent;
-  }
-  .nav-item:hover  { background: rgba(255,255,255,0.1); }
-  .nav-item.active { background: rgba(255,255,255,0.15); border-left-color: #FFD54F; font-weight: 600; }
-  .nav-item .icon  { font-size: 18px; width: 22px; text-align: center; }
-  .sidebar-footer { padding: 16px 20px; border-top: 1px solid rgba(255,255,255,0.15); }
-  .sidebar-footer small { font-size: 11px; opacity: .6; }
+  .main{margin-left:240px;min-height:100vh}
+  .topbar{background:#fff;border-bottom:1px solid var(--border);padding:0 28px;height:64px;
+    display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
+  .topbar h1{font-size:19px;font-weight:700}
+  .topbar .right{display:flex;align-items:center;gap:16px}
 
-  /* Main content */
-  .main { margin-left: 240px; padding: 28px 32px; min-height: 100vh; }
+  .bell-wrap{position:relative;cursor:pointer}
+  .bell-btn{width:42px;height:42px;border-radius:10px;background:var(--bg);display:flex;
+    align-items:center;justify-content:center;font-size:19px;transition:.15s;border:1px solid var(--border)}
+  .bell-btn:hover{background:var(--primary-light)}
+  .bell-badge{position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;
+    font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;
+    display:none;align-items:center;justify-content:center;padding:0 4px;border:2px solid #fff}
+  .bell-dropdown{position:absolute;right:0;top:52px;width:360px;max-height:440px;overflow-y:auto;
+    background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);
+    display:none;z-index:200}
+  .bell-dropdown.open{display:block}
+  .bell-head{padding:14px 18px;border-bottom:1px solid var(--border);font-weight:700;
+    font-size:14px;display:flex;align-items:center;justify-content:space-between}
+  .bell-head .cnt{background:var(--warn);color:#fff;font-size:11px;padding:2px 9px;border-radius:10px}
+  .notif-item{padding:13px 18px;border-bottom:1px solid #F1F5F9;display:flex;gap:11px}
+  .notif-item:last-child{border-bottom:none}
+  .notif-item .dot{width:9px;height:9px;border-radius:50%;background:var(--warn);margin-top:5px;flex-shrink:0}
+  .notif-item .nm{font-weight:600;font-size:13px}
+  .notif-item .rf{font-size:12px;color:var(--primary);font-family:monospace}
+  .notif-item .rk{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4}
+  .notif-empty{padding:34px 18px;text-align:center;color:var(--muted);font-size:13px}
 
-  /* Top bar */
-  .topbar {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 28px;
-  }
-  .topbar h1 { font-size: 22px; font-weight: 700; color: var(--primary); }
-  .topbar-right { display: flex; align-items: center; gap: 12px; }
-  .btn-sm {
-    padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
-    cursor: pointer; border: none; transition: .2s;
-  }
-  .btn-outline {
-    background: white; border: 2px solid var(--primary); color: var(--primary);
-  }
-  .btn-outline:hover { background: var(--primary); color: white; }
-  .btn-danger-sm { background: var(--danger); color: white; }
-  .btn-danger-sm:hover { opacity: .85; }
-  .btn-success { background: var(--success); color: white; }
-  .btn-success:hover { opacity: .85; }
+  .content{padding:28px}
+  .page-section{display:none}
+  .page-section.active{display:block}
 
-  /* Stat cards */
-  .stats-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 16px; margin-bottom: 28px;
-  }
-  .stat-card {
-    background: white; border-radius: var(--radius); padding: 20px;
-    box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px;
-  }
-  .stat-card .label { font-size: 12px; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: .5px; }
-  .stat-card .value { font-size: 32px; font-weight: 700; color: var(--primary); line-height: 1; }
-  .stat-card .sub   { font-size: 12px; color: var(--muted); }
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    padding:22px;box-shadow:var(--shadow);margin-bottom:20px}
+  .card h3{font-size:15px;margin-bottom:16px;font-weight:700}
 
-  /* Cards */
-  .card {
-    background: white; border-radius: var(--radius);
-    padding: 24px; box-shadow: var(--shadow); margin-bottom: 24px;
-  }
-  .card-header {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 18px;
-  }
-  .card-header h3 { font-size: 15px; font-weight: 700; color: var(--text); }
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px;margin-bottom:22px}
+  .stat{background:#fff;border:1px solid var(--border);border-radius:14px;padding:20px;
+    box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .stat .ic{position:absolute;right:16px;top:16px;font-size:26px;opacity:.85}
+  .stat .lbl{font-size:13px;color:var(--muted);font-weight:600;margin-bottom:8px}
+  .stat .val{font-size:30px;font-weight:800;line-height:1}
+  .stat .bar{position:absolute;left:0;bottom:0;height:4px;width:100%}
 
-  /* Run log table */
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th {
-    background: #F5F7FA; padding: 10px 14px; text-align: left;
-    font-size: 11px; font-weight: 700; color: var(--muted);
-    text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border);
-  }
-  td { padding: 10px 14px; border-bottom: 1px solid var(--border); }
-  tr:hover td { background: #FAFAFA; }
-  tr:last-child td { border-bottom: none; }
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:10px;
+    font-size:14px;font-weight:600;cursor:pointer;border:none;transition:.15s}
+  .btn-primary{background:var(--primary);color:#fff}
+  .btn-primary:hover{background:var(--primary-dark);transform:translateY(-1px);box-shadow:0 4px 12px rgba(79,70,229,.3)}
+  .btn-outline{background:#fff;color:var(--primary);border:2px solid var(--primary)}
+  .btn-outline:hover{background:var(--primary-light)}
+  .btn-success{background:var(--success);color:#fff}
+  .btn-success:hover{filter:brightness(1.08)}
+  .btn-sm{padding:8px 15px;font-size:13px;border-radius:8px}
 
-  /* Status badges */
-  .badge {
-    display: inline-block; padding: 3px 10px; border-radius: 20px;
-    font-size: 11px; font-weight: 600; white-space: nowrap;
-  }
-  .badge-pending       { background: #FFF9C4; color: #F57F17; }
-  .badge-docs          { background: #FFE0B2; color: #E65100; }
-  .badge-verified      { background: #C8E6C9; color: #2E7D32; }
-  .badge-approved      { background: #B2DFDB; color: #00695C; }
-  .badge-confirmed     { background: #69F0AE; color: #1B5E20; }
-  .badge-admitted      { background: #BBDEFB; color: #1565C0; }
-  .badge-rejected      { background: #FFCDD2; color: #C62828; }
-  .badge-error         { background: #F5F5F5; color: #616161; }
-  .badge-running       { background: #E3F2FD; color: #1565C0; }
-  .badge-completed     { background: #E8F5E9; color: #2E7D32; }
+  .filter-bar{display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+  .filter-bar input,.filter-bar select{padding:11px 14px;border:2px solid var(--border);
+    border-radius:10px;font-size:14px;transition:.15s;background:#fff}
+  .filter-bar input{flex:1;min-width:200px}
+  .filter-bar input:focus,.filter-bar select:focus{outline:none;border-color:var(--primary)}
+  table{width:100%;border-collapse:collapse}
+  thead th{text-align:left;padding:13px 14px;font-size:12px;font-weight:700;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.4px;background:#F8FAFC;border-bottom:2px solid var(--border)}
+  tbody td{padding:14px;border-bottom:1px solid #F1F5F9;font-size:14px;vertical-align:top}
+  tbody tr:hover{background:#FAFBFF}
+  .ref-tag{background:#F1F5F9;padding:3px 8px;border-radius:6px;font-family:monospace;font-size:13px}
 
-  /* Run log status */
-  .run-status { display: inline-block; padding: 3px 8px; border-radius: 6px;
-    font-size: 11px; font-weight: 600; }
-  .run-completed { background: #E8F5E9; color: #2E7D32; }
-  .run-running   { background: #E3F2FD; color: #1565C0; }
-  .run-error     { background: #FFEBEE; color: #C62828; }
+  .badge{display:inline-block;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;white-space:nowrap}
+  .b-pending{background:#FEF9C3;color:#854D0E}
+  .b-docs{background:#FFEDD5;color:#9A3412}
+  .b-required{background:#FED7AA;color:#9A3412}
+  .b-verified{background:#DCFCE7;color:#166534}
+  .b-approved{background:#CCFBF1;color:#115E59}
+  .b-confirmed{background:#86EFAC;color:#14532D}
+  .b-rejected{background:#FECACA;color:#991B1B}
+  .b-error{background:#E2E8F0;color:#475569}
 
-  /* Search / filter bar */
-  .filter-bar {
-    display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
-  }
-  .filter-bar input, .filter-bar select {
-    padding: 8px 14px; border: 2px solid var(--border); border-radius: 8px;
-    font-size: 13px; flex: 1; min-width: 160px;
-  }
-  .filter-bar input:focus, .filter-bar select:focus {
-    outline: none; border-color: var(--primary);
-  }
+  .pg-bar{display:flex;align-items:center;justify-content:space-between;margin-top:18px;flex-wrap:wrap;gap:12px}
+  .pg-controls{display:flex;gap:6px;align-items:center}
+  .pg-controls button{padding:8px 13px;border:1px solid var(--border);background:#fff;
+    border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;transition:.15s}
+  .pg-controls button:hover:not(:disabled){background:var(--primary-light);border-color:var(--primary)}
+  .pg-controls button.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .pg-controls button:disabled{opacity:.4;cursor:not-allowed}
+  .perpage{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+  .perpage select{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px}
 
-  /* Pagination */
-  .pagination {
-    display: flex; gap: 6px; align-items: center;
-    justify-content: center; margin-top: 16px;
-  }
-  .page-btn {
-    padding: 6px 12px; border-radius: 6px; border: 2px solid var(--border);
-    cursor: pointer; font-size: 13px; background: white;
-    transition: .15s;
-  }
-  .page-btn:hover   { border-color: var(--primary); color: var(--primary); }
-  .page-btn.active  { background: var(--primary); color: white; border-color: var(--primary); }
-  .page-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .drop{border:2.5px dashed var(--border);border-radius:14px;padding:48px;text-align:center;
+    transition:.2s;cursor:pointer;background:#FAFBFF}
+  .drop:hover,.drop.drag{border-color:var(--primary);background:var(--primary-light)}
+  .drop .ic{font-size:42px;margin-bottom:12px}
 
-  /* Upload zone */
-  .upload-zone {
-    border: 2px dashed var(--border); border-radius: var(--radius);
-    padding: 32px; text-align: center; cursor: pointer;
-    transition: border-color .2s, background .2s;
-  }
-  .upload-zone:hover { border-color: var(--primary); background: #F3F8FF; }
-  .upload-zone .icon { font-size: 40px; margin-bottom: 8px; }
-  .upload-zone p { color: var(--muted); font-size: 14px; }
+  .legend-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  .legend-item{padding:14px 16px;border-radius:11px}
+  .legend-item .nm{font-weight:700;font-size:13px}
+  .legend-item .ds{font-size:11px;opacity:.75;font-weight:500}
 
-  /* Status dot on live indicator */
-  .live-dot {
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    background: #4CAF50; margin-right: 6px;
-    animation: pulse 2s infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: .3; }
-  }
+  .dist-row{display:flex;align-items:center;gap:12px;margin-bottom:11px}
+  .dist-row .nm{width:230px;font-size:13px;font-weight:600;flex-shrink:0}
+  .dist-row .track{flex:1;height:22px;background:#F1F5F9;border-radius:11px;overflow:hidden}
+  .dist-row .fill{height:100%;border-radius:11px;transition:width .5s}
+  .dist-row .ct{width:40px;text-align:right;font-weight:700;font-size:13px}
 
-  /* Charts / distribution bar */
-  .dist-bar {
-    display: flex; height: 20px; border-radius: 10px; overflow: hidden;
-    margin: 12px 0 6px;
-  }
-  .dist-segment { height: 100%; transition: width .4s; }
-  .dist-legend  { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
-  .dist-item    { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-  .dist-dot     { width: 10px; height: 10px; border-radius: 3px; }
+  .empty{text-align:center;color:var(--muted);padding:40px;font-size:14px}
 
-  /* Toast */
-  .toast {
-    position: fixed; bottom: 24px; right: 24px;
-    background: #212121; color: white; padding: 12px 20px;
-    border-radius: 10px; font-size: 13px; font-weight: 500;
-    z-index: 9999; transform: translateY(80px); opacity: 0;
-    transition: .3s; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  }
-  .toast.show { transform: translateY(0); opacity: 1; }
+  #toast{position:fixed;bottom:28px;right:28px;background:var(--text);color:#fff;padding:14px 22px;
+    border-radius:11px;font-size:14px;box-shadow:var(--shadow-lg);opacity:0;transform:translateY(20px);
+    transition:.3s;z-index:2000;max-width:360px}
+  #toast.show{opacity:1;transform:translateY(0)}
 
-  /* Page sections */
-  .page-section { display: none; }
-  .page-section.active { display: block; }
-
-  /* Next run countdown */
-  #countdown { font-size: 13px; color: var(--muted); }
-
-  /* Responsive tweaks */
-  @media (max-width: 768px) {
-    .sidebar { width: 200px; }
-    .main    { margin-left: 200px; padding: 16px; }
+  @media(max-width:820px){
+    .sidebar{width:64px}.sidebar .brand .tx,.nav-item span.lbl,.nav-sep{display:none}
+    .nav-item{justify-content:center;padding:14px}.main{margin-left:64px}
+    .bell-dropdown{width:300px}
   }
 </style>
 </head>
 <body>
 
-<!-- ══════════════════ LOGIN PAGE ══════════════════ -->
-<div id="login-page">
+<div id="login-screen">
   <div class="login-card">
-    <div class="logo">🏫</div>
-    <h1>MVS Foundation</h1>
-    <p>NIOS Status Tracker — Admin Portal</p>
-    <div class="form-group">
-      <label>Username</label>
-      <input type="text" id="login-user" placeholder="Enter username" autocomplete="username">
-    </div>
-    <div class="form-group">
-      <label>Password</label>
-      <input type="password" id="login-pass" placeholder="Enter password" autocomplete="current-password">
-    </div>
-    <button class="btn-primary" id="login-btn" onclick="doLogin()">Login</button>
-    <div class="error-msg" id="login-err"></div>
+    <div class="logo">🎓</div>
+    <h2>NIOS Status Tracker</h2>
+    <p class="sub">MVS Foundation — Admin Portal</p>
+    <label>Username</label>
+    <input type="text" id="lg-user" placeholder="admin" autocomplete="username">
+    <label>Password</label>
+    <input type="password" id="lg-pass" placeholder="enter password" autocomplete="current-password"
+      onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()">Sign In</button>
+    <div id="login-error"></div>
   </div>
 </div>
 
-<!-- ══════════════════ MAIN APP ══════════════════ -->
 <div id="app">
-
-  <!-- Sidebar -->
-  <nav class="sidebar">
-    <div class="sidebar-header">
-      <h2>🏫 NIOS Tracker</h2>
-      <p>MVS Foundation</p>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="ic">🎓</div>
+      <div class="tx"><b>NIOS Tracker</b><span>MVS Foundation</span></div>
     </div>
-    <div class="nav-menu">
-      <div class="nav-item active" onclick="showPage('dashboard')">
-        <span class="icon">📊</span> Dashboard
-      </div>
-      <div class="nav-item" onclick="showPage('students')">
-        <span class="icon">👥</span> Students
-      </div>
-      <div class="nav-item" onclick="showPage('history')">
-        <span class="icon">📋</span> Change History
-      </div>
-      <div class="nav-item" onclick="showPage('run-logs')">
-        <span class="icon">🔄</span> Run Logs
-      </div>
-      <div class="nav-item" onclick="showPage('upload')">
-        <span class="icon">📤</span> Upload Excel
-      </div>
-      <div class="nav-item" onclick="showPage('settings')">
-        <span class="icon">⚙️</span> Settings
-      </div>
-    </div>
-    <div class="sidebar-footer">
-      <div><span class="live-dot"></span><small>System Live</small></div>
-      <div style="margin-top:6px">
-        <small id="sidebar-user" style="opacity:.7"></small>
-      </div>
-      <button onclick="logout()" class="btn-sm btn-danger-sm" style="margin-top:10px;width:100%">
-        Logout
-      </button>
-    </div>
-  </nav>
+    <div class="nav-item active" data-page="dashboard" onclick="nav('dashboard')">
+      <span class="ic">📊</span><span class="lbl">Dashboard</span></div>
+    <div class="nav-item" data-page="students" onclick="nav('students')">
+      <span class="ic">👥</span><span class="lbl">Active Students</span></div>
+    <div class="nav-item" data-page="confirmed" onclick="nav('confirmed')">
+      <span class="ic">✅</span><span class="lbl">Confirmed</span></div>
+    <div class="nav-item" data-page="required" onclick="nav('required')">
+      <span class="ic">📄</span><span class="lbl">Required</span>
+      <span class="badge-count" id="nav-required-badge">0</span></div>
+    <div class="nav-sep">Activity</div>
+    <div class="nav-item" data-page="history" onclick="nav('history')">
+      <span class="ic">🕑</span><span class="lbl">Change History</span></div>
+    <div class="nav-item" data-page="runlogs" onclick="nav('runlogs')">
+      <span class="ic">🔄</span><span class="lbl">Run Logs</span></div>
+    <div class="nav-sep">Manage</div>
+    <div class="nav-item" data-page="upload" onclick="nav('upload')">
+      <span class="ic">📤</span><span class="lbl">Upload Excel</span></div>
+    <div class="nav-item" data-page="settings" onclick="nav('settings')">
+      <span class="ic">⚙️</span><span class="lbl">Settings</span></div>
+  </aside>
 
-  <!-- Main -->
-  <main class="main">
-
-    <!-- ── DASHBOARD ── -->
-    <section id="page-dashboard" class="page-section active">
-      <div class="topbar">
-        <h1>📊 Dashboard</h1>
-        <div class="topbar-right">
-          <span id="countdown"></span>
-          <button class="btn-sm btn-outline" onclick="loadDashboard()">↻ Refresh</button>
-          <button class="btn-sm btn-success" onclick="runNow()">▶ Run Now</button>
-        </div>
-      </div>
-
-      <div class="stats-grid" id="stats-grid">
-        <div class="stat-card">
-          <div class="label">Total Students</div>
-          <div class="value" id="stat-total">—</div>
-          <div class="sub">In Excel</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Last Run</div>
-          <div class="value" style="font-size:18px" id="stat-last-run">—</div>
-          <div class="sub" id="stat-last-run-sub"></div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Next Run</div>
-          <div class="value" style="font-size:18px" id="stat-next-run">—</div>
-          <div class="sub">Auto scheduled</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">Changes Today</div>
-          <div class="value" id="stat-changes">—</div>
-          <div class="sub">Status updates</div>
-        </div>
-      </div>
-
-      <!-- Status distribution -->
-      <div class="card">
-        <div class="card-header">
-          <h3>Status Distribution</h3>
-        </div>
-        <div class="dist-bar" id="dist-bar"></div>
-        <div class="dist-legend" id="dist-legend"></div>
-      </div>
-
-      <!-- Recent runs -->
-      <div class="card">
-        <div class="card-header">
-          <h3>Recent Runs</h3>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>#</th><th>Run At</th><th>Checked</th>
-              <th>Changed</th><th>Failed</th><th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="recent-runs-body">
-            <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- ── STUDENTS ── -->
-    <section id="page-students" class="page-section">
-      <div class="topbar">
-        <h1>👥 Students Status</h1>
-        <div class="topbar-right">
-          <button class="btn-sm btn-outline" onclick="downloadExcel()">⬇ Download Excel</button>
-        </div>
-      </div>
-      <div class="card">
-        <div class="filter-bar">
-          <input type="text" id="search-input" placeholder="🔍  Search by name or reference no..."
-            oninput="debounceLoadStudents()">
-          <select id="status-filter" onchange="loadStudents(1)">
-            <option value="">All Statuses</option>
-            <option value="Pending">Pending</option>
-            <option value="Documents Verification In Progress">Documents Verification In Progress</option>
-            <option value="Document Required">Document Required</option>
-            <option value="Verified">Verified</option>
-            <option value="Approved">Approved</option>
-            <option value="Admission Confirmed">Admission Confirmed</option>
-            <option value="Admitted">Admitted</option>
-            <option value="Rejected">Rejected</option>
-            <option value="Fetch Error">Fetch Error</option>
-          </select>
-          <select id="session-filter" onchange="loadStudents(1)">
-            <option value="">All Sessions</option>
-          </select>
-        </div>
-        <div id="students-count" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
-        <div style="overflow-x:auto">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th><th>Reference No</th><th>Student Name</th>
-                <th>Session</th><th>Status</th><th>Remark</th><th>Downloads</th><th>Last Checked</th>
-              </tr>
-            </thead>
-            <tbody id="students-body">
-              <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Loading...</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination" id="students-pagination"></div>
-      </div>
-    </section>
-
-    <!-- ── HISTORY ── -->
-    <section id="page-history" class="page-section">
-      <div class="topbar"><h1>📋 Change History</h1></div>
-      <div class="card">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th><th>Reference No</th><th>Student Name</th>
-              <th>Old Status</th><th>New Status</th><th>Changed At</th>
-            </tr>
-          </thead>
-          <tbody id="history-body">
-            <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- ── RUN LOGS ── -->
-    <section id="page-run-logs" class="page-section">
-      <div class="topbar">
-        <h1>🔄 Run Logs</h1>
-        <button class="btn-sm btn-success" onclick="runNow()">▶ Run Now</button>
-      </div>
-      <div class="card">
-        <table>
-          <thead>
-            <tr>
-              <th>Run ID</th><th>Started At</th><th>Checked</th>
-              <th>Changed</th><th>Failed</th><th>Status</th><th>Notes</th>
-            </tr>
-          </thead>
-          <tbody id="run-logs-body">
-            <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- ── UPLOAD ── -->
-    <section id="page-upload" class="page-section">
-      <div class="topbar"><h1>📤 Upload Excel</h1></div>
-      <div class="card">
-        <!-- Drag & Drop Zone -->
-        <div class="upload-zone" id="upload-zone"
-          onclick="document.getElementById('excel-file').click()"
-          ondragover="event.preventDefault();this.style.borderColor='var(--primary)';this.style.background='#F3F8FF'"
-          ondragleave="this.style.borderColor='';this.style.background=''"
-          ondrop="handleDrop(event)">
-          <div class="icon">📊</div>
-          <p><strong>Click to upload</strong> or drag & drop your Excel file here</p>
-          <p style="font-size:12px;margin-top:6px;color:var(--muted)">Supports .xlsx — must have "Reference No" column</p>
-        </div>
-        <input type="file" id="excel-file" accept=".xlsx,.xls" style="display:none" onchange="uploadExcel(event)">
-        <div id="upload-status" style="margin-top:16px;font-size:14px;text-align:center"></div>
-
-        <!-- Student Preview (shown after upload) -->
-        <div id="upload-preview" style="display:none;margin-top:24px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-            <h4 style="font-size:15px">👥 Students Detected</h4>
-            <button class="btn-sm btn-success" onclick="confirmAndRunNow()" id="confirm-run-btn">
-              ✅ Confirm & Run Now
-            </button>
+  <div class="main">
+    <div class="topbar">
+      <h1 id="page-title">Dashboard</h1>
+      <div class="right">
+        <button class="btn btn-success btn-sm" onclick="runNow()">▶ Run Now</button>
+        <div class="bell-wrap">
+          <div class="bell-btn" onclick="toggleBell(event)">🔔
+            <span class="bell-badge" id="bell-badge">0</span></div>
+          <div class="bell-dropdown" id="bell-dropdown" onclick="event.stopPropagation()">
+            <div class="bell-head">Document Required
+              <span class="cnt" id="bell-head-cnt">0</span></div>
+            <div id="bell-list"></div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <section id="sec-dashboard" class="page-section active">
+        <div class="stat-grid" id="stat-grid"></div>
+        <div class="card">
+          <h3>📈 Status Distribution</h3>
+          <div id="distribution"><div class="empty">Loading...</div></div>
+        </div>
+        <div class="card">
+          <h3>🔄 Recent Runs</h3>
+          <div style="overflow-x:auto"><table>
+            <thead><tr><th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th></tr></thead>
+            <tbody id="recent-runs"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <section id="sec-students" class="page-section">
+        <div class="card">
+          <div class="filter-bar">
+            <input type="text" id="s-search" placeholder="🔍  Search name / reference / email..." oninput="debounceStudents()">
+            <select id="s-status" onchange="loadStudents(1)">
+              <option value="">All Statuses</option>
+              <option>Pending</option><option>Documents Verification In Progress</option>
+              <option>Document Required</option><option>Verified</option>
+              <option>Approved</option><option>Rejected</option><option>Fetch Error</option>
+            </select>
+            <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
+          </div>
+          <div id="s-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th><th>Name</th><th>Phone No</th><th>Reference No</th>
-                </tr>
-              </thead>
-              <tbody id="preview-body"></tbody>
-            </table>
+            <table><thead><tr>
+              <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
+              <th>Status</th><th>Remark</th><th>Last Checked</th>
+            </tr></thead><tbody id="s-body"></tbody></table>
           </div>
-          <p id="preview-count" style="margin-top:10px;font-size:13px;color:var(--muted);text-align:center"></p>
+          <div class="pg-bar" id="s-pg"></div>
         </div>
+      </section>
 
-        <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--border)">
-          <h4 style="margin-bottom:12px;font-size:14px">📌 Required Excel Format</h4>
-          <p style="font-size:13px;color:var(--muted);line-height:1.8">
-            Your Excel must have at least a <strong>"Reference No"</strong> column.<br>
-            Optional columns detected automatically: <strong>Name / Student Name, Phone No</strong><br>
-            The tracker will add these columns automatically:<br>
-            <code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">NIOS Status</code> &nbsp;
-            <code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">Last Checked</code> &nbsp;
-            <code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">Last Changed</code>
-          </p>
+      <section id="sec-confirmed" class="page-section">
+        <div class="card">
+          <h3>✅ Admission Confirmed Students</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+            Inka admission pakka ho gaya. Download links (Phase 2) yahin aayenge.</p>
+          <div class="filter-bar">
+            <input type="text" id="c-search" placeholder="🔍  Search..." oninput="debounceConfirmed()">
+            <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
+          </div>
+          <div id="c-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
+              <th>Status</th><th>Downloads</th><th>Confirmed On</th>
+            </tr></thead><tbody id="c-body"></tbody></table>
+          </div>
+          <div class="pg-bar" id="c-pg"></div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ── SETTINGS ── -->
-    <section id="page-settings" class="page-section">
-      <div class="topbar"><h1>⚙️ Settings</h1></div>
-      <div class="card">
-        <h3 style="margin-bottom:8px;font-size:15px">⏱ Recheck Intervals</h3>
-        <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
-          Alag-alag intervals for different session types. Confirmed students automatically skip ho jaate hain.
-        </p>
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
-          <span style="font-size:14px;width:230px">📗 Regular (On Demand + Stream 2):</span>
-          <input type="number" id="interval-regular" value="6" min="1" max="72"
-            style="width:80px;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:15px">
-          <span style="font-size:14px;color:var(--muted)">hours</span>
+      <section id="sec-required" class="page-section">
+        <div class="card">
+          <h3>📄 Document Required — Action Needed</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+            Counsellor inko resolve kare. Resolve hone ke baad next run mein wapas Active list mein chale jayenge.</p>
+          <div class="filter-bar">
+            <input type="text" id="r-search" placeholder="🔍  Search..." oninput="debounceRequired()">
+            <select id="r-session" onchange="loadRequired(1)"><option value="">All Sessions</option></select>
+          </div>
+          <div id="r-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th><th>RC Comment / Remark</th>
+            </tr></thead><tbody id="r-body"></tbody></table>
+          </div>
+          <div class="pg-bar" id="r-pg"></div>
         </div>
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
-          <span style="font-size:14px;width:230px">📘 Public Exam (April / October):</span>
-          <input type="number" id="interval-public" value="12" min="1" max="72"
-            style="width:80px;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:15px">
-          <span style="font-size:14px;color:var(--muted)">hours</span>
-        </div>
-        <button class="btn-sm btn-outline" onclick="updateIntervals()">Save Intervals</button>
-        <p id="interval-status" style="font-size:13px;margin-top:10px"></p>
-      </div>
-      <div class="card">
-        <h3 style="margin-bottom:16px;font-size:15px">🎨 Status Colour Legend</h3>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
-          <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;background:#FFF9C4">
-            <span style="font-size:18px">🟡</span>
-            <div><div style="font-weight:600;font-size:13px">Pending</div><div style="font-size:11px;color:#888">Application submitted, awaiting review</div></div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;background:#FFE0B2">
-            <span style="font-size:18px">🟠</span>
-            <div><div style="font-weight:600;font-size:13px">Documents Verification In Progress</div><div style="font-size:11px;color:#888">Documents under review</div></div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;background:#C8E6C9">
-            <span style="font-size:18px">🟢</span>
-            <div><div style="font-weight:600;font-size:13px">Verified</div><div style="font-size:11px;color:#888">Documents verified</div></div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;background:#B2DFDB">
-            <span style="font-size:18px">✅</span>
-            <div><div style="font-weight:600;font-size:13px">Approved</div><div style="font-size:11px;color:#888">Application approved</div></div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;background:#69F0AE">
-            <span style="font-size:18px">🎉</span>
-            <div><div style="font-weight:600;font-size:13px">Admission Confirmed</div><div style="font-size:11px;color:#1B5E20">Student ka admission pakka!</div></div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;background:#BBDEFB">
-            <span style="font-size:18px">🔵</span>
-            <div><div style="font-weight:600;font-size:13px">Admitted</div><div style="font-size:11px;color:#888">Student admitted</div></div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;background:#FFCDD2">
-            <span style="font-size:18px">🔴</span>
-            <div><div style="font-weight:600;font-size:13px">Rejected</div><div style="font-size:11px;color:#888">Application rejected</div></div>
-          </div>
-        </div>
-      </div>
-    </section>
+      </section>
 
-  </main>
+      <section id="sec-history" class="page-section">
+        <div class="card">
+          <h3>🕑 Status Change History</h3>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>Reference No</th><th>Student</th><th>Old Status</th><th>New Status</th><th>Changed At</th>
+            </tr></thead><tbody id="h-body"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-runlogs" class="page-section">
+        <div class="card">
+          <h3>🔄 Run Logs</h3>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th>
+            </tr></thead><tbody id="rl-body"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-upload" class="page-section">
+        <div class="card">
+          <h3>📤 Upload Student Excel</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:18px">
+            Excel upload karo (.xlsx). Columns: Student Name, Mobile, Class, Reference Number, Email, DOB, Admission Session.</p>
+          <div class="drop" id="drop" onclick="document.getElementById('file-input').click()">
+            <div class="ic">📁</div>
+            <div style="font-weight:600;font-size:15px">Click or drag Excel file here</div>
+            <div style="color:var(--muted);font-size:13px;margin-top:5px">.xlsx files only</div>
+          </div>
+          <input type="file" id="file-input" accept=".xlsx,.xls" style="display:none" onchange="handleFile(this.files[0])">
+          <div id="upload-status" style="margin-top:16px"></div>
+          <div style="margin-top:18px;display:flex;gap:12px">
+            <button class="btn btn-outline btn-sm" onclick="downloadExcel()">⬇ Download Updated Excel</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-settings" class="page-section">
+        <div class="card">
+          <h3>⏱ Recheck Intervals</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:18px">
+            Alag-alag intervals. Confirmed students automatically skip ho jaate hain.</p>
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+            <span style="width:280px;font-weight:600">📗 Regular (On Demand + Stream 2)</span>
+            <input type="number" id="iv-regular" min="1" max="72" value="6"
+              style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
+            <span style="color:var(--muted)">hours</span>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
+            <span style="width:280px;font-weight:600">📘 Public Exam (April / October + any year)</span>
+            <input type="number" id="iv-public" min="1" max="72" value="12"
+              style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
+            <span style="color:var(--muted)">hours</span>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="saveIntervals()">💾 Save Intervals</button>
+          <div id="iv-status" style="margin-top:12px;font-size:13px"></div>
+        </div>
+        <div class="card">
+          <h3>🎨 Status Colour Legend</h3>
+          <div class="legend-grid">
+            <div class="legend-item b-pending"><div class="nm">🟡 Pending</div><div class="ds">Awaiting review</div></div>
+            <div class="legend-item b-docs"><div class="nm">🟠 Documents Verification In Progress</div><div class="ds">Under review</div></div>
+            <div class="legend-item b-required"><div class="nm">📄 Document Required</div><div class="ds">Action needed by counsellor</div></div>
+            <div class="legend-item b-verified"><div class="nm">🟢 Verified</div><div class="ds">Documents verified</div></div>
+            <div class="legend-item b-approved"><div class="nm">🔷 Approved</div><div class="ds">Application approved</div></div>
+            <div class="legend-item b-confirmed"><div class="nm">🎉 Admission Confirmed</div><div class="ds">Admission pakka!</div></div>
+            <div class="legend-item b-rejected"><div class="nm">🔴 Rejected</div><div class="ds">Application rejected</div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
 </div>
 
-<!-- Toast -->
-<div class="toast" id="toast"></div>
+<div id="toast"></div>
 
 <script>
-const API = "";   // Same origin
-let TOKEN = localStorage.getItem("nios_token") || "";
-let currentPage = "dashboard";
-let searchTimer = null;
-let countdownTimer = null;
-let nextRunTime = null;
+const API = window.location.origin;
+let TOKEN = "";
+let perPage = 20;
+let sessionsLoaded = false;
 
-// ══ Auth ══════════════════════════════════════════════════════════════════
-async function doLogin() {
-  const btn = document.getElementById("login-btn");
-  const err = document.getElementById("login-err");
-  err.textContent = "";
-  btn.disabled = true; btn.textContent = "Logging in...";
-  try {
-    const r = await apiFetch("/api/login", "POST", {
-      username: document.getElementById("login-user").value,
-      password: document.getElementById("login-pass").value,
-    }, false);
-    TOKEN = r.token;
-    localStorage.setItem("nios_token", TOKEN);
-    document.getElementById("sidebar-user").textContent = "👤 " + r.username;
-    document.getElementById("login-page").style.display = "none";
-    document.getElementById("app").style.display = "block";
+async function doLogin(){
+  const u=document.getElementById("lg-user").value;
+  const p=document.getElementById("lg-pass").value;
+  const err=document.getElementById("login-error");
+  err.textContent="";
+  try{
+    const r=await fetch(API+"/api/login",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({username:u,password:p})});
+    if(!r.ok){err.textContent="Invalid username or password";return;}
+    const d=await r.json();
+    TOKEN=d.token;
+    document.getElementById("login-screen").style.display="none";
+    document.getElementById("app").style.display="block";
     loadDashboard();
-  } catch (e) {
-    err.textContent = "❌ " + (e.message || "Invalid credentials");
-  } finally {
-    btn.disabled = false; btn.textContent = "Login";
-  }
+    setInterval(refreshBell,60000);
+  }catch(e){err.textContent="Connection error: "+e.message;}
 }
 
-document.getElementById("login-pass").addEventListener("keydown", e => {
-  if (e.key === "Enter") doLogin();
-});
-
-function logout() {
-  TOKEN = ""; localStorage.removeItem("nios_token");
-  document.getElementById("app").style.display = "none";
-  document.getElementById("login-page").style.display = "flex";
-  clearInterval(countdownTimer);
-}
-
-// Auto-login if token exists
-if (TOKEN) {
-  document.getElementById("login-page").style.display = "none";
-  document.getElementById("app").style.display = "block";
-  loadDashboard();
-}
-
-// ══ API helper ════════════════════════════════════════════════════════════
-async function apiFetch(path, method = "GET", body = null, auth = true) {
-  const opts = {
-    method,
-    headers: { "Content-Type": "application/json" }
-  };
-  if (auth) opts.headers["Authorization"] = "Bearer " + TOKEN;
-  if (body) opts.body = JSON.stringify(body);
-  const r = await fetch(API + path, opts);
-  if (r.status === 401) { logout(); throw new Error("Session expired"); }
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(err.detail || r.statusText);
-  }
+async function api(path,method="GET",body=null){
+  const opt={method,headers:{"Authorization":"Bearer "+TOKEN}};
+  if(body){opt.headers["Content-Type"]="application/json";opt.body=JSON.stringify(body);}
+  const r=await fetch(API+path,opt);
+  if(r.status===401){location.reload();throw new Error("Session expired");}
+  if(!r.ok){const e=await r.json().catch(()=>({detail:"Error"}));throw new Error(e.detail||"Request failed");}
   return r.json();
 }
 
-// ══ Navigation ════════════════════════════════════════════════════════════
-function showPage(name) {
-  document.querySelectorAll(".page-section").forEach(s => s.classList.remove("active"));
-  document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
-  document.getElementById("page-" + name).classList.add("active");
-  event.currentTarget.classList.add("active");
-  currentPage = name;
-  if (name === "students")  loadStudents(1);
-  if (name === "history")   loadHistory();
-  if (name === "run-logs")  loadRunLogs();
-  if (name === "settings")  loadIntervals();
+const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
+  required:"Document Required",history:"Change History",runlogs:"Run Logs",upload:"Upload Excel",settings:"Settings"};
+function nav(page){
+  document.querySelectorAll(".nav-item").forEach(n=>n.classList.toggle("active",n.dataset.page===page));
+  document.querySelectorAll(".page-section").forEach(s=>s.classList.remove("active"));
+  document.getElementById("sec-"+page).classList.add("active");
+  document.getElementById("page-title").textContent=titles[page];
+  if(page==="dashboard")loadDashboard();
+  if(page==="students")loadStudents(1);
+  if(page==="confirmed")loadConfirmed(1);
+  if(page==="required")loadRequired(1);
+  if(page==="history")loadHistory();
+  if(page==="runlogs")loadRunLogs();
+  if(page==="settings")loadIntervals();
 }
 
-// ══ Dashboard ═════════════════════════════════════════════════════════════
-async function loadDashboard() {
-  try {
-    const d = await apiFetch("/api/dashboard");
-    document.getElementById("stat-total").textContent = d.total_students;
-
-    const runs = d.recent_runs;
-    if (runs.length > 0) {
-      const last = runs[0];
-      document.getElementById("stat-last-run").textContent =
-        last.run_at.substring(11, 16);
-      document.getElementById("stat-last-run-sub").textContent =
-        last.run_at.substring(0, 10);
-    }
-
-    // Next run
-    if (d.next_run && d.next_run !== "Not scheduled") {
-      nextRunTime = new Date(d.next_run);
-      document.getElementById("stat-next-run").textContent =
-        nextRunTime.toTimeString().substring(0, 5);
-      startCountdown();
-    }
-
-    // Changes today
-    const today = new Date().toISOString().substring(0, 10);
-    let todayChanges = 0;
-    runs.forEach(r => {
-      if (r.run_at.startsWith(today)) todayChanges += (r.total_changed || 0);
-    });
-    document.getElementById("stat-changes").textContent = todayChanges;
-
-    // Status distribution
-    renderDistribution(d.status_distribution);
-
-    // Recent runs table
-    const tbody = document.getElementById("recent-runs-body");
-    tbody.innerHTML = runs.length === 0
-      ? `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">No runs yet</td></tr>`
-      : runs.map((r, i) => `
-          <tr>
-            <td>${r.id}</td>
-            <td>${r.run_at}</td>
-            <td><strong>${r.total_checked || 0}</strong></td>
-            <td style="color:${r.total_changed > 0 ? 'var(--success)' : 'inherit'}">${r.total_changed || 0}</td>
-            <td style="color:${r.total_failed > 0 ? 'var(--danger)' : 'inherit'}">${r.total_failed || 0}</td>
-            <td><span class="run-status run-${r.status}">${r.status}</span></td>
-          </tr>`).join("");
-  } catch (e) {
-    showToast("Error loading dashboard: " + e.message);
-  }
+async function loadDashboard(){
+  try{
+    const d=await api("/api/dashboard");
+    const c=d.counts||{};
+    document.getElementById("stat-grid").innerHTML=
+      statCard("Total Students",d.total_students,"👥","#4F46E5")+
+      statCard("Changes Today",c.changes_today||0,"🔄","#0891B2")+
+      statCard("Admission Confirmed",c.confirmed||0,"🎉","#16A34A")+
+      statCard("Verified",c.verified||0,"🟢","#65A30D")+
+      statCard("Document Required",c.document_required||0,"📄","#EA580C")+
+      statCard("In Verification",c.doc_verification||0,"🟠","#D97706");
+    renderDistribution(d.status_distribution,d.total_students);
+    renderRuns(d.recent_runs,"recent-runs");
+    renderBell(d.notifications||[]);
+  }catch(e){showToast("❌ "+e.message);}
+}
+function statCard(lbl,val,ic,col){
+  return '<div class="stat"><div class="ic">'+ic+'</div><div class="lbl">'+lbl+
+    '</div><div class="val">'+val+'</div><div class="bar" style="background:'+col+'"></div></div>';
+}
+const DIST_COLOURS={
+  "Pending":"#FBBF24","Documents Verification In Progress":"#FB923C","Document Required":"#F97316",
+  "Verified":"#4ADE80","Approved":"#2DD4BF","Admission Confirmed":"#22C55E",
+  "Rejected":"#EF4444","Fetch Error":"#94A3B8","Unknown":"#CBD5E1"};
+function renderDistribution(dist,total){
+  const el=document.getElementById("distribution");
+  if(!dist||!dist.length){el.innerHTML='<div class="empty">No data yet. Upload Excel & run a check.</div>';return;}
+  const max=Math.max.apply(null,dist.map(d=>d.cnt).concat([1]));
+  el.innerHTML=dist.map(d=>{
+    const col=DIST_COLOURS[d.current_status]||"#CBD5E1";
+    const w=(d.cnt/max*100).toFixed(0);
+    return '<div class="dist-row"><div class="nm">'+(d.current_status||"Unknown")+'</div>'+
+      '<div class="track"><div class="fill" style="width:'+w+'%;background:'+col+'"></div></div>'+
+      '<div class="ct">'+d.cnt+'</div></div>';
+  }).join("");
+}
+function renderRuns(runs,id){
+  const el=document.getElementById(id);
+  if(!runs||!runs.length){el.innerHTML='<tr><td colspan="6" class="empty">No runs yet</td></tr>';return;}
+  el.innerHTML=runs.map(r=>'<tr><td>'+r.run_at+'</td><td><span class="ref-tag">'+(r.group_type||"all")+
+    '</span></td><td>'+r.total_checked+'</td><td style="color:var(--primary);font-weight:700">'+r.total_changed+
+    '</td><td style="color:'+(r.total_failed?'var(--danger)':'inherit')+'">'+r.total_failed+
+    '</td><td>'+r.status+'</td></tr>').join("");
 }
 
-function renderDistribution(dist) {
-  const colors = {
-    "Pending": "#FFF176",
-    "Documents Verification In Progress": "#FFB74D",
-    "Verified": "#81C784",
-    "Approved": "#4DB6AC",
-    "Admitted": "#64B5F6",
-    "Rejected": "#E57373",
-    "Fetch Error": "#BDBDBD",
-    "Unknown": "#E0E0E0",
-  };
-  const total = dist.reduce((s, d) => s + d.cnt, 0) || 1;
-  const bar = document.getElementById("dist-bar");
-  const legend = document.getElementById("dist-legend");
-  bar.innerHTML = dist.map(d => `
-    <div class="dist-segment" title="${d.current_status}: ${d.cnt}"
-      style="width:${(d.cnt/total*100).toFixed(1)}%;background:${colors[d.current_status]||'#E0E0E0'}"></div>
-  `).join("");
-  legend.innerHTML = dist.map(d => `
-    <div class="dist-item">
-      <div class="dist-dot" style="background:${colors[d.current_status]||'#E0E0E0'}"></div>
-      <span>${d.current_status} (${d.cnt})</span>
-    </div>
-  `).join("");
+function toggleBell(e){e.stopPropagation();document.getElementById("bell-dropdown").classList.toggle("open");}
+document.addEventListener("click",()=>document.getElementById("bell-dropdown").classList.remove("open"));
+async function refreshBell(){try{const d=await api("/api/dashboard");renderBell(d.notifications||[]);}catch(e){}}
+function renderBell(notifs){
+  const n=notifs.length;
+  const badge=document.getElementById("bell-badge");
+  const navB=document.getElementById("nav-required-badge");
+  badge.textContent=n;badge.style.display=n?"flex":"none";
+  navB.textContent=n;navB.style.display=n?"inline-block":"none";
+  document.getElementById("bell-head-cnt").textContent=n;
+  const list=document.getElementById("bell-list");
+  list.innerHTML=n?notifs.map(x=>'<div class="notif-item"><div class="dot"></div><div>'+
+    '<div class="nm">'+(x.student_name||"—")+'</div>'+
+    '<div class="rf">'+(x.reference_no||"No ref")+'</div>'+
+    (x.remark?'<div class="rk">'+x.remark+'</div>':"")+'</div></div>').join("")
+    :'<div class="notif-empty">🎉 No pending documents!</div>';
 }
 
-function startCountdown() {
-  clearInterval(countdownTimer);
-  countdownTimer = setInterval(() => {
-    if (!nextRunTime) return;
-    const diff = nextRunTime - new Date();
-    if (diff <= 0) { document.getElementById("countdown").textContent = "Running..."; return; }
-    const h = Math.floor(diff / 3600000);
-    const m = Math.floor((diff % 3600000) / 60000);
-    const s = Math.floor((diff % 60000) / 1000);
-    document.getElementById("countdown").textContent =
-      `⏱ Next run in ${h}h ${m}m ${s}s`;
-  }, 1000);
+let stTimer,cTimer,rTimer;
+function debounceStudents(){clearTimeout(stTimer);stTimer=setTimeout(()=>loadStudents(1),400);}
+function debounceConfirmed(){clearTimeout(cTimer);cTimer=setTimeout(()=>loadConfirmed(1),400);}
+function debounceRequired(){clearTimeout(rTimer);rTimer=setTimeout(()=>loadRequired(1),400);}
+
+function badge(s){
+  const m={"Pending":"b-pending","Documents Verification In Progress":"b-docs","Document Required":"b-required",
+    "Verified":"b-verified","Approved":"b-approved","Admission Confirmed":"b-confirmed","Rejected":"b-rejected"};
+  return '<span class="badge '+(m[s]||'b-error')+'">'+(s||'Unknown')+'</span>';
 }
-
-// ══ Run Now ═══════════════════════════════════════════════════════════════
-async function runNow() {
-  try {
-    const r = await apiFetch("/api/run-now", "POST");
-    showToast("✅ " + r.message);
-    setTimeout(loadDashboard, 3000);
-  } catch (e) {
-    showToast("❌ " + e.message);
-  }
+function dlLinks(s){
+  let l=[];
+  if(s.id_card_link)l.push('<a href="'+s.id_card_link+'" target="_blank" style="color:var(--primary)">ID Card</a>');
+  if(s.app_form_link)l.push('<a href="'+s.app_form_link+'" target="_blank" style="color:var(--primary)">App Form</a>');
+  if(s.hall_ticket_link)l.push('<a href="'+s.hall_ticket_link+'" target="_blank" style="color:var(--primary)">Hall Ticket</a>');
+  return l.length?l.join("<br>"):'<span style="color:var(--muted)">Phase 2</span>';
 }
-
-// ══ Students ══════════════════════════════════════════════════════════════
-let studentsCurrentPage = 1;
-function debounceLoadStudents() {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => loadStudents(1), 400);
-}
-
-async function loadStudents(page = 1) {
-  studentsCurrentPage = page;
-  const search = document.getElementById("search-input").value;
-  const status = document.getElementById("status-filter").value;
-  const session = document.getElementById("session-filter").value;
-  try {
-    const d = await apiFetch(
-      `/api/students?page=${page}&per_page=50&search=${encodeURIComponent(search)}&status_filter=${encodeURIComponent(status)}&session_filter=${encodeURIComponent(session)}`
-    );
-    document.getElementById("students-count").textContent =
-      `Showing ${d.students.length} of ${d.total} students`;
-
-    // Populate session filter once
-    const sf = document.getElementById("session-filter");
-    if (d.sessions && sf.options.length <= 1) {
-      d.sessions.forEach(s => {
-        if (s) { const o = document.createElement("option"); o.value = s; o.textContent = s; sf.appendChild(o); }
-      });
-    }
-
-    const tbody = document.getElementById("students-body");
-    tbody.innerHTML = d.students.length === 0
-      ? `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">No students found</td></tr>`
-      : d.students.map((s, i) => `
-          <tr>
-            <td style="color:var(--muted)">${(page-1)*50+i+1}</td>
-            <td><code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">${s.reference_no || "—"}</code></td>
-            <td>${s.student_name || "—"}</td>
-            <td style="font-size:12px">${s.session || "—"}</td>
-            <td>${statusBadge(s.current_status)}</td>
-            <td style="font-size:11px;color:#E65100;max-width:160px">${s.remark || ""}</td>
-            <td style="font-size:11px">${downloadLinks(s)}</td>
-            <td style="font-size:12px;color:var(--muted)">${s.last_checked || "—"}</td>
-          </tr>`).join("");
-
-    renderPagination("students-pagination", page, d.pages, loadStudents);
-  } catch (e) {
-    showToast("Error loading students: " + e.message);
-  }
-}
-
-function downloadLinks(s) {
-  let links = [];
-  if (s.id_card_link)    links.push(`<a href="${s.id_card_link}" target="_blank" style="color:#1565C0">ID Card</a>`);
-  if (s.app_form_link)   links.push(`<a href="${s.app_form_link}" target="_blank" style="color:#1565C0">App Form</a>`);
-  if (s.hall_ticket_link)links.push(`<a href="${s.hall_ticket_link}" target="_blank" style="color:#1565C0">Hall Ticket</a>`);
-  return links.length ? links.join("<br>") : "—";
-}
-
-function statusBadge(status) {
-  const map = {
-    "Pending":                              "badge-pending",
-    "Documents Verification In Progress":   "badge-docs",
-    "Document Required":                    "badge-docs",
-    "Verified":                             "badge-verified",
-    "Approved":                             "badge-approved",
-    "Admission Confirmed":                  "badge-confirmed",
-    "Admitted":                             "badge-admitted",
-    "Rejected":                             "badge-rejected",
-    "Fetch Error":                          "badge-error",
-    "Not Found":                            "badge-error",
-  };
-  const cls = map[status] || "badge-error";
-  return `<span class="badge ${cls}">${status || "Unknown"}</span>`;
-}
-
-function renderPagination(containerId, current, total, loadFn) {
-  const c = document.getElementById(containerId);
-  if (total <= 1) { c.innerHTML = ""; return; }
-  let html = `<button class="page-btn" onclick="${loadFn.name}(${current-1})" ${current===1?"disabled":""}>‹ Prev</button>`;
-  const start = Math.max(1, current - 2);
-  const end   = Math.min(total, current + 2);
-  for (let p = start; p <= end; p++) {
-    html += `<button class="page-btn ${p===current?"active":""}" onclick="${loadFn.name}(${p})">${p}</button>`;
-  }
-  html += `<button class="page-btn" onclick="${loadFn.name}(${current+1})" ${current===total?"disabled":""}>Next ›</button>`;
-  c.innerHTML = html;
-}
-
-// ══ History ═══════════════════════════════════════════════════════════════
-async function loadHistory() {
-  try {
-    const data = await apiFetch("/api/history?limit=200");
-    const tbody = document.getElementById("history-body");
-    tbody.innerHTML = data.length === 0
-      ? `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">No changes recorded yet</td></tr>`
-      : data.map((h, i) => `
-          <tr>
-            <td style="color:var(--muted)">${i+1}</td>
-            <td><code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">${h.reference_no}</code></td>
-            <td>${h.student_name || "—"}</td>
-            <td>${h.old_status ? statusBadge(h.old_status) : '<span style="color:var(--muted)">—</span>'}</td>
-            <td>${statusBadge(h.new_status)}</td>
-            <td style="font-size:12px;color:var(--muted)">${h.changed_at}</td>
-          </tr>`).join("");
-  } catch (e) {
-    showToast("Error loading history: " + e.message);
-  }
-}
-
-// ══ Run Logs ══════════════════════════════════════════════════════════════
-async function loadRunLogs() {
-  try {
-    const data = await apiFetch("/api/run-logs?limit=100");
-    const tbody = document.getElementById("run-logs-body");
-    tbody.innerHTML = data.length === 0
-      ? `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">No runs yet</td></tr>`
-      : data.map(r => `
-          <tr>
-            <td>${r.id}</td>
-            <td>${r.run_at}</td>
-            <td>${r.total_checked || 0}</td>
-            <td style="color:${r.total_changed>0?'var(--success)':'inherit'}">${r.total_changed || 0}</td>
-            <td style="color:${r.total_failed>0?'var(--danger)':'inherit'}">${r.total_failed || 0}</td>
-            <td><span class="run-status run-${r.status}">${r.status}</span></td>
-            <td style="font-size:12px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis">
-              ${r.notes || "—"}
-            </td>
-          </tr>`).join("");
-  } catch (e) {
-    showToast("Error loading run logs: " + e.message);
-  }
-}
-
-// ══ Upload Excel ══════════════════════════════════════════════════════════
-function handleDrop(event) {
-  event.preventDefault();
-  const zone = document.getElementById("upload-zone");
-  zone.style.borderColor = ""; zone.style.background = "";
-  const file = event.dataTransfer.files[0];
-  if (file) processExcelFile(file);
-}
-
-async function uploadExcel(event) {
-  const file = event.target.files[0];
-  if (file) processExcelFile(file);
-}
-
-async function processExcelFile(file) {
-  const statusEl = document.getElementById("upload-status");
-  statusEl.textContent = "⏳ Uploading...";
-  document.getElementById("upload-preview").style.display = "none";
-
-  const formData = new FormData();
-  formData.append("file", file);
-  try {
-    const r = await fetch(API + "/api/upload-excel", {
-      method: "POST",
-      headers: { "Authorization": "Bearer " + TOKEN },
-      body: formData
-    });
-    if (!r.ok) throw new Error((await r.json()).detail);
-    const data = await r.json();
-    statusEl.innerHTML = `<span style="color:var(--success)">✅ ${data.message}</span>`;
-    // Show preview
-    await showUploadPreview(data);
-  } catch (e) {
-    statusEl.innerHTML = `<span style="color:var(--danger)">❌ ${e.message}</span>`;
-  }
-}
-
-async function showUploadPreview(uploadData) {
-  try {
-    // Fetch students list to preview
-    const d = await apiFetch("/api/students?page=1&per_page=200");
-    if (!d.students || d.students.length === 0) {
-      // Students not in DB yet — show run prompt
-      document.getElementById("upload-preview").style.display = "block";
-      document.getElementById("preview-body").innerHTML =
-        `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">
-          Click "Confirm & Run Now" to fetch statuses from NIOS website
-        </td></tr>`;
-      document.getElementById("preview-count").textContent = `File uploaded. Students will be loaded after first run.`;
-      return;
-    }
-    const tbody = document.getElementById("preview-body");
-    tbody.innerHTML = d.students.map((s, i) => `
-      <tr>
-        <td style="color:var(--muted)">${i+1}</td>
-        <td>${s.student_name || "—"}</td>
-        <td>—</td>
-        <td><code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">${s.reference_no}</code></td>
-      </tr>`).join("");
-    document.getElementById("preview-count").textContent =
-      `${d.total} students loaded. Click "Confirm & Run Now" to check NIOS status.`;
-    document.getElementById("upload-preview").style.display = "block";
-  } catch(e) {
-    // After first upload DB is empty — just show confirm button
-    document.getElementById("upload-preview").style.display = "block";
-    document.getElementById("preview-body").innerHTML =
-      `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">
-        File ready. Click "Confirm & Run Now" to fetch NIOS statuses.
-      </td></tr>`;
-  }
-}
-
-async function confirmAndRunNow() {
-  const btn = document.getElementById("confirm-run-btn");
-  btn.disabled = true; btn.textContent = "⏳ Running...";
-  try {
-    const r = await apiFetch("/api/run-now", "POST");
-    showToast("🚀 " + r.message);
-    btn.textContent = "✅ Run Started!";
-    // Switch to dashboard after 2s
-    setTimeout(() => {
-      document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
-      document.querySelectorAll(".nav-item")[0].classList.add("active");
-      showPage2("dashboard");
-      loadDashboard();
-    }, 2000);
-  } catch(e) {
-    showToast("❌ " + e.message);
-    btn.disabled = false; btn.textContent = "✅ Confirm & Run Now";
-  }
-}
-
-function showPage2(name) {
-  document.querySelectorAll(".page-section").forEach(s => s.classList.remove("active"));
-  document.getElementById("page-" + name).classList.add("active");
-}
-
-async function downloadExcel() {
-  const r = await fetch(API + "/api/download-excel", {
-    headers: { "Authorization": "Bearer " + TOKEN }
+function fillSessions(arr){
+  if(sessionsLoaded||!arr)return;
+  ["s-session","c-session","r-session"].forEach(id=>{
+    const sel=document.getElementById(id);
+    arr.forEach(s=>{if(s){const o=document.createElement("option");o.value=s;o.textContent=s;sel.appendChild(o);}});
   });
-  if (!r.ok) { showToast("❌ Excel file not found. Run a check first."); return; }
-  const blob = await r.blob();
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href = url; a.download = "nios_status_updated.xlsx"; a.click();
+  sessionsLoaded=true;
+}
+
+async function loadStudents(page){
+  page=page||1;
+  const q=new URLSearchParams({page:page,per_page:perPage,view:"normal",
+    search:document.getElementById("s-search").value,
+    status_filter:document.getElementById("s-status").value,
+    session_filter:document.getElementById("s-session").value});
+  try{
+    const d=await api("/api/students?"+q.toString());
+    fillSessions(d.sessions);
+    document.getElementById("s-count").textContent="Showing "+d.students.length+" of "+d.total+" active students";
+    const b=document.getElementById("s-body");
+    b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
+      '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
+      '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
+      '<td>'+(s.student_name||"—")+'</td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
+      '<td>'+badge(s.current_status)+'</td>'+
+      '<td style="font-size:12px;color:var(--warn);max-width:200px">'+(s.remark||"")+'</td>'+
+      '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+'</td></tr>').join("")
+      :'<tr><td colspan="7" class="empty">No active students found</td></tr>';
+    renderPg("s-pg",page,d.pages,"loadStudents");
+  }catch(e){showToast("❌ "+e.message);}
+}
+
+async function loadConfirmed(page){
+  page=page||1;
+  const q=new URLSearchParams({page:page,per_page:perPage,view:"confirmed",
+    search:document.getElementById("c-search").value,
+    session_filter:document.getElementById("c-session").value});
+  try{
+    const d=await api("/api/students?"+q.toString());
+    fillSessions(d.sessions);
+    document.getElementById("c-count").textContent=d.total+" confirmed students";
+    const b=document.getElementById("c-body");
+    b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
+      '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
+      '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
+      '<td>'+(s.student_name||"—")+'</td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
+      '<td>'+badge(s.current_status)+'</td><td style="font-size:12px">'+dlLinks(s)+'</td>'+
+      '<td style="font-size:12px;color:var(--muted)">'+(s.last_changed||"—")+'</td></tr>').join("")
+      :'<tr><td colspan="7" class="empty">No confirmed students yet</td></tr>';
+    renderPg("c-pg",page,d.pages,"loadConfirmed");
+  }catch(e){showToast("❌ "+e.message);}
+}
+
+async function loadRequired(page){
+  page=page||1;
+  const q=new URLSearchParams({page:page,per_page:perPage,view:"required",
+    search:document.getElementById("r-search").value,
+    session_filter:document.getElementById("r-session").value});
+  try{
+    const d=await api("/api/students?"+q.toString());
+    fillSessions(d.sessions);
+    document.getElementById("r-count").textContent=d.total+" students need documents";
+    const b=document.getElementById("r-body");
+    b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
+      '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
+      '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
+      '<td>'+(s.student_name||"—")+'</td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
+      '<td style="font-size:13px;color:var(--warn);max-width:420px">'+(s.remark||"(no comment captured)")+'</td></tr>').join("")
+      :'<tr><td colspan="5" class="empty">🎉 No pending documents!</td></tr>';
+    renderPg("r-pg",page,d.pages,"loadRequired");
+  }catch(e){showToast("❌ "+e.message);}
+}
+
+function renderPg(id,page,total,fnName){
+  const el=document.getElementById(id);
+  let ctrl='<div class="pg-controls">';
+  ctrl+='<button onclick="'+fnName+'('+(page-1)+')" '+(page<=1?"disabled":"")+'>‹ Prev</button>';
+  const start=Math.max(1,page-2),end=Math.min(total,page+2);
+  for(let i=start;i<=end;i++)ctrl+='<button class="'+(i===page?'active':'')+'" onclick="'+fnName+'('+i+')">'+i+'</button>';
+  ctrl+='<button onclick="'+fnName+'('+(page+1)+')" '+(page>=total?"disabled":"")+'>Next ›</button></div>';
+  const sel='<div class="perpage">Per page: <select onchange="setPerPage(this.value,\''+fnName+'\')">'+
+    [10,20,50,100].map(n=>'<option value="'+n+'" '+(n===perPage?"selected":"")+'>'+n+'</option>').join("")+
+    '</select></div>';
+  el.innerHTML=ctrl+sel;
+}
+function setPerPage(v,fnName){perPage=parseInt(v);window[fnName](1);}
+
+async function loadHistory(){
+  try{const h=await api("/api/history");
+    document.getElementById("h-body").innerHTML=h.length?h.map(x=>'<tr>'+
+      '<td><span class="ref-tag">'+(x.reference_no||"—")+'</span></td><td>'+(x.student_name||"—")+'</td>'+
+      '<td>'+badge(x.old_status)+'</td><td>'+badge(x.new_status)+'</td>'+
+      '<td style="font-size:12px;color:var(--muted)">'+x.changed_at+'</td></tr>').join("")
+      :'<tr><td colspan="5" class="empty">No changes recorded yet</td></tr>';
+  }catch(e){showToast("❌ "+e.message);}
+}
+async function loadRunLogs(){
+  try{const l=await api("/api/run-logs");renderRuns(l,"rl-body");}catch(e){showToast("❌ "+e.message);}
+}
+
+const drop=document.getElementById("drop");
+["dragover","dragenter"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("drag");}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("drag");}));
+drop.addEventListener("drop",e=>{if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
+async function handleFile(file){
+  if(!file)return;
+  const st=document.getElementById("upload-status");
+  st.innerHTML='<div style="color:var(--muted)">⏳ Uploading...</div>';
+  const fd=new FormData();fd.append("file",file);
+  try{
+    const r=await fetch(API+"/api/upload-excel",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN},body:fd});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||"Upload failed");
+    st.innerHTML='<div style="color:var(--success);font-weight:600">✅ '+d.message+'</div>'+
+      '<div style="margin-top:12px"><button class="btn btn-success btn-sm" onclick="runNow()">▶ Run Check Now</button></div>';
+    showToast("✅ Excel uploaded!");
+  }catch(e){st.innerHTML='<div style="color:var(--danger)">❌ '+e.message+'</div>';}
+}
+async function downloadExcel(){
+  const r=await fetch(API+"/api/download-excel",{headers:{"Authorization":"Bearer "+TOKEN}});
+  if(!r.ok){showToast("❌ No Excel found. Run a check first.");return;}
+  const blob=await r.blob();const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download="nios_status_updated.xlsx";a.click();
   URL.revokeObjectURL(url);
 }
-
-// ══ Settings ══════════════════════════════════════════════════════════════
-async function updateIntervals() {
-  const regular = parseInt(document.getElementById("interval-regular").value);
-  const pub = parseInt(document.getElementById("interval-public").value);
-  try {
-    const r = await apiFetch("/api/intervals", "POST", { regular, public: pub });
-    document.getElementById("interval-status").innerHTML =
-      `<span style="color:var(--success)">✅ ${r.message}</span>`;
-    showToast("✅ Intervals updated!");
-  } catch (e) {
-    document.getElementById("interval-status").innerHTML =
-      `<span style="color:var(--danger)">❌ ${e.message}</span>`;
-  }
+async function runNow(){
+  try{const r=await api("/api/run-now","POST");showToast("▶ "+r.message+" (background mein chal raha hai)");}
+  catch(e){showToast("❌ "+e.message);}
 }
 
-async function loadIntervals() {
-  try {
-    const r = await apiFetch("/api/intervals");
-    document.getElementById("interval-regular").value = r.regular;
-    document.getElementById("interval-public").value = r.public;
-  } catch (e) {}
+async function loadIntervals(){
+  try{const r=await api("/api/intervals");
+    document.getElementById("iv-regular").value=r.regular;
+    document.getElementById("iv-public").value=r.public;}catch(e){}
+}
+async function saveIntervals(){
+  const regular=parseInt(document.getElementById("iv-regular").value);
+  const pub=parseInt(document.getElementById("iv-public").value);
+  try{const r=await api("/api/intervals","POST",{regular:regular,public:pub});
+    document.getElementById("iv-status").innerHTML='<span style="color:var(--success)">✅ '+r.message+'</span>';
+    showToast("✅ Intervals saved!");}
+  catch(e){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">❌ '+e.message+'</span>';}
 }
 
-// ══ Toast ═════════════════════════════════════════════════════════════════
-function showToast(msg) {
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 3500);
+function showToast(msg){
+  const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");
+  setTimeout(()=>t.classList.remove("show"),3500);
 }
-
-// Auto-refresh dashboard every 60 seconds
-setInterval(() => {
-  if (currentPage === "dashboard") loadDashboard();
-}, 60000);
 </script>
 </body>
 </html>
@@ -1121,6 +761,25 @@ async def dashboard(user=Depends(verify_token)):
     total = conn.execute("SELECT COUNT(*) FROM student_status").fetchone()[0]
     runs = conn.execute("SELECT * FROM run_logs ORDER BY id DESC LIMIT 10").fetchall()
     dist = conn.execute("SELECT current_status, COUNT(*) as cnt FROM student_status GROUP BY current_status").fetchall()
+
+    # Counts by status
+    def count_status(s):
+        return conn.execute("SELECT COUNT(*) FROM student_status WHERE current_status=?", (s,)).fetchone()[0]
+    confirmed_cnt = count_status("Admission Confirmed")
+    verified_cnt  = count_status("Verified")
+    docreq_cnt    = count_status("Document Required")
+    docverif_cnt  = count_status("Documents Verification In Progress")
+
+    # Changes today
+    today = datetime.now().strftime("%Y-%m-%d")
+    changes_today = conn.execute(
+        "SELECT COUNT(*) FROM status_history WHERE changed_at LIKE ?", (f"{today}%",)).fetchone()[0]
+
+    # Notifications: document required students (name + ref)
+    notifs = conn.execute(
+        "SELECT student_name, reference_no, remark FROM student_status WHERE current_status='Document Required' ORDER BY last_changed DESC LIMIT 50"
+    ).fetchall()
+
     conn.close()
     jr = scheduler.get_job("job_regular")
     next_run = str(jr.next_run_time) if jr and jr.next_run_time else "Not scheduled"
@@ -1128,14 +787,30 @@ async def dashboard(user=Depends(verify_token)):
         "total_students": total, "next_run": next_run,
         "status_distribution": [dict(r) for r in dist],
         "recent_runs": [dict(r) for r in runs],
+        "counts": {
+            "confirmed": confirmed_cnt, "verified": verified_cnt,
+            "document_required": docreq_cnt, "doc_verification": docverif_cnt,
+            "changes_today": changes_today,
+        },
+        "notifications": [dict(n) for n in notifs],
     }
 
 @app.get("/api/students")
 async def get_students(page: int=1, per_page: int=50, search: str="",
-                       status_filter: str="", session_filter: str="", user=Depends(verify_token)):
+                       status_filter: str="", session_filter: str="",
+                       view: str="normal", user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
     wc, params = [], []
+
+    # View determines base filter
+    if view == "confirmed":
+        wc.append("is_confirmed = 1")
+    elif view == "required":
+        wc.append("current_status = 'Document Required'")
+    else:  # normal = active students, exclude confirmed
+        wc.append("is_confirmed = 0")
+
     if search:
         wc.append("(reference_no LIKE ? OR student_name LIKE ? OR email LIKE ?)")
         params += [f"%{search}%", f"%{search}%", f"%{search}%"]
@@ -1151,7 +826,7 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
     sessions = conn.execute("SELECT DISTINCT session FROM student_status WHERE session != ''").fetchall()
     conn.close()
     return {"students": [dict(s) for s in students], "total": total, "page": page,
-            "per_page": per_page, "pages": (total+per_page-1)//per_page,
+            "per_page": per_page, "pages": max(1, (total+per_page-1)//per_page),
             "sessions": [s["session"] for s in sessions]}
 
 @app.get("/api/history")
