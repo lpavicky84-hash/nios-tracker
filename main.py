@@ -416,6 +416,22 @@ PORTAL_HTML = """<!DOCTYPE html>
             <div class="legend-item b-rejected"><div class="nm">🔴 Rejected</div><div class="ds">Application rejected</div></div>
           </div>
         </div>
+        <div class="card">
+          <h3>🔧 Phase 2 — Test Login & Find Download Links</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+            Ek <b>confirmed student</b> ka Reference No + DOB daalo. Ye login karke dashboard ke download links dhundega.
+            (Isse hum dekhenge links kaise dikhte hain, phir automate karenge.)</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+            <input type="text" id="dbg-ref" placeholder="Reference No (e.g. D0026300046)"
+              style="flex:1;min-width:180px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
+            <input type="text" id="dbg-dob" placeholder="DOB DD-MM-YYYY (e.g. 08-08-2007)"
+              style="flex:1;min-width:180px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="testLogin()">🔍 Test Login & Find Links</button>
+          <div id="dbg-status" style="margin-top:12px;font-size:13px"></div>
+          <pre id="dbg-result" style="margin-top:12px;background:#0F172A;color:#A5F3FC;padding:16px;
+            border-radius:10px;font-size:12px;overflow-x:auto;max-height:400px;display:none;white-space:pre-wrap"></pre>
+        </div>
       </section>
     </div>
   </div>
@@ -702,6 +718,26 @@ function showToast(msg){
   const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");
   setTimeout(()=>t.classList.remove("show"),3500);
 }
+
+async function testLogin(){
+  const ref=document.getElementById("dbg-ref").value.trim();
+  const dob=document.getElementById("dbg-dob").value.trim();
+  if(!ref||!dob){showToast("❌ Reference No aur DOB dono daalo");return;}
+  const st=document.getElementById("dbg-status");
+  const pre=document.getElementById("dbg-result");
+  st.innerHTML='<span style="color:var(--muted)">⏳ Login ho raha hai (captcha solve + ~15 sec)...</span>';
+  pre.style.display="none";
+  try{
+    const q=new URLSearchParams({ref:ref,dob:dob});
+    const d=await api("/api/debug-login?"+q.toString());
+    if(d.error){st.innerHTML='<span style="color:var(--danger)">❌ '+d.error+'</span>';return;}
+    const ok=d.logged_in_guess;
+    st.innerHTML=ok?'<span style="color:var(--success)">✅ Login successful! Links niche dekho.</span>'
+      :'<span style="color:var(--warn)">⚠️ Login shayad fail hua (ya page alag hai). Details niche.</span>';
+    pre.style.display="block";
+    pre.textContent=JSON.stringify(d,null,2);
+  }catch(e){st.innerHTML='<span style="color:var(--danger)">❌ '+e.message+'</span>';}
+}
 </script>
 </body>
 </html>
@@ -882,3 +918,13 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
     set_setting("interval_public", pub)
     reschedule_jobs()
     return {"message": f"Regular: {reg}h, Public: {pub}h", "regular": reg, "public": pub}
+
+@app.get("/api/debug-login")
+async def debug_login_endpoint(ref: str, dob: str, action: str = "", user=Depends(verify_token)):
+    """Phase 2 debug: login with a confirmed student & discover download links."""
+    try:
+        from nios_login import debug_login
+        result = debug_login(ref, dob, action or None)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
