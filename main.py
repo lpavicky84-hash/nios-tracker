@@ -298,7 +298,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
-              <th>Status</th><th>Remark</th><th>Last Checked</th>
+              <th>Status</th><th>Last Checked</th>
             </tr></thead><tbody id="s-body"></tbody></table>
           </div>
           <div class="pg-bar" id="s-pg"></div>
@@ -553,12 +553,15 @@ function dlLinks(s){
   return l.length?l.join("<br>"):'<span style="color:var(--muted)">Phase 2</span>';
 }
 function fillSessions(arr){
-  if(sessionsLoaded||!arr)return;
+  if(!arr)return;
   ["s-session","c-session","r-session"].forEach(id=>{
     const sel=document.getElementById(id);
+    if(!sel)return;
+    const cur=sel.value;
+    sel.length=1;  // keep only the first "All Sessions" option
     arr.forEach(s=>{if(s){const o=document.createElement("option");o.value=s;o.textContent=s;sel.appendChild(o);}});
+    sel.value=cur; // restore previous selection
   });
-  sessionsLoaded=true;
 }
 
 async function loadStudents(page){
@@ -577,9 +580,8 @@ async function loadStudents(page){
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'</td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td>'+badge(s.current_status)+'</td>'+
-      '<td style="font-size:12px;color:var(--warn);max-width:200px">'+(s.remark||"")+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+'</td></tr>').join("")
-      :'<tr><td colspan="7" class="empty">No active students found</td></tr>';
+      :'<tr><td colspan="6" class="empty">No active students found</td></tr>';
     renderPg("s-pg",page,d.pages,"loadStudents");
   }catch(e){showToast("❌ "+e.message);}
 }
