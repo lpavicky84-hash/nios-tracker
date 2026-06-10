@@ -1,5 +1,11 @@
 import os
 import logging
+import time as _time
+os.environ["TZ"] = "Asia/Kolkata"
+try:
+    _time.tzset()
+except Exception:
+    pass
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File
@@ -273,6 +279,10 @@ PORTAL_HTML = """<!DOCTYPE html>
       <section id="sec-dashboard" class="page-section active">
         <div class="stat-grid" id="stat-grid"></div>
         <div class="card">
+          <h3>📚 Session-wise Students</h3>
+          <div id="session-counts"><div class="empty">Loading...</div></div>
+        </div>
+        <div class="card">
           <h3>📈 Status Distribution</h3>
           <div id="distribution"><div class="empty">Loading...</div></div>
         </div>
@@ -515,9 +525,19 @@ async function loadDashboard(){
       statCard("Document Required",c.document_required||0,"📄","#EA580C")+
       statCard("In Verification",c.doc_verification||0,"🟠","#D97706");
     renderDistribution(d.status_distribution,d.total_students);
+    renderSessionCounts(d.session_counts||[]);
     renderRuns(d.recent_runs,"recent-runs");
     renderBell(d.notifications||[]);
   }catch(e){showToast("❌ "+e.message);}
+}
+function renderSessionCounts(arr){
+  const el=document.getElementById("session-counts");
+  if(!arr.length){el.innerHTML='<div class="empty">No data yet</div>';return;}
+  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">'+
+    arr.map(s=>'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;'+
+      'background:#F8FAFC;border:1px solid var(--border);border-radius:11px">'+
+      '<span style="font-size:13px;font-weight:600">'+(s.session||"—")+'</span>'+
+      '<span style="font-size:18px;font-weight:800;color:var(--primary)">'+s.cnt+'</span></div>').join("")+'</div>';
 }
 function statCard(lbl,val,ic,col){
   return '<div class="stat"><div class="ic">'+ic+'</div><div class="lbl">'+lbl+
@@ -885,6 +905,11 @@ async def dashboard(user=Depends(verify_token)):
         "SELECT student_name, reference_no, remark FROM student_status WHERE current_status='Document Required' ORDER BY last_changed DESC LIMIT 50"
     ).fetchall()
 
+    # Session-wise totals
+    sess_counts = conn.execute(
+        "SELECT session, COUNT(*) as cnt FROM student_status WHERE session != '' GROUP BY session ORDER BY cnt DESC"
+    ).fetchall()
+
     conn.close()
     jr = scheduler.get_job("job_regular")
     next_run = str(jr.next_run_time) if jr and jr.next_run_time else "Not scheduled"
@@ -898,6 +923,7 @@ async def dashboard(user=Depends(verify_token)):
             "changes_today": changes_today,
         },
         "notifications": [dict(n) for n in notifs],
+        "session_counts": [dict(s) for s in sess_counts],
     }
 
 @app.get("/api/students")

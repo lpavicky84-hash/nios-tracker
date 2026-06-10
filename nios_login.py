@@ -264,8 +264,24 @@ def _inject_banner(html):
             return html[:end+1] + PRINT_BANNER + html[end+1:]
     return PRINT_BANNER + html
 
+def html_to_pdf(html, session, base_url=BASE):
+    """Render the print-ready HTML to a real PDF using the print stylesheet.
+    Images (incl. session-protected ones) are fetched via the student's session."""
+    from weasyprint import HTML, default_url_fetcher
+    def fetcher(url):
+        try:
+            if "sdmis.nios.ac.in" in url:
+                r = session.get(url, headers=HEADERS, timeout=30)
+                return {"string": r.content,
+                        "mime_type": r.headers.get("Content-Type", "application/octet-stream").split(";")[0]}
+        except Exception:
+            pass
+        return default_url_fetcher(url)
+    return HTML(string=html, base_url=base_url, url_fetcher=fetcher).write_pdf()
+
 def fetch_document(reference_no, dob, kind):
-    """Login as student & return the document, ready for the counsellor.
+    """Login as student & return the document. Prefers a real PDF (print layout);
+    falls back to print-ready HTML if PDF rendering isn't available.
     Returns (bytes, content_type, filename) or (None, error, None)."""
     if not CAPSOLVER_API_KEY:
         return None, "CAPTCHA_API_KEY not set", None
@@ -281,11 +297,18 @@ def fetch_document(reference_no, dob, kind):
     except Exception as e:
         return None, f"fetch error: {e}", None
     ct = r.headers.get("Content-Type", "").lower()
-    # Real PDF? serve directly
+    # Already a PDF? serve directly
     if "pdf" in ct or r.content[:4] == b"%PDF":
         return r.content, "application/pdf", f"{kind}_{reference_no}.pdf"
-    # Print-ready HTML: inline images/css + add Save-as-PDF banner
+    # Print-ready HTML -> render a real PDF (best: print layout + embedded images)
     if "html" in ct:
+        try:
+            pdf = html_to_pdf(r.text, session)
+            if pdf and pdf[:4] == b"%PDF":
+                return pdf, "application/pdf", f"{kind}_{reference_no}.pdf"
+        except Exception as e:
+            logger.warning(f"PDF render failed for {kind}, falling back to HTML: {e}")
+        # Fallback: inline images + Save-as-PDF banner
         html = inline_resources(r.text, session)
         html = _inject_banner(html)
         return html.encode("utf-8"), "text/html; charset=utf-8", f"{kind}_{reference_no}.html"

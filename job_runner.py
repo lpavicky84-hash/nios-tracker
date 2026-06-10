@@ -1,5 +1,11 @@
 import logging
 import os
+import time as _time
+os.environ["TZ"] = "Asia/Kolkata"
+try:
+    _time.tzset()
+except Exception:
+    pass
 from datetime import datetime
 from database import get_db
 from scraper import scrape_students
@@ -43,19 +49,26 @@ def run_status_check(group_type="all"):
     try:
         all_students = read_students_from_excel(EXCEL_PATH)
 
-        # Filter by group + skip confirmed
+        # Filter by group; confirmed students are re-checked in the 'public'
+        # (slower) job so NIOS detail changes are still caught — not skipped forever.
         to_check = []
         for s in all_students:
-            # check if already confirmed in DB
             row = c.execute("SELECT is_confirmed FROM student_status WHERE row_key=?",
                             (s["row_key"],)).fetchone()
-            if row and row["is_confirmed"] == 1:
-                continue  # skip confirmed students
-            if group_type != "all" and session_group(s["session"]) != group_type:
-                continue
+            confirmed = bool(row and row["is_confirmed"] == 1)
+            grp = session_group(s["session"])
+            if group_type == "regular":
+                if confirmed:
+                    continue                      # confirmed -> handled by public job
+                if grp != "regular":
+                    continue
+            elif group_type == "public":
+                if not confirmed and grp != "public":
+                    continue                      # public job: public-session active + ALL confirmed
+            # group_type == "all": check everyone
             to_check.append(s)
 
-        logger.info(f"{len(to_check)} students to check (skipped confirmed + filtered)")
+        logger.info(f"{len(to_check)} students to check (group={group_type})")
 
         if not to_check:
             _finish(conn, run_id, 0, 0, 0, "Nothing to check")
