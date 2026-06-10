@@ -241,7 +241,6 @@ def fetch_document(reference_no, dob, kind):
 
 def probe_links(session, classified):
     """Fetch each classified link to report content-type/size (debug)."""
-    out = {}
     for kind, url in classified.items():
         try:
             r = session.get(url, headers=HEADERS, timeout=30)
@@ -263,3 +262,48 @@ def probe_links(session, classified):
         except Exception as e:
             out[kind] = {"error": str(e)}
     return out
+
+def debug_doc(reference_no, dob, kind):
+    """Inspect a document page's HTML structure to find how the PDF is served."""
+    if not CAPSOLVER_API_KEY:
+        return {"error": "CAPTCHA_API_KEY not set"}
+    path = DOC_URLS.get(kind)
+    if not path:
+        return {"error": "invalid kind"}
+    session = get_logged_in_session(reference_no, dob)
+    if session is None:
+        return {"error": "login failed (check reference/DOB)"}
+    target = urljoin(BASE, path)
+    try:
+        r = session.get(target, headers=HEADERS, timeout=45)
+    except Exception as e:
+        return {"error": f"fetch error: {e}"}
+    ct = r.headers.get("Content-Type", "")
+    soup = BeautifulSoup(r.text, "html.parser")
+    iframes = [el.get("src") for el in soup.find_all(["iframe", "embed"]) if el.get("src")]
+    objects = [el.get("data") for el in soup.find_all("object") if el.get("data")]
+    forms = []
+    for f in soup.find_all("form"):
+        forms.append({
+            "action": f.get("action"), "method": (f.get("method") or "get").lower(),
+            "inputs": [{"name": i.get("name"), "value": (i.get("value") or "")[:30]}
+                       for i in f.find_all(["input", "button"]) if i.get("name")],
+        })
+    links = [{"text": a.get_text(" ", strip=True)[:35], "href": a["href"]}
+             for a in soup.find_all("a", href=True)
+             if not a["href"].lower().startswith("javascript")][:40]
+    scripts = [s.get("src") for s in soup.find_all("script") if s.get("src")][:15]
+    inline = " ".join(s.get_text() for s in soup.find_all("script") if not s.get("src"))
+    hints = re.findall(r'["\']([^"\']*(?:pdf|print|download|id.?card|hall|app|form|registration)[^"\']*)["\']',
+                       inline, re.I)
+    return {
+        "content_type": ct,
+        "status": r.status_code,
+        "iframes_embeds": iframes,
+        "objects": objects,
+        "forms": forms,
+        "links": links,
+        "script_srcs": scripts,
+        "url_hints_in_js": sorted(set(h for h in hints if len(h) > 3))[:25],
+        "html_preview": re.sub(r"\s+", " ", r.text)[:2000],
+    }

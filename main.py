@@ -431,6 +431,18 @@ PORTAL_HTML = """<!DOCTYPE html>
               style="flex:1;min-width:180px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
           </div>
           <button class="btn btn-primary btn-sm" onclick="testLogin()">🔍 Test Login & Find Links</button>
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+            <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
+              <b>Doc page inspect</b> — agar download fail ho to ye chalao (PDF kaise embedded hai dekhne ke liye):</p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+              <select id="dbg-kind" style="padding:10px;border:2px solid var(--border);border-radius:10px;font-size:14px">
+                <option value="id_card">ID Card</option>
+                <option value="app_form">Application Form</option>
+                <option value="hall_ticket">Hall Ticket</option>
+              </select>
+              <button class="btn btn-outline btn-sm" onclick="inspectDoc()">🔬 Inspect Doc Page</button>
+            </div>
+          </div>
           <div id="dbg-status" style="margin-top:12px;font-size:13px"></div>
           <pre id="dbg-result" style="margin-top:12px;background:#0F172A;color:#A5F3FC;padding:16px;
             border-radius:10px;font-size:12px;overflow-x:auto;max-height:400px;display:none;white-space:pre-wrap"></pre>
@@ -566,9 +578,18 @@ function badge(s){
 }
 function dlLinks(s){
   if(!s.reference_no||!s.dob) return '<span style="color:var(--warn);font-size:11px">ref/DOB missing</span>';
-  const isStream2=(s.session||"").toLowerCase().includes("stream 2");
-  let b=[dlBtn(s,"id_card","ID Card"), dlBtn(s,"app_form","App Form")];
-  if(!isStream2) b.push(dlBtn(s,"hall_ticket","Hall Ticket"));
+  const sess=(s.session||"").toLowerCase();
+  const isPublic=sess.includes("april")||sess.includes("october")||sess.includes("public");
+  const isStream2=sess.includes("stream 2");
+  let b=[dlBtn(s,"id_card","ID Card")];
+  if(isPublic){
+    // Public exam students: ONLY id card
+  }else if(isStream2){
+    b.push(dlBtn(s,"app_form","App Form"));          // Stream 2: id + app form
+  }else{
+    b.push(dlBtn(s,"app_form","App Form"));          // On Demand: all three
+    b.push(dlBtn(s,"hall_ticket","Hall Ticket"));
+  }
   return '<div style="display:flex;flex-wrap:wrap;gap:5px">'+b.join("")+'</div>';
 }
 function dlBtn(s,kind,label){
@@ -753,6 +774,25 @@ async function testLogin(){
     const ok=d.logged_in_guess;
     st.innerHTML=ok?'<span style="color:var(--success)">✅ Login successful! Links niche dekho.</span>'
       :'<span style="color:var(--warn)">⚠️ Login shayad fail hua (ya page alag hai). Details niche.</span>';
+    pre.style.display="block";
+    pre.textContent=JSON.stringify(d,null,2);
+  }catch(e){st.innerHTML='<span style="color:var(--danger)">❌ '+e.message+'</span>';}
+}
+
+async function inspectDoc(){
+  const ref=document.getElementById("dbg-ref").value.trim();
+  const dob=document.getElementById("dbg-dob").value.trim();
+  const kind=document.getElementById("dbg-kind").value;
+  if(!ref||!dob){showToast("❌ Reference No aur DOB dono daalo");return;}
+  const st=document.getElementById("dbg-status");
+  const pre=document.getElementById("dbg-result");
+  st.innerHTML='<span style="color:var(--muted)">⏳ '+kind+' page inspect ho raha hai (~15 sec)...</span>';
+  pre.style.display="none";
+  try{
+    const q=new URLSearchParams({ref:ref,dob:dob,kind:kind});
+    const d=await api("/api/debug-doc?"+q.toString());
+    if(d.error){st.innerHTML='<span style="color:var(--danger)">❌ '+d.error+'</span>';return;}
+    st.innerHTML='<span style="color:var(--success)">✅ Inspect done — structure niche</span>';
     pre.style.display="block";
     pre.textContent=JSON.stringify(d,null,2);
   }catch(e){st.innerHTML='<span style="color:var(--danger)">❌ '+e.message+'</span>';}
@@ -958,3 +998,12 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
         raise HTTPException(status_code=404, detail=ctype)
     return Response(content=content, media_type=ctype,
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+@app.get("/api/debug-doc")
+async def debug_doc_endpoint(ref: str, dob: str, kind: str, user=Depends(verify_token)):
+    """Inspect a document page's structure (Phase 2 debug)."""
+    try:
+        from nios_login import debug_doc
+        return debug_doc(ref, dob, kind)
+    except Exception as e:
+        return {"error": str(e)}
