@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 NIOS_URL = "https://sdmis.nios.ac.in/registration/check-admission-status"
 RECAPTCHA_SITE_KEY = "6Lc07T4iAAAAADsnW1ZXbEz0GUissRcasTnSS4Nj"
-RECAPTCHA_ACTION = "submit"   # v3 action; adjust if NIOS uses a different one
+RECAPTCHA_ACTION = ""   # NIOS doesn't use a specific action
 
 # CapSolver API
 CAPSOLVER_API_KEY = os.environ.get("CAPTCHA_API_KEY", "")
@@ -57,14 +57,16 @@ def solve_recaptcha_v3() -> str:
 
     try:
         # Create task
+        task = {
+            "type": "ReCaptchaV3TaskProxyLess",
+            "websiteURL": NIOS_URL,
+            "websiteKey": RECAPTCHA_SITE_KEY,
+        }
+        if RECAPTCHA_ACTION:
+            task["pageAction"] = RECAPTCHA_ACTION
         create_payload = {
             "clientKey": CAPSOLVER_API_KEY,
-            "task": {
-                "type": "ReCaptchaV3TaskProxyLess",
-                "websiteURL": NIOS_URL,
-                "websiteKey": RECAPTCHA_SITE_KEY,
-                "pageAction": RECAPTCHA_ACTION,
-            }
+            "task": task,
         }
         r = requests.post(CAPSOLVER_CREATE, json=create_payload, timeout=30)
         data = r.json()
@@ -170,6 +172,31 @@ def fetch_status_for_reference(session: requests.Session, reference_no: str,
     return result
 
 # ── Main scrape loop ───────────────────────────────────────────────────────────
+def debug_full_response(reference_no: str) -> str:
+    """Solve captcha + submit + return FULL raw response for debugging."""
+    if not CAPSOLVER_API_KEY:
+        return "ERROR: CAPTCHA_API_KEY not set"
+    session = requests.Session()
+    csrf = get_csrf_and_fields(session)
+    token = solve_recaptcha_v3()
+    if not token:
+        return "ERROR: captcha solve failed"
+    payload = {
+        "_csrf": csrf,
+        "CheckStatus[email]": "",
+        "CheckStatus[reference_no]": str(reference_no).strip(),
+        "CheckStatus[enrollment_no]": "",
+        "CheckStatus[google_recapcha_response]": token,
+    }
+    headers = {**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
+    resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
+        tag.decompose()
+    text = soup.get_text(separator="\n", strip=True)
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    return f"STATUS CODE: {resp.status_code}\nTOKEN LEN: {len(token)}\n\n--- RESPONSE TEXT ---\n" + "\n".join(lines[:60])
+
 def scrape_all_students(reference_numbers: list) -> list:
     logger.info(f"Starting scrape for {len(reference_numbers)} students...")
     results = []

@@ -14,6 +14,7 @@ import aiofiles
 
 from database import init_db, get_db
 from job_runner import run_status_check
+from scraper import debug_full_response
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -1059,6 +1060,11 @@ async def serve_portal():
 async def health():
     captcha_set = bool(os.environ.get("CAPTCHA_API_KEY", ""))
     return {"status": "ok", "captcha_key_set": captcha_set}
+
+@app.get("/debug/{ref_no}", response_class=HTMLResponse)
+async def debug_ref(ref_no: str):
+    result = debug_full_response(ref_no)
+    return f"<pre style='font-family:monospace;white-space:pre-wrap;padding:20px'>{result}</pre>"
 
 @app.post("/api/login")
 async def login(body: dict):
