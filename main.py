@@ -632,7 +632,7 @@ function renderPg(id,page,total,fnName){
   const start=Math.max(1,page-2),end=Math.min(total,page+2);
   for(let i=start;i<=end;i++)ctrl+='<button class="'+(i===page?'active':'')+'" onclick="'+fnName+'('+i+')">'+i+'</button>';
   ctrl+='<button onclick="'+fnName+'('+(page+1)+')" '+(page>=total?"disabled":"")+'>Next ›</button></div>';
-  const sel='<div class="perpage">Per page: <select onchange="setPerPage(this.value,\''+fnName+'\')">'+
+  const sel='<div class="perpage">Per page: <select onchange="setPerPage(this.value,&quot;'+fnName+'&quot;)">'+
     [10,20,50,100].map(n=>'<option value="'+n+'" '+(n===perPage?"selected":"")+'>'+n+'</option>').join("")+
     '</select></div>';
   el.innerHTML=ctrl+sel;
