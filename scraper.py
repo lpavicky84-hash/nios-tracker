@@ -16,16 +16,18 @@ CAPSOLVER_CREATE  = "https://api.capsolver.com/createTask"
 CAPSOLVER_RESULT  = "https://api.capsolver.com/getTaskResult"
 
 STATUS_COLORS = {
-    "pending":                {"hex": "FFF9C4", "label": "Pending"},
-    "documents verification": {"hex": "FFE0B2", "label": "Documents Verification In Progress"},
-    "verified":               {"hex": "C8E6C9", "label": "Verified"},
-    "approved":               {"hex": "B2DFDB", "label": "Approved"},
-    "admission confirmed":    {"hex": "69F0AE", "label": "Admission Confirmed"},
-    "admitted":               {"hex": "BBDEFB", "label": "Admitted"},
-    "rejected":               {"hex": "FFCDD2", "label": "Rejected"},
-    "error":                  {"hex": "E0E0E0", "label": "Fetch Error"},
-    "not found":              {"hex": "F8BBD0", "label": "Not Found"},
-    "unknown":                {"hex": "F5F5F5", "label": "Unknown"},
+    "document verification in progress": {"hex": "FFE0B2", "label": "Documents Verification In Progress"},
+    "documents verification":            {"hex": "FFE0B2", "label": "Documents Verification In Progress"},
+    "document verification":             {"hex": "FFE0B2", "label": "Documents Verification In Progress"},
+    "admission confirmed":               {"hex": "69F0AE", "label": "Admission Confirmed"},
+    "pending":                           {"hex": "FFF9C4", "label": "Pending"},
+    "verified":                          {"hex": "C8E6C9", "label": "Verified"},
+    "approved":                          {"hex": "B2DFDB", "label": "Approved"},
+    "admitted":                          {"hex": "BBDEFB", "label": "Admitted"},
+    "rejected":                          {"hex": "FFCDD2", "label": "Rejected"},
+    "error":                             {"hex": "E0E0E0", "label": "Fetch Error"},
+    "not found":                         {"hex": "F8BBD0", "label": "Not Found"},
+    "unknown":                           {"hex": "F5F5F5", "label": "Unknown"},
 }
 
 def get_status_label(text: str) -> str:
@@ -139,26 +141,31 @@ def fetch_status_for_reference(session: requests.Session, reference_no: str,
         for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
             tag.decompose()
 
+        # Get clean text and find status after "Admission Status" label
+        full_text = soup.get_text(separator="\n", strip=True)
+        lines = [l.strip() for l in full_text.split("\n") if l.strip()]
+
         status_text = ""
-        # Look for result containers with status keywords
-        for sel in [".alert", "#result", "#status", "table tbody tr",
-                    "[class*='admission']", "[class*='status']", "[class*='result']",
-                    ".card-body", ".panel-body", "h3", "h4", ".well"]:
-            for el in soup.select(sel):
-                txt = el.get_text(strip=True)
-                if txt and len(txt) > 8 and any(
-                    kw in txt.lower() for kw in [
-                        "pending", "verified", "rejected", "admitted", "confirmed",
-                        "approved", "verification", "document"
-                    ]
-                ):
-                    status_text = txt
+        # Find "Admission Status" then take the NEXT meaningful line (the actual status)
+        for i, line in enumerate(lines):
+            if line.lower() == "admission status" and i + 1 < len(lines):
+                candidate = lines[i + 1].strip()
+                # Skip if next line is just a label, take the real status
+                if candidate and len(candidate) > 3 and candidate.lower() != "back":
+                    status_text = candidate
+                    # If this matched a known status, use it
+                    if get_status_label(candidate) != "Unknown":
+                        break
+
+        # Fallback: scan whole text for any known status keyword
+        if not status_text or get_status_label(status_text) == "Unknown":
+            for line in lines:
+                if get_status_label(line) != "Unknown":
+                    status_text = line
                     break
-            if status_text:
-                break
 
         if not status_text:
-            status_text = soup.get_text(separator=" ", strip=True)[:800]
+            status_text = full_text[:500]
 
         result["raw_text"] = status_text[:500]
         result["status"] = get_status_label(status_text)
