@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import logging
 import requests
@@ -8,239 +9,205 @@ logger = logging.getLogger(__name__)
 
 NIOS_URL = "https://sdmis.nios.ac.in/registration/check-admission-status"
 RECAPTCHA_SITE_KEY = "6Lc07T4iAAAAADsnW1ZXbEz0GUissRcasTnSS4Nj"
-RECAPTCHA_ACTION = ""   # NIOS doesn't use a specific action
 
-# CapSolver API
 CAPSOLVER_API_KEY = os.environ.get("CAPTCHA_API_KEY", "")
 CAPSOLVER_CREATE  = "https://api.capsolver.com/createTask"
 CAPSOLVER_RESULT  = "https://api.capsolver.com/getTaskResult"
 
-STATUS_COLORS = {
-    "document verification in progress": {"hex": "FFE0B2", "label": "Documents Verification In Progress"},
-    "documents verification":            {"hex": "FFE0B2", "label": "Documents Verification In Progress"},
-    "document verification":             {"hex": "FFE0B2", "label": "Documents Verification In Progress"},
-    "admission confirmed":               {"hex": "69F0AE", "label": "Admission Confirmed"},
-    "pending":                           {"hex": "FFF9C4", "label": "Pending"},
-    "verified":                          {"hex": "C8E6C9", "label": "Verified"},
-    "approved":                          {"hex": "B2DFDB", "label": "Approved"},
-    "admitted":                          {"hex": "BBDEFB", "label": "Admitted"},
-    "rejected":                          {"hex": "FFCDD2", "label": "Rejected"},
-    "error":                             {"hex": "E0E0E0", "label": "Fetch Error"},
-    "not found":                         {"hex": "F8BBD0", "label": "Not Found"},
-    "unknown":                           {"hex": "F5F5F5", "label": "Unknown"},
-}
+# Order matters: most specific first
+STATUS_KEYWORDS = [
+    ("admission confirmed",               "Admission Confirmed"),
+    ("document required",                 "Document Required"),
+    ("documents required",                "Document Required"),
+    ("document verification in progress", "Documents Verification In Progress"),
+    ("documents verification",            "Documents Verification In Progress"),
+    ("document verification",             "Documents Verification In Progress"),
+    ("rejected",                          "Rejected"),
+    ("admitted",                          "Admitted"),
+    ("approved",                          "Approved"),
+    ("verified",                          "Verified"),
+    ("pending",                           "Pending"),
+]
 
-def get_status_label(text: str) -> str:
+def get_status_label(text):
     if not text:
         return "Unknown"
     t = text.lower()
-    for key, val in STATUS_COLORS.items():
-        if key in t:
-            return val["label"]
+    for kw, label in STATUS_KEYWORDS:
+        if kw in t:
+            return label
     return "Unknown"
 
-SESSION_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
     "Referer": NIOS_URL,
 }
 
-# ── CapSolver: solve reCAPTCHA v3 ──────────────────────────────────────────────
-def solve_recaptcha_v3() -> str:
-    """Get a reCAPTCHA v3 token from CapSolver. Returns token string or ''."""
+def solve_recaptcha_v3():
     if not CAPSOLVER_API_KEY:
         logger.error("CAPTCHA_API_KEY not set!")
         return ""
-
     try:
-        # Create task
-        task = {
-            "type": "ReCaptchaV3TaskProxyLess",
-            "websiteURL": NIOS_URL,
-            "websiteKey": RECAPTCHA_SITE_KEY,
-        }
-        if RECAPTCHA_ACTION:
-            task["pageAction"] = RECAPTCHA_ACTION
-        create_payload = {
+        payload = {
             "clientKey": CAPSOLVER_API_KEY,
-            "task": task,
+            "task": {
+                "type": "ReCaptchaV3TaskProxyLess",
+                "websiteURL": NIOS_URL,
+                "websiteKey": RECAPTCHA_SITE_KEY,
+            }
         }
-        r = requests.post(CAPSOLVER_CREATE, json=create_payload, timeout=30)
-        data = r.json()
-        if data.get("errorId") != 0:
-            logger.error(f"CapSolver create error: {data.get('errorDescription')}")
+        r = requests.post(CAPSOLVER_CREATE, json=payload, timeout=30).json()
+        if r.get("errorId") != 0:
+            logger.error(f"CapSolver create error: {r.get('errorDescription')}")
             return ""
-
-        task_id = data.get("taskId")
-        logger.info(f"CapSolver task created: {task_id}")
-
-        # Poll for result (max ~60s)
-        for attempt in range(30):
+        task_id = r.get("taskId")
+        for _ in range(30):
             time.sleep(2)
-            result_payload = {"clientKey": CAPSOLVER_API_KEY, "taskId": task_id}
-            rr = requests.post(CAPSOLVER_RESULT, json=result_payload, timeout=30)
-            rdata = rr.json()
-            if rdata.get("errorId") != 0:
-                logger.error(f"CapSolver result error: {rdata.get('errorDescription')}")
+            rr = requests.post(CAPSOLVER_RESULT,
+                               json={"clientKey": CAPSOLVER_API_KEY, "taskId": task_id},
+                               timeout=30).json()
+            if rr.get("errorId") != 0:
+                logger.error(f"CapSolver result error: {rr.get('errorDescription')}")
                 return ""
-            if rdata.get("status") == "ready":
-                token = rdata.get("solution", {}).get("gRecaptchaResponse", "")
-                logger.info(f"CapSolver token received ({len(token)} chars)")
-                return token
-
-        logger.error("CapSolver timed out")
+            if rr.get("status") == "ready":
+                return rr.get("solution", {}).get("gRecaptchaResponse", "")
         return ""
-
     except Exception as e:
         logger.error(f"CapSolver error: {e}")
         return ""
 
-# ── Get CSRF token + form fields ───────────────────────────────────────────────
-def get_csrf_and_fields(session: requests.Session):
-    resp = session.get(NIOS_URL, headers=SESSION_HEADERS, timeout=20)
+def get_csrf(session):
+    resp = session.get(NIOS_URL, headers=HEADERS, timeout=20)
     soup = BeautifulSoup(resp.text, "html.parser")
-
-    csrf = ""
-    meta = soup.find("meta", {"name": "_csrf"}) or soup.find("meta", {"name": "csrf-token"})
+    meta = soup.find("meta", {"name": "_csrf"})
     if meta:
-        csrf = meta.get("content", "")
-    else:
-        inp = soup.find("input", {"name": "_csrf"})
-        if inp:
-            csrf = inp.get("value", "")
+        return meta.get("content", "")
+    inp = soup.find("input", {"name": "_csrf"})
+    return inp.get("value", "") if inp else ""
 
-    logger.info(f"CSRF: {csrf[:20]}...")
-    return csrf
+def _extract_fields(soup):
+    """Parse the NIOS result page into a dict of label->value."""
+    full = soup.get_text(separator="\n", strip=True)
+    lines = [l.strip() for l in full.split("\n") if l.strip()]
+    data = {}
+    for i, line in enumerate(lines):
+        low = line.lower()
+        if low in ("admission status", "reference no", "reference number",
+                   "enrollment no", "name of candidate", "academic year") and i + 1 < len(lines):
+            data[low] = lines[i + 1].strip()
+    # capture any remark/notification/comment text
+    remark = ""
+    for i, line in enumerate(lines):
+        if any(k in line.lower() for k in ["remark", "comment", "notification", "reason", "required"]):
+            if i + 1 < len(lines):
+                remark = lines[i + 1].strip()
+            else:
+                remark = line.strip()
+            break
+    return data, lines, remark
 
-# ── Fetch status for one reference ─────────────────────────────────────────────
-def fetch_status_for_reference(session: requests.Session, reference_no: str,
-                                csrf: str, captcha_token: str) -> dict:
+def fetch_status(session, ref_no, email, csrf, token):
+    """Check by reference if available else by email. Returns result dict."""
     result = {
-        "reference_no": reference_no,
-        "status": "Fetch Error",
-        "raw_text": "",
-        "success": False,
+        "reference_no": ref_no, "email": email,
+        "status": "Fetch Error", "remark": "", "raw_text": "", "success": False,
+        "discovered_ref": "",
     }
     try:
         payload = {
             "_csrf": csrf,
-            "CheckStatus[email]": "",
-            "CheckStatus[reference_no]": str(reference_no).strip(),
+            "CheckStatus[email]": email if (email and not ref_no) else "",
+            "CheckStatus[reference_no]": ref_no if ref_no else "",
             "CheckStatus[enrollment_no]": "",
-            "CheckStatus[google_recapcha_response]": captcha_token,
+            "CheckStatus[google_recapcha_response]": token,
         }
-        headers = {**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
+        headers = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
         resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25)
-
         soup = BeautifulSoup(resp.text, "html.parser")
         for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
             tag.decompose()
 
-        # Get clean text and find status after "Admission Status" label
-        full_text = soup.get_text(separator="\n", strip=True)
-        lines = [l.strip() for l in full_text.split("\n") if l.strip()]
+        data, lines, remark = _extract_fields(soup)
 
-        status_text = ""
-        # Find "Admission Status" then take the NEXT meaningful line (the actual status)
-        for i, line in enumerate(lines):
-            if line.lower() == "admission status" and i + 1 < len(lines):
-                candidate = lines[i + 1].strip()
-                # Skip if next line is just a label, take the real status
-                if candidate and len(candidate) > 3 and candidate.lower() != "back":
-                    status_text = candidate
-                    # If this matched a known status, use it
-                    if get_status_label(candidate) != "Unknown":
-                        break
-
-        # Fallback: scan whole text for any known status keyword
+        # status text
+        status_text = data.get("admission status", "")
         if not status_text or get_status_label(status_text) == "Unknown":
             for line in lines:
                 if get_status_label(line) != "Unknown":
                     status_text = line
                     break
 
-        if not status_text:
-            status_text = full_text[:500]
+        label = get_status_label(status_text)
 
-        result["raw_text"] = status_text[:500]
-        result["status"] = get_status_label(status_text)
-        result["success"] = True
-        logger.info(f"  {reference_no} -> {result['status']} | {status_text[:80]}")
+        # If we checked by email, try to discover the reference number
+        disc_ref = data.get("reference no") or data.get("reference number") or ""
+        if disc_ref and re.match(r'^[A-Z]?\d{6,}', disc_ref.replace(" ", "")):
+            result["discovered_ref"] = disc_ref.strip()
+
+        result["status"] = label
+        result["raw_text"] = status_text[:300]
+        result["remark"] = remark[:300] if label == "Document Required" else ""
+        result["success"] = (label != "Unknown")
+        logger.info(f"  {ref_no or email} -> {label}" + (f" | remark: {remark[:50]}" if remark else ""))
 
     except Exception as e:
-        logger.error(f"Error fetching {reference_no}: {e}")
+        logger.error(f"Error fetching {ref_no or email}: {e}")
         result["raw_text"] = str(e)[:200]
-
     return result
 
-# ── Main scrape loop ───────────────────────────────────────────────────────────
-def debug_full_response(reference_no: str) -> str:
-    """Solve captcha + submit + return FULL raw response for debugging."""
+def scrape_students(students):
+    """students: list of dicts with reference_no/email. Returns results list."""
+    logger.info(f"Scraping {len(students)} students...")
+    results = []
+    if not CAPSOLVER_API_KEY:
+        for s in students:
+            results.append({**s, "status": "Fetch Error", "raw_text": "No captcha key",
+                            "success": False, "remark": "", "discovered_ref": ""})
+        return results
+    try:
+        session = requests.Session()
+        csrf = get_csrf(session)
+        for i, s in enumerate(students):
+            ref = s.get("reference_no", "")
+            email = s.get("email", "")
+            logger.info(f"[{i+1}/{len(students)}] {ref or email}")
+            token = solve_recaptcha_v3()
+            if not token:
+                results.append({**s, "status": "Fetch Error", "raw_text": "Captcha failed",
+                                "success": False, "remark": "", "discovered_ref": ""})
+                continue
+            if i > 0 and i % 15 == 0:
+                csrf = get_csrf(session)
+            res = fetch_status(session, ref, email, csrf, token)
+            results.append({**s, **res})
+            time.sleep(2)   # polite gap between students
+    except Exception as e:
+        logger.error(f"Session error: {e}")
+    logger.info(f"Scrape complete. {len(results)} results.")
+    return results
+
+# Debug helper
+def debug_full_response(reference_no):
     if not CAPSOLVER_API_KEY:
         return "ERROR: CAPTCHA_API_KEY not set"
     session = requests.Session()
-    csrf = get_csrf_and_fields(session)
+    csrf = get_csrf(session)
     token = solve_recaptcha_v3()
     if not token:
-        return "ERROR: captcha solve failed"
+        return "ERROR: captcha failed"
     payload = {
-        "_csrf": csrf,
-        "CheckStatus[email]": "",
-        "CheckStatus[reference_no]": str(reference_no).strip(),
+        "_csrf": csrf, "CheckStatus[email]": "",
+        "CheckStatus[reference_no]": reference_no,
         "CheckStatus[enrollment_no]": "",
         "CheckStatus[google_recapcha_response]": token,
     }
-    headers = {**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
-    resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25)
+    resp = session.post(NIOS_URL, data=payload,
+                        headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+                        timeout=25)
     soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
         tag.decompose()
-    text = soup.get_text(separator="\n", strip=True)
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    return f"STATUS CODE: {resp.status_code}\nTOKEN LEN: {len(token)}\n\n--- RESPONSE TEXT ---\n" + "\n".join(lines[:60])
-
-def scrape_all_students(reference_numbers: list) -> list:
-    logger.info(f"Starting scrape for {len(reference_numbers)} students...")
-    results = []
-
-    if not CAPSOLVER_API_KEY:
-        logger.error("CAPTCHA_API_KEY missing — set it in Railway env vars!")
-        for ref in reference_numbers:
-            results.append({"reference_no": ref, "status": "Fetch Error",
-                            "raw_text": "No captcha API key", "success": False})
-        return results
-
-    try:
-        session = requests.Session()
-        csrf = get_csrf_and_fields(session)
-
-        for i, ref_no in enumerate(reference_numbers):
-            logger.info(f"[{i+1}/{len(reference_numbers)}] Checking: {ref_no}")
-            # Each submission needs a fresh captcha token
-            token = solve_recaptcha_v3()
-            if not token:
-                results.append({"reference_no": ref_no, "status": "Fetch Error",
-                                "raw_text": "Captcha solve failed", "success": False})
-                continue
-            # Refresh CSRF occasionally
-            if i > 0 and i % 15 == 0:
-                csrf = get_csrf_and_fields(session)
-            res = fetch_status_for_reference(session, ref_no, csrf, token)
-            results.append(res)
-            time.sleep(1)
-
-    except Exception as e:
-        logger.error(f"Session error: {e}")
-        checked = {r["reference_no"] for r in results}
-        for ref in reference_numbers:
-            if ref not in checked:
-                results.append({"reference_no": ref, "status": "Fetch Error",
-                                "raw_text": str(e)[:200], "success": False})
-
-    logger.info(f"Scrape complete. {len(results)} results.")
-    return results
+    lines = [l.strip() for l in soup.get_text(separator="\n", strip=True).split("\n") if l.strip()]
+    return f"STATUS: {resp.status_code}\n\n" + "\n".join(lines[:60])

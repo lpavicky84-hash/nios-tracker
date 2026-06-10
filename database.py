@@ -1,5 +1,4 @@
 import sqlite3
-import os
 from datetime import datetime
 
 DB_PATH = "nios_tracker.db"
@@ -13,11 +12,11 @@ def init_db():
     conn = get_db()
     c = conn.cursor()
 
-    # Run logs table
     c.execute("""
         CREATE TABLE IF NOT EXISTS run_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_at TEXT NOT NULL,
+            group_type TEXT DEFAULT 'all',
             total_checked INTEGER DEFAULT 0,
             total_changed INTEGER DEFAULT 0,
             total_failed INTEGER DEFAULT 0,
@@ -26,11 +25,10 @@ def init_db():
         )
     """)
 
-    # Student status history
     c.execute("""
         CREATE TABLE IF NOT EXISTS status_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            reference_no TEXT NOT NULL,
+            reference_no TEXT,
             student_name TEXT,
             old_status TEXT,
             new_status TEXT,
@@ -39,22 +37,55 @@ def init_db():
         )
     """)
 
-    # Current student statuses cache
     c.execute("""
         CREATE TABLE IF NOT EXISTS student_status (
-            reference_no TEXT PRIMARY KEY,
+            row_key TEXT PRIMARY KEY,
+            reference_no TEXT,
+            email TEXT,
+            dob TEXT,
             student_name TEXT,
+            mobile TEXT,
             class_level TEXT,
+            session TEXT,
             current_status TEXT,
+            remark TEXT,
+            id_card_link TEXT,
+            app_form_link TEXT,
+            hall_ticket_link TEXT,
+            is_confirmed INTEGER DEFAULT 0,
             last_checked TEXT,
             last_changed TEXT,
             check_count INTEGER DEFAULT 0
         )
     """)
 
+    # Settings table for interval config
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    # Default intervals
+    c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_regular', '6')")
+    c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_public', '12')")
+
     conn.commit()
     conn.close()
-    print("✅ Database initialized")
+    print("Database initialized")
+
+def get_setting(key, default=None):
+    conn = get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+def set_setting(key, value):
+    conn = get_db()
+    conn.execute("INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=?",
+                 (key, str(value), str(value)))
+    conn.commit()
+    conn.close()
 
 if __name__ == "__main__":
     init_db()

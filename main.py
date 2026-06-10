@@ -12,9 +12,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 import aiofiles
 
-from database import init_db, get_db
+from database import init_db, get_db, get_setting, set_setting
 from job_runner import run_status_check
-from scraper import debug_full_response
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -29,7 +28,7 @@ TOKEN_EXPIRE_HOURS = 12
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer  = HTTPBearer()
 
-app = FastAPI(title="NIOS Status Tracker", version="1.0.0")
+app = FastAPI(title="NIOS Status Tracker", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 PORTAL_HTML = """<!DOCTYPE html>
@@ -418,12 +417,16 @@ PORTAL_HTML = """<!DOCTYPE html>
             <option value="">All Statuses</option>
             <option value="Pending">Pending</option>
             <option value="Documents Verification In Progress">Documents Verification In Progress</option>
+            <option value="Document Required">Document Required</option>
             <option value="Verified">Verified</option>
             <option value="Approved">Approved</option>
             <option value="Admission Confirmed">Admission Confirmed</option>
             <option value="Admitted">Admitted</option>
             <option value="Rejected">Rejected</option>
             <option value="Fetch Error">Fetch Error</option>
+          </select>
+          <select id="session-filter" onchange="loadStudents(1)">
+            <option value="">All Sessions</option>
           </select>
         </div>
         <div id="students-count" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
@@ -432,7 +435,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             <thead>
               <tr>
                 <th>#</th><th>Reference No</th><th>Student Name</th>
-                <th>Class</th><th>Status</th><th>Last Checked</th><th>Last Changed</th><th>Checks</th>
+                <th>Session</th><th>Status</th><th>Remark</th><th>Downloads</th><th>Last Checked</th>
               </tr>
             </thead>
             <tbody id="students-body">
@@ -539,16 +542,24 @@ PORTAL_HTML = """<!DOCTYPE html>
     <section id="page-settings" class="page-section">
       <div class="topbar"><h1>⚙️ Settings</h1></div>
       <div class="card">
-        <h3 style="margin-bottom:16px;font-size:15px">⏱ Run Interval</h3>
-        <p style="font-size:13px;color:var(--muted);margin-bottom:12px">
-          Change how often the system auto-checks NIOS website.
+        <h3 style="margin-bottom:8px;font-size:15px">⏱ Recheck Intervals</h3>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+          Alag-alag intervals for different session types. Confirmed students automatically skip ho jaate hain.
         </p>
-        <div style="display:flex;gap:10px;align-items:center">
-          <input type="number" id="interval-hours" value="6" min="1" max="24"
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
+          <span style="font-size:14px;width:230px">📗 Regular (On Demand + Stream 2):</span>
+          <input type="number" id="interval-regular" value="6" min="1" max="72"
             style="width:80px;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:15px">
           <span style="font-size:14px;color:var(--muted)">hours</span>
-          <button class="btn-sm btn-outline" onclick="updateInterval()">Update Interval</button>
         </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
+          <span style="font-size:14px;width:230px">📘 Public Exam (April / October):</span>
+          <input type="number" id="interval-public" value="12" min="1" max="72"
+            style="width:80px;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:15px">
+          <span style="font-size:14px;color:var(--muted)">hours</span>
+        </div>
+        <button class="btn-sm btn-outline" onclick="updateIntervals()">Save Intervals</button>
+        <p id="interval-status" style="font-size:13px;margin-top:10px"></p>
       </div>
       <div class="card">
         <h3 style="margin-bottom:16px;font-size:15px">🎨 Status Colour Legend</h3>
@@ -668,6 +679,7 @@ function showPage(name) {
   if (name === "students")  loadStudents(1);
   if (name === "history")   loadHistory();
   if (name === "run-logs")  loadRunLogs();
+  if (name === "settings")  loadIntervals();
 }
 
 // ══ Dashboard ═════════════════════════════════════════════════════════════
@@ -784,12 +796,21 @@ async function loadStudents(page = 1) {
   studentsCurrentPage = page;
   const search = document.getElementById("search-input").value;
   const status = document.getElementById("status-filter").value;
+  const session = document.getElementById("session-filter").value;
   try {
     const d = await apiFetch(
-      `/api/students?page=${page}&per_page=50&search=${encodeURIComponent(search)}&status_filter=${encodeURIComponent(status)}`
+      `/api/students?page=${page}&per_page=50&search=${encodeURIComponent(search)}&status_filter=${encodeURIComponent(status)}&session_filter=${encodeURIComponent(session)}`
     );
     document.getElementById("students-count").textContent =
       `Showing ${d.students.length} of ${d.total} students`;
+
+    // Populate session filter once
+    const sf = document.getElementById("session-filter");
+    if (d.sessions && sf.options.length <= 1) {
+      d.sessions.forEach(s => {
+        if (s) { const o = document.createElement("option"); o.value = s; o.textContent = s; sf.appendChild(o); }
+      });
+    }
 
     const tbody = document.getElementById("students-body");
     tbody.innerHTML = d.students.length === 0
@@ -797,26 +818,34 @@ async function loadStudents(page = 1) {
       : d.students.map((s, i) => `
           <tr>
             <td style="color:var(--muted)">${(page-1)*50+i+1}</td>
-            <td><code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">${s.reference_no}</code></td>
+            <td><code style="background:#F5F5F5;padding:2px 6px;border-radius:4px">${s.reference_no || "—"}</code></td>
             <td>${s.student_name || "—"}</td>
-            <td>${s.class_level || "—"}</td>
+            <td style="font-size:12px">${s.session || "—"}</td>
             <td>${statusBadge(s.current_status)}</td>
+            <td style="font-size:11px;color:#E65100;max-width:160px">${s.remark || ""}</td>
+            <td style="font-size:11px">${downloadLinks(s)}</td>
             <td style="font-size:12px;color:var(--muted)">${s.last_checked || "—"}</td>
-            <td style="font-size:12px;color:var(--muted)">${s.last_changed || "—"}</td>
-            <td style="text-align:center">${s.check_count || 0}</td>
           </tr>`).join("");
 
-    // Pagination
     renderPagination("students-pagination", page, d.pages, loadStudents);
   } catch (e) {
     showToast("Error loading students: " + e.message);
   }
 }
 
+function downloadLinks(s) {
+  let links = [];
+  if (s.id_card_link)    links.push(`<a href="${s.id_card_link}" target="_blank" style="color:#1565C0">ID Card</a>`);
+  if (s.app_form_link)   links.push(`<a href="${s.app_form_link}" target="_blank" style="color:#1565C0">App Form</a>`);
+  if (s.hall_ticket_link)links.push(`<a href="${s.hall_ticket_link}" target="_blank" style="color:#1565C0">Hall Ticket</a>`);
+  return links.length ? links.join("<br>") : "—";
+}
+
 function statusBadge(status) {
   const map = {
     "Pending":                              "badge-pending",
     "Documents Verification In Progress":   "badge-docs",
+    "Document Required":                    "badge-docs",
     "Verified":                             "badge-verified",
     "Approved":                             "badge-approved",
     "Admission Confirmed":                  "badge-confirmed",
@@ -997,15 +1026,26 @@ async function downloadExcel() {
 }
 
 // ══ Settings ══════════════════════════════════════════════════════════════
-async function updateInterval() {
-  const hours = parseInt(document.getElementById("interval-hours").value);
+async function updateIntervals() {
+  const regular = parseInt(document.getElementById("interval-regular").value);
+  const pub = parseInt(document.getElementById("interval-public").value);
   try {
-    const r = await apiFetch("/api/reschedule", "POST", { hours });
-    showToast("✅ " + r.message);
-    loadDashboard();
+    const r = await apiFetch("/api/intervals", "POST", { regular, public: pub });
+    document.getElementById("interval-status").innerHTML =
+      `<span style="color:var(--success)">✅ ${r.message}</span>`;
+    showToast("✅ Intervals updated!");
   } catch (e) {
-    showToast("❌ " + e.message);
+    document.getElementById("interval-status").innerHTML =
+      `<span style="color:var(--danger)">❌ ${e.message}</span>`;
   }
+}
+
+async function loadIntervals() {
+  try {
+    const r = await apiFetch("/api/intervals");
+    document.getElementById("interval-regular").value = r.regular;
+    document.getElementById("interval-public").value = r.public;
+  } catch (e) {}
 }
 
 // ══ Toast ═════════════════════════════════════════════════════════════════
@@ -1025,7 +1065,7 @@ setInterval(() => {
 </html>
 """
 
-def create_token(username: str) -> str:
+def create_token(username):
     expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
     return jwt.encode({"sub": username, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -1040,11 +1080,20 @@ def verify_token(creds: HTTPAuthorizationCredentials = Depends(bearer)):
 
 scheduler = BackgroundScheduler()
 
+def reschedule_jobs():
+    """Set up the two interval jobs from DB settings."""
+    reg = int(get_setting("interval_regular", "6"))
+    pub = int(get_setting("interval_public", "12"))
+    scheduler.add_job(lambda: run_status_check("regular"), trigger=IntervalTrigger(hours=reg),
+                      id="job_regular", replace_existing=True, next_run_time=None)
+    scheduler.add_job(lambda: run_status_check("public"), trigger=IntervalTrigger(hours=pub),
+                      id="job_public", replace_existing=True, next_run_time=None)
+    logger.info(f"Jobs scheduled — regular:{reg}h public:{pub}h")
+
 @app.on_event("startup")
 async def startup():
     init_db()
-    scheduler.add_job(run_status_check, trigger=IntervalTrigger(hours=6),
-                      id="nios_check", replace_existing=True, next_run_time=None)
+    reschedule_jobs()
     scheduler.start()
     logger.info("Scheduler started")
 
@@ -1058,80 +1107,71 @@ async def serve_portal():
 
 @app.get("/health")
 async def health():
-    captcha_set = bool(os.environ.get("CAPTCHA_API_KEY", ""))
-    return {"status": "ok", "captcha_key_set": captcha_set}
-
-@app.get("/debug/{ref_no}", response_class=HTMLResponse)
-async def debug_ref(ref_no: str):
-    result = debug_full_response(ref_no)
-    return f"<pre style='font-family:monospace;white-space:pre-wrap;padding:20px'>{result}</pre>"
+    return {"status": "ok", "captcha_key_set": bool(os.environ.get("CAPTCHA_API_KEY", ""))}
 
 @app.post("/api/login")
 async def login(body: dict):
-    username = body.get("username", "")
-    password = body.get("password", "")
-    if username != PORTAL_USER or password != PORTAL_PASS:
+    if body.get("username") != PORTAL_USER or body.get("password") != PORTAL_PASS:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    return {"token": create_token(username), "username": username}
+    return {"token": create_token(body.get("username")), "username": body.get("username")}
 
 @app.get("/api/dashboard")
 async def dashboard(user=Depends(verify_token)):
     conn = get_db()
-    total_students = conn.execute("SELECT COUNT(*) FROM student_status").fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM student_status").fetchone()[0]
     runs = conn.execute("SELECT * FROM run_logs ORDER BY id DESC LIMIT 10").fetchall()
-    status_dist = conn.execute(
-        "SELECT current_status, COUNT(*) as cnt FROM student_status GROUP BY current_status"
-    ).fetchall()
-    job = scheduler.get_job("nios_check")
-    next_run = str(job.next_run_time) if job and job.next_run_time else "Not scheduled"
+    dist = conn.execute("SELECT current_status, COUNT(*) as cnt FROM student_status GROUP BY current_status").fetchall()
     conn.close()
+    jr = scheduler.get_job("job_regular")
+    next_run = str(jr.next_run_time) if jr and jr.next_run_time else "Not scheduled"
     return {
-        "total_students": total_students,
-        "next_run": next_run,
-        "status_distribution": [dict(r) for r in status_dist],
+        "total_students": total, "next_run": next_run,
+        "status_distribution": [dict(r) for r in dist],
         "recent_runs": [dict(r) for r in runs],
     }
 
 @app.get("/api/students")
 async def get_students(page: int=1, per_page: int=50, search: str="",
-                       status_filter: str="", user=Depends(verify_token)):
+                       status_filter: str="", session_filter: str="", user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
-    where_clauses, params = [], []
+    wc, params = [], []
     if search:
-        where_clauses.append("(reference_no LIKE ? OR student_name LIKE ?)")
-        params += [f"%{search}%", f"%{search}%"]
+        wc.append("(reference_no LIKE ? OR student_name LIKE ? OR email LIKE ?)")
+        params += [f"%{search}%", f"%{search}%", f"%{search}%"]
     if status_filter:
-        where_clauses.append("current_status = ?")
-        params.append(status_filter)
-    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-    total = conn.execute(f"SELECT COUNT(*) FROM student_status {where_sql}", params).fetchone()[0]
+        wc.append("current_status = ?"); params.append(status_filter)
+    if session_filter:
+        wc.append("session = ?"); params.append(session_filter)
+    where = ("WHERE " + " AND ".join(wc)) if wc else ""
+    total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
-        f"SELECT * FROM student_status {where_sql} ORDER BY student_name LIMIT ? OFFSET ?",
-        params + [per_page, offset]
-    ).fetchall()
+        f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
+        params + [per_page, offset]).fetchall()
+    sessions = conn.execute("SELECT DISTINCT session FROM student_status WHERE session != ''").fetchall()
     conn.close()
-    return {"students": [dict(s) for s in students], "total": total,
-            "page": page, "per_page": per_page, "pages": (total+per_page-1)//per_page}
+    return {"students": [dict(s) for s in students], "total": total, "page": page,
+            "per_page": per_page, "pages": (total+per_page-1)//per_page,
+            "sessions": [s["session"] for s in sessions]}
 
 @app.get("/api/history")
-async def get_history(limit: int=100, user=Depends(verify_token)):
+async def get_history(limit: int=200, user=Depends(verify_token)):
     conn = get_db()
-    history = conn.execute("SELECT * FROM status_history ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    h = conn.execute("SELECT * FROM status_history ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
-    return [dict(h) for h in history]
+    return [dict(x) for x in h]
 
 @app.get("/api/run-logs")
 async def get_run_logs(limit: int=50, user=Depends(verify_token)):
     conn = get_db()
-    logs = conn.execute("SELECT * FROM run_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    l = conn.execute("SELECT * FROM run_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
-    return [dict(l) for l in logs]
+    return [dict(x) for x in l]
 
 @app.post("/api/run-now")
-async def trigger_run_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    background_tasks.add_task(run_status_check)
-    return {"message": "Run triggered! Check dashboard for progress."}
+async def run_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    background_tasks.add_task(run_status_check, "all")
+    return {"message": "Run triggered for all students!"}
 
 @app.post("/api/upload-excel")
 async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token)):
@@ -1150,16 +1190,18 @@ async def download_excel(user=Depends(verify_token)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename="nios_status_updated.xlsx")
 
-@app.get("/api/scheduler-status")
-async def scheduler_status(user=Depends(verify_token)):
-    job = scheduler.get_job("nios_check")
-    return {"running": scheduler.running,
-            "next_run": str(job.next_run_time) if job and job.next_run_time else None}
+@app.get("/api/intervals")
+async def get_intervals(user=Depends(verify_token)):
+    return {"regular": int(get_setting("interval_regular", "6")),
+            "public": int(get_setting("interval_public", "12"))}
 
-@app.post("/api/reschedule")
-async def reschedule(body: dict, user=Depends(verify_token)):
-    hours = int(body.get("hours", 6))
-    if hours < 1 or hours > 24:
-        raise HTTPException(status_code=400, detail="Hours must be 1-24")
-    scheduler.reschedule_job("nios_check", trigger=IntervalTrigger(hours=hours))
-    return {"message": f"Rescheduled to every {hours} hours"}
+@app.post("/api/intervals")
+async def set_intervals(body: dict, user=Depends(verify_token)):
+    reg = int(body.get("regular", 6))
+    pub = int(body.get("public", 12))
+    if not (1 <= reg <= 72) or not (1 <= pub <= 72):
+        raise HTTPException(status_code=400, detail="Hours must be 1-72")
+    set_setting("interval_regular", reg)
+    set_setting("interval_public", pub)
+    reschedule_jobs()
+    return {"message": f"Regular: {reg}h, Public: {pub}h", "regular": reg, "public": pub}
