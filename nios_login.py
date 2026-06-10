@@ -6,6 +6,7 @@ then parses the post-login dashboard for I-Card / Application Form / Hall Ticket
 import os
 import re
 import time
+import base64
 import logging
 import requests
 from bs4 import BeautifulSoup
@@ -192,26 +193,80 @@ def get_logged_in_session(reference_no, dob):
     _session_cache[reference_no] = (session, now + 300)
     return session
 
-def _extract_pdf_from_html(session, html, base):
-    """If the doc page is HTML, find the embedded/linked PDF and fetch it."""
-    soup = BeautifulSoup(html, "html.parser")
-    cand = None
-    for tag, attr in [("iframe", "src"), ("embed", "src"), ("object", "data")]:
-        el = soup.find(tag)
-        if el and el.get(attr):
-            cand = urljoin(base, el[attr]); break
-    if not cand:
-        for a in soup.find_all("a", href=True):
-            h = a["href"].lower()
-            if ".pdf" in h or "download" in h or "print" in h:
-                cand = urljoin(base, a["href"]); break
-    if cand:
-        r = session.get(cand, headers=HEADERS, timeout=45)
-        return r.content, r.headers.get("Content-Type", "")
+def _fetch_bytes(url, session):
+    try:
+        sess = session if "sdmis.nios.ac.in" in url else requests
+        r = sess.get(url, headers=HEADERS, timeout=30)
+        if r.status_code == 200:
+            return r.content, r.headers.get("Content-Type", "")
+    except Exception as e:
+        logger.warning(f"resource fetch failed {url}: {e}")
     return None, ""
 
+def _guess_mime(url, ctype, data):
+    if ctype and "/" in ctype:
+        return ctype.split(";")[0].strip()
+    u = url.lower()
+    if u.endswith(".png"): return "image/png"
+    if u.endswith(".jpg") or u.endswith(".jpeg"): return "image/jpeg"
+    if u.endswith(".gif"): return "image/gif"
+    if u.endswith(".svg"): return "image/svg+xml"
+    if data[:4] == b"\x89PNG": return "image/png"
+    if data[:3] == b"\xff\xd8\xff": return "image/jpeg"
+    return "image/png"
+
+def inline_resources(html, session):
+    """Fetch images & CSS (using student's session for protected ones) and embed inline,
+    so the document renders fully in the counsellor's browser."""
+    soup = BeautifulSoup(html, "html.parser")
+    # Inline images
+    for img in soup.find_all("img"):
+        src = img.get("src")
+        if not src or src.startswith("data:"):
+            continue
+        full = src if src.startswith("http") else urljoin(BASE, src)
+        data, ctype = _fetch_bytes(full, session)
+        if data:
+            mime = _guess_mime(full, ctype, data)
+            img["src"] = f"data:{mime};base64,{base64.b64encode(data).decode()}"
+    # Inline external stylesheets
+    for link in soup.find_all("link"):
+        rel = link.get("rel") or []
+        if "stylesheet" not in [r.lower() for r in rel]:
+            continue
+        href = link.get("href")
+        if not href:
+            continue
+        full = href if href.startswith("http") else urljoin(BASE, href)
+        data, _ = _fetch_bytes(full, session)
+        if data:
+            style = soup.new_tag("style")
+            style.string = data.decode("utf-8", "ignore")
+            link.replace_with(style)
+    return str(soup)
+
+PRINT_BANNER = """
+<div id="__mvs_bar" style="position:fixed;top:0;left:0;right:0;z-index:999999;background:#4F46E5;
+color:#fff;padding:10px 16px;text-align:center;font-family:-apple-system,Arial,sans-serif;
+box-shadow:0 2px 8px rgba(0,0,0,.2)">
+  <button onclick="window.print()" style="padding:9px 22px;font-size:15px;border:none;border-radius:8px;
+  background:#fff;color:#4F46E5;font-weight:700;cursor:pointer">📄 Save as PDF / Print</button>
+  <span style="margin-left:12px;font-size:13px">ya keyboard pe Ctrl+P (Mac: Cmd+P) dabao</span>
+</div>
+<style>@media print{#__mvs_bar{display:none!important}} body{padding-top:56px!important}</style>
+"""
+
+def _inject_banner(html):
+    if "<body" in html.lower():
+        idx = html.lower().find("<body")
+        end = html.find(">", idx)
+        if end != -1:
+            return html[:end+1] + PRINT_BANNER + html[end+1:]
+    return PRINT_BANNER + html
+
 def fetch_document(reference_no, dob, kind):
-    """Login as student & fetch the document. Returns (bytes, content_type, filename) or (None, error, None)."""
+    """Login as student & return the document, ready for the counsellor.
+    Returns (bytes, content_type, filename) or (None, error, None)."""
     if not CAPSOLVER_API_KEY:
         return None, "CAPTCHA_API_KEY not set", None
     path = DOC_URLS.get(kind)
@@ -226,18 +281,15 @@ def fetch_document(reference_no, dob, kind):
     except Exception as e:
         return None, f"fetch error: {e}", None
     ct = r.headers.get("Content-Type", "").lower()
-    fname = f"{kind}_{reference_no}.pdf"
-    # Direct PDF?
+    # Real PDF? serve directly
     if "pdf" in ct or r.content[:4] == b"%PDF":
-        return r.content, "application/pdf", fname
-    # HTML page wrapping a PDF
+        return r.content, "application/pdf", f"{kind}_{reference_no}.pdf"
+    # Print-ready HTML: inline images/css + add Save-as-PDF banner
     if "html" in ct:
-        content, ct2 = _extract_pdf_from_html(session, r.text, target)
-        if content and (content[:4] == b"%PDF" or "pdf" in ct2.lower()):
-            return content, "application/pdf", fname
-        if content:
-            return content, ct2 or "application/octet-stream", f"{kind}_{reference_no}"
-    return None, f"no PDF found (got {ct or 'unknown'})", None
+        html = inline_resources(r.text, session)
+        html = _inject_banner(html)
+        return html.encode("utf-8"), "text/html; charset=utf-8", f"{kind}_{reference_no}.html"
+    return None, f"unexpected content ({ct or 'unknown'})", None
 
 def probe_links(session, classified):
     """Fetch each classified link to report content-type/size (debug)."""

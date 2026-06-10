@@ -602,10 +602,18 @@ async function downloadDoc(ref,dob,kind,name){
     const q=new URLSearchParams({ref:ref,dob:dob,kind:kind});
     const r=await fetch(API+"/api/download-doc?"+q.toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
     if(!r.ok){const e=await r.json().catch(()=>({detail:"failed"}));showToast("❌ "+(e.detail||"download failed"));return;}
-    const blob=await r.blob();const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");a.href=url;a.download=name.replace(/ /g,"_")+"_"+ref+".pdf";a.click();
-    URL.revokeObjectURL(url);
-    showToast("✅ "+name+" downloaded!");
+    const ctype=r.headers.get("Content-Type")||"";
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    if(ctype.includes("pdf")){
+      const a=document.createElement("a");a.href=url;a.download=name.replace(/ /g,"_")+"_"+ref+".pdf";a.click();
+      showToast("✅ "+name+" downloaded!");
+    }else{
+      const w=window.open(url,"_blank");
+      if(!w){showToast("⚠️ Popup block hua — allow karo phir dobara click karo");}
+      else{showToast("✅ "+name+" khul gaya — upar 'Save as PDF' dabao");}
+    }
+    setTimeout(()=>URL.revokeObjectURL(url),120000);
   }catch(e){showToast("❌ "+e.message);}
 }
 function fillSessions(arr){
@@ -990,14 +998,18 @@ async def debug_login_endpoint(ref: str, dob: str, action: str = "", user=Depend
 
 @app.get("/api/download-doc")
 async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)):
-    """Login as the student and proxy-download their document PDF."""
+    """Login as the student and return their document (PDF or print-ready HTML)."""
     from fastapi import Response
     from nios_login import fetch_document
     content, ctype, filename = fetch_document(ref, dob, kind)
     if content is None:
         raise HTTPException(status_code=404, detail=ctype)
-    return Response(content=content, media_type=ctype,
-                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    # PDF -> attachment download; HTML -> inline (open in tab to print)
+    if "pdf" in ctype:
+        disp = f'attachment; filename="{filename}"'
+    else:
+        disp = "inline"
+    return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
 
 @app.get("/api/debug-doc")
 async def debug_doc_endpoint(ref: str, dob: str, kind: str, user=Depends(verify_token)):
