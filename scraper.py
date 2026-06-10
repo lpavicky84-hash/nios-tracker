@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 import requests
@@ -6,6 +7,13 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 NIOS_URL = "https://sdmis.nios.ac.in/registration/check-admission-status"
+RECAPTCHA_SITE_KEY = "6Lc07T4iAAAAADsnW1ZXbEz0GUissRcasTnSS4Nj"
+RECAPTCHA_ACTION = "submit"   # v3 action; adjust if NIOS uses a different one
+
+# CapSolver API
+CAPSOLVER_API_KEY = os.environ.get("CAPTCHA_API_KEY", "")
+CAPSOLVER_CREATE  = "https://api.capsolver.com/createTask"
+CAPSOLVER_RESULT  = "https://api.capsolver.com/getTaskResult"
 
 STATUS_COLORS = {
     "pending":                {"hex": "FFF9C4", "label": "Pending"},
@@ -40,72 +48,74 @@ SESSION_HEADERS = {
     "Referer": NIOS_URL,
 }
 
+# ── CapSolver: solve reCAPTCHA v3 ──────────────────────────────────────────────
+def solve_recaptcha_v3() -> str:
+    """Get a reCAPTCHA v3 token from CapSolver. Returns token string or ''."""
+    if not CAPSOLVER_API_KEY:
+        logger.error("CAPTCHA_API_KEY not set!")
+        return ""
+
+    try:
+        # Create task
+        create_payload = {
+            "clientKey": CAPSOLVER_API_KEY,
+            "task": {
+                "type": "ReCaptchaV3TaskProxyLess",
+                "websiteURL": NIOS_URL,
+                "websiteKey": RECAPTCHA_SITE_KEY,
+                "pageAction": RECAPTCHA_ACTION,
+            }
+        }
+        r = requests.post(CAPSOLVER_CREATE, json=create_payload, timeout=30)
+        data = r.json()
+        if data.get("errorId") != 0:
+            logger.error(f"CapSolver create error: {data.get('errorDescription')}")
+            return ""
+
+        task_id = data.get("taskId")
+        logger.info(f"CapSolver task created: {task_id}")
+
+        # Poll for result (max ~60s)
+        for attempt in range(30):
+            time.sleep(2)
+            result_payload = {"clientKey": CAPSOLVER_API_KEY, "taskId": task_id}
+            rr = requests.post(CAPSOLVER_RESULT, json=result_payload, timeout=30)
+            rdata = rr.json()
+            if rdata.get("errorId") != 0:
+                logger.error(f"CapSolver result error: {rdata.get('errorDescription')}")
+                return ""
+            if rdata.get("status") == "ready":
+                token = rdata.get("solution", {}).get("gRecaptchaResponse", "")
+                logger.info(f"CapSolver token received ({len(token)} chars)")
+                return token
+
+        logger.error("CapSolver timed out")
+        return ""
+
+    except Exception as e:
+        logger.error(f"CapSolver error: {e}")
+        return ""
+
+# ── Get CSRF token + form fields ───────────────────────────────────────────────
 def get_csrf_and_fields(session: requests.Session):
-    """Load the page, extract CSRF token and all form fields."""
     resp = session.get(NIOS_URL, headers=SESSION_HEADERS, timeout=20)
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # Get CSRF
     csrf = ""
     meta = soup.find("meta", {"name": "_csrf"}) or soup.find("meta", {"name": "csrf-token"})
     if meta:
         csrf = meta.get("content", "")
     else:
-        inp = soup.find("input", {"name": "_csrf"}) or soup.find("input", {"name": "csrf_token"})
+        inp = soup.find("input", {"name": "_csrf"})
         if inp:
             csrf = inp.get("value", "")
 
-    # Get ALL form fields (to send complete form)
-    form = soup.find("form")
-    form_fields = {}
-    if form:
-        for inp in form.find_all("input"):
-            name = inp.get("name", "")
-            val  = inp.get("value", "")
-            if name:
-                form_fields[name] = val
+    logger.info(f"CSRF: {csrf[:20]}...")
+    return csrf
 
-    logger.info(f"CSRF: {csrf[:20]}... | Form fields: {list(form_fields.keys())}")
-    return csrf, form_fields, resp.cookies
-
-def debug_fetch_one(reference_no: str) -> str:
-    """Debug: fetch one reference and return raw HTML snippet."""
-    session = requests.Session()
-    csrf, form_fields, cookies = get_csrf_and_fields(session)
-
-    # Try different field name combinations
-    payloads_to_try = [
-        {"_csrf": csrf, "referenceNo": reference_no},
-        {"_csrf": csrf, "reference_no": reference_no},
-        {"_csrf": csrf, "refNo": reference_no},
-        {"_csrf": csrf, "enrollmentNo": "", "email": "", "referenceNo": reference_no},
-    ]
-
-    results = []
-    for payload in payloads_to_try:
-        try:
-            resp = session.post(
-                NIOS_URL,
-                data=payload,
-                headers={**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
-                timeout=20
-            )
-            soup = BeautifulSoup(resp.text, "html.parser")
-            # Remove scripts/styles
-            for tag in soup(["script", "style", "nav", "header", "footer"]):
-                tag.decompose()
-            text = soup.get_text(separator="\n", strip=True)
-            # Get first 1000 chars of meaningful text
-            lines = [l.strip() for l in text.split("\n") if l.strip() and len(l.strip()) > 3]
-            snippet = "\n".join(lines[:30])
-            results.append(f"PAYLOAD {list(payload.keys())}: {snippet[:500]}")
-        except Exception as e:
-            results.append(f"PAYLOAD ERROR: {e}")
-
-    return "\n\n---\n\n".join(results)
-
-def fetch_status_for_reference(session: requests.Session, reference_no: str, 
-                                csrf: str, form_fields: dict) -> dict:
+# ── Fetch status for one reference ─────────────────────────────────────────────
+def fetch_status_for_reference(session: requests.Session, reference_no: str,
+                                csrf: str, captcha_token: str) -> dict:
     result = {
         "reference_no": reference_no,
         "status": "Fetch Error",
@@ -113,64 +123,45 @@ def fetch_status_for_reference(session: requests.Session, reference_no: str,
         "success": False,
     }
     try:
-        # Build payload with all original form fields + our reference
-        payload = dict(form_fields)
-        payload["_csrf"] = csrf
-        # Try to find the right field name for reference number
-        payload["referenceNo"] = reference_no
-        # Clear other search fields
-        for key in ["email", "Email", "enrollmentNo", "EnrollmentNo"]:
-            if key in payload:
-                payload[key] = ""
-
-        resp = session.post(
-            NIOS_URL,
-            data=payload,
-            headers={**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
-            timeout=20
-        )
+        payload = {
+            "_csrf": csrf,
+            "CheckStatus[email]": "",
+            "CheckStatus[reference_no]": str(reference_no).strip(),
+            "CheckStatus[enrollment_no]": "",
+            "CheckStatus[google_recapcha_response]": captcha_token,
+        }
+        headers = {**SESSION_HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
+        resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25)
 
         soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Remove noise
         for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
             tag.decompose()
 
-        # Try specific result containers first
         status_text = ""
-        selectors = [
-            ".alert-success", ".alert-danger", ".alert-warning", ".alert-info",
-            ".alert", "#result", "#status", ".status-result",
-            "table tbody tr", ".admission-status", ".card .card-body",
-            "[class*='admission']", "[class*='status']", "[id*='result']",
-            "h3", "h4", ".well", ".panel-body"
-        ]
-        for sel in selectors:
-            els = soup.select(sel)
-            for el in els:
+        # Look for result containers with status keywords
+        for sel in [".alert", "#result", "#status", "table tbody tr",
+                    "[class*='admission']", "[class*='status']", "[class*='result']",
+                    ".card-body", ".panel-body", "h3", "h4", ".well"]:
+            for el in soup.select(sel):
                 txt = el.get_text(strip=True)
                 if txt and len(txt) > 8 and any(
                     kw in txt.lower() for kw in [
                         "pending", "verified", "rejected", "admitted", "confirmed",
-                        "approved", "verification", "status", "admission", "document"
+                        "approved", "verification", "document"
                     ]
                 ):
                     status_text = txt
-                    logger.info(f"  Found via selector '{sel}': {txt[:100]}")
                     break
             if status_text:
                 break
 
-        # Fallback: all page text
         if not status_text:
-            all_text = soup.get_text(separator=" ", strip=True)
-            status_text = all_text[:800]
-            logger.info(f"  Fallback text for {reference_no}: {all_text[:200]}")
+            status_text = soup.get_text(separator=" ", strip=True)[:800]
 
         result["raw_text"] = status_text[:500]
         result["status"] = get_status_label(status_text)
         result["success"] = True
-        logger.info(f"  {reference_no} → {result['status']} | text: {status_text[:80]}")
+        logger.info(f"  {reference_no} -> {result['status']} | {status_text[:80]}")
 
     except Exception as e:
         logger.error(f"Error fetching {reference_no}: {e}")
@@ -178,31 +169,44 @@ def fetch_status_for_reference(session: requests.Session, reference_no: str,
 
     return result
 
+# ── Main scrape loop ───────────────────────────────────────────────────────────
 def scrape_all_students(reference_numbers: list) -> list:
     logger.info(f"Starting scrape for {len(reference_numbers)} students...")
     results = []
 
+    if not CAPSOLVER_API_KEY:
+        logger.error("CAPTCHA_API_KEY missing — set it in Railway env vars!")
+        for ref in reference_numbers:
+            results.append({"reference_no": ref, "status": "Fetch Error",
+                            "raw_text": "No captcha API key", "success": False})
+        return results
+
     try:
         session = requests.Session()
-        csrf, form_fields, _ = get_csrf_and_fields(session)
+        csrf = get_csrf_and_fields(session)
 
         for i, ref_no in enumerate(reference_numbers):
             logger.info(f"[{i+1}/{len(reference_numbers)}] Checking: {ref_no}")
-            if i > 0 and i % 10 == 0:
-                csrf, form_fields, _ = get_csrf_and_fields(session)
-            res = fetch_status_for_reference(session, ref_no, csrf, form_fields)
+            # Each submission needs a fresh captcha token
+            token = solve_recaptcha_v3()
+            if not token:
+                results.append({"reference_no": ref_no, "status": "Fetch Error",
+                                "raw_text": "Captcha solve failed", "success": False})
+                continue
+            # Refresh CSRF occasionally
+            if i > 0 and i % 15 == 0:
+                csrf = get_csrf_and_fields(session)
+            res = fetch_status_for_reference(session, ref_no, csrf, token)
             results.append(res)
-            time.sleep(1.5)
+            time.sleep(1)
 
     except Exception as e:
         logger.error(f"Session error: {e}")
         checked = {r["reference_no"] for r in results}
         for ref in reference_numbers:
             if ref not in checked:
-                results.append({
-                    "reference_no": ref, "status": "Fetch Error",
-                    "raw_text": str(e)[:200], "success": False,
-                })
+                results.append({"reference_no": ref, "status": "Fetch Error",
+                                "raw_text": str(e)[:200], "success": False})
 
     logger.info(f"Scrape complete. {len(results)} results.")
     return results

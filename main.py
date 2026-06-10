@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -14,7 +14,6 @@ import aiofiles
 
 from database import init_db, get_db
 from job_runner import run_status_check
-from scraper import debug_fetch_one
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -1058,13 +1057,8 @@ async def serve_portal():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
-
-# DEBUG endpoint — see raw NIOS response for one reference number
-@app.get("/debug/nios/{ref_no}", response_class=PlainTextResponse)
-async def debug_nios(ref_no: str, user=Depends(verify_token)):
-    result = debug_fetch_one(ref_no)
-    return result
+    captcha_set = bool(os.environ.get("CAPTCHA_API_KEY", ""))
+    return {"status": "ok", "captcha_key_set": captcha_set}
 
 @app.post("/api/login")
 async def login(body: dict):
