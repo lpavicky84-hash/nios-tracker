@@ -146,19 +146,15 @@ def debug_login(reference_no, dob, page_action=None):
     if resp is None:
         return {"error": "captcha failed or no response"}
     soup = BeautifulSoup(resp.text, "html.parser")
-    # All links
     all_links = []
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
         text = a.get_text(" ", strip=True)
         if href and not href.lower().startswith("javascript"):
             all_links.append({"text": text[:60], "href": href})
-    # Detect login success: presence of dashboard markers
-    body = resp.text.lower()
-    logged_in = any(m in body for m in ["admission status", "my documents", "payment status",
-                                         "logout", "enroll no", "i card"])
+    logged_in = is_logged_in(resp.text)
     classified = find_download_links(session, resp.text)
-    # page title / any error text
+    probe = probe_links(session, classified) if logged_in else {}
     title = soup.find("title")
     return {
         "final_url": resp.url,
@@ -166,6 +162,104 @@ def debug_login(reference_no, dob, page_action=None):
         "logged_in_guess": logged_in,
         "page_title": title.get_text(strip=True) if title else "",
         "classified_links": classified,
-        "all_links": all_links[:60],
-        "html_snippet": re.sub(r"\s+", " ", soup.get_text(" ", strip=True))[:1500],
+        "link_probe": probe,
+        "all_links": all_links[:40],
     }
+
+def is_logged_in(html):
+    body = (html or "").lower()
+    return any(m in body for m in ["admission status", "my documents", "payment status",
+                                    "logout", "enroll no", "i card", "dashboard"])
+
+# ── Document fetching (proxy download) ──
+DOC_URLS = {
+    "id_card":     "/registration/id-card",
+    "app_form":    "/home/print-form",
+    "hall_ticket": "/registration/hall-ticket",
+}
+
+_session_cache = {}   # reference_no -> (session, expiry_ts)
+
+def get_logged_in_session(reference_no, dob):
+    """Return a logged-in session (cached ~5 min) or None."""
+    now = time.time()
+    cached = _session_cache.get(reference_no)
+    if cached and cached[1] > now:
+        return cached[0]
+    session, resp = login_student(reference_no, dob)
+    if resp is None or not is_logged_in(resp.text):
+        return None
+    _session_cache[reference_no] = (session, now + 300)
+    return session
+
+def _extract_pdf_from_html(session, html, base):
+    """If the doc page is HTML, find the embedded/linked PDF and fetch it."""
+    soup = BeautifulSoup(html, "html.parser")
+    cand = None
+    for tag, attr in [("iframe", "src"), ("embed", "src"), ("object", "data")]:
+        el = soup.find(tag)
+        if el and el.get(attr):
+            cand = urljoin(base, el[attr]); break
+    if not cand:
+        for a in soup.find_all("a", href=True):
+            h = a["href"].lower()
+            if ".pdf" in h or "download" in h or "print" in h:
+                cand = urljoin(base, a["href"]); break
+    if cand:
+        r = session.get(cand, headers=HEADERS, timeout=45)
+        return r.content, r.headers.get("Content-Type", "")
+    return None, ""
+
+def fetch_document(reference_no, dob, kind):
+    """Login as student & fetch the document. Returns (bytes, content_type, filename) or (None, error, None)."""
+    if not CAPSOLVER_API_KEY:
+        return None, "CAPTCHA_API_KEY not set", None
+    path = DOC_URLS.get(kind)
+    if not path:
+        return None, "invalid document kind", None
+    session = get_logged_in_session(reference_no, dob)
+    if session is None:
+        return None, "login failed (check reference/DOB)", None
+    target = urljoin(BASE, path)
+    try:
+        r = session.get(target, headers=HEADERS, timeout=45)
+    except Exception as e:
+        return None, f"fetch error: {e}", None
+    ct = r.headers.get("Content-Type", "").lower()
+    fname = f"{kind}_{reference_no}.pdf"
+    # Direct PDF?
+    if "pdf" in ct or r.content[:4] == b"%PDF":
+        return r.content, "application/pdf", fname
+    # HTML page wrapping a PDF
+    if "html" in ct:
+        content, ct2 = _extract_pdf_from_html(session, r.text, target)
+        if content and (content[:4] == b"%PDF" or "pdf" in ct2.lower()):
+            return content, "application/pdf", fname
+        if content:
+            return content, ct2 or "application/octet-stream", f"{kind}_{reference_no}"
+    return None, f"no PDF found (got {ct or 'unknown'})", None
+
+def probe_links(session, classified):
+    """Fetch each classified link to report content-type/size (debug)."""
+    out = {}
+    for kind, url in classified.items():
+        try:
+            r = session.get(url, headers=HEADERS, timeout=30)
+            ct = r.headers.get("Content-Type", "")
+            info = {"status": r.status_code, "content_type": ct, "size_bytes": len(r.content),
+                    "is_pdf": (r.content[:4] == b"%PDF" or "pdf" in ct.lower())}
+            if "html" in ct.lower():
+                soup = BeautifulSoup(r.text, "html.parser")
+                pdfs = []
+                for tag, attr in [("iframe", "src"), ("embed", "src"), ("object", "data")]:
+                    el = soup.find(tag)
+                    if el and el.get(attr):
+                        pdfs.append(el[attr])
+                for a in soup.find_all("a", href=True):
+                    if ".pdf" in a["href"].lower():
+                        pdfs.append(a["href"])
+                info["pdf_links_inside"] = pdfs[:5]
+            out[kind] = info
+        except Exception as e:
+            out[kind] = {"error": str(e)}
+    return out

@@ -142,6 +142,9 @@ PORTAL_HTML = """<!DOCTYPE html>
   .btn-success{background:var(--success);color:#fff}
   .btn-success:hover{filter:brightness(1.08)}
   .btn-sm{padding:8px 15px;font-size:13px;border-radius:8px}
+  .btn-dl{padding:6px 11px;font-size:12px;font-weight:600;border-radius:7px;cursor:pointer;
+    border:1.5px solid var(--primary);background:var(--primary-light);color:var(--primary);transition:.15s}
+  .btn-dl:hover{background:var(--primary);color:#fff}
 
   .filter-bar{display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap}
   .filter-bar input,.filter-bar select{padding:11px 14px;border:2px solid var(--border);
@@ -562,11 +565,27 @@ function badge(s){
   return '<span class="badge '+(m[s]||'b-error')+'">'+(s||'Unknown')+'</span>';
 }
 function dlLinks(s){
-  let l=[];
-  if(s.id_card_link)l.push('<a href="'+s.id_card_link+'" target="_blank" style="color:var(--primary)">ID Card</a>');
-  if(s.app_form_link)l.push('<a href="'+s.app_form_link+'" target="_blank" style="color:var(--primary)">App Form</a>');
-  if(s.hall_ticket_link)l.push('<a href="'+s.hall_ticket_link+'" target="_blank" style="color:var(--primary)">Hall Ticket</a>');
-  return l.length?l.join("<br>"):'<span style="color:var(--muted)">Phase 2</span>';
+  if(!s.reference_no||!s.dob) return '<span style="color:var(--warn);font-size:11px">ref/DOB missing</span>';
+  const isStream2=(s.session||"").toLowerCase().includes("stream 2");
+  let b=[dlBtn(s,"id_card","ID Card"), dlBtn(s,"app_form","App Form")];
+  if(!isStream2) b.push(dlBtn(s,"hall_ticket","Hall Ticket"));
+  return '<div style="display:flex;flex-wrap:wrap;gap:5px">'+b.join("")+'</div>';
+}
+function dlBtn(s,kind,label){
+  return '<button class="btn-dl" onclick="downloadDoc(&quot;'+s.reference_no+'&quot;,&quot;'+
+    (s.dob||"")+'&quot;,&quot;'+kind+'&quot;,&quot;'+label+'&quot;)">⬇ '+label+'</button>';
+}
+async function downloadDoc(ref,dob,kind,name){
+  showToast("⏳ "+name+" laa rahe hain (login + ~15s)...");
+  try{
+    const q=new URLSearchParams({ref:ref,dob:dob,kind:kind});
+    const r=await fetch(API+"/api/download-doc?"+q.toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
+    if(!r.ok){const e=await r.json().catch(()=>({detail:"failed"}));showToast("❌ "+(e.detail||"download failed"));return;}
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download=name.replace(/ /g,"_")+"_"+ref+".pdf";a.click();
+    URL.revokeObjectURL(url);
+    showToast("✅ "+name+" downloaded!");
+  }catch(e){showToast("❌ "+e.message);}
 }
 function fillSessions(arr){
   if(!arr)return;
@@ -928,3 +947,14 @@ async def debug_login_endpoint(ref: str, dob: str, action: str = "", user=Depend
         return result
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/api/download-doc")
+async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)):
+    """Login as the student and proxy-download their document PDF."""
+    from fastapi import Response
+    from nios_login import fetch_document
+    content, ctype, filename = fetch_document(ref, dob, kind)
+    if content is None:
+        raise HTTPException(status_code=404, detail=ctype)
+    return Response(content=content, media_type=ctype,
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
