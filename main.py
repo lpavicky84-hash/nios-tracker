@@ -663,7 +663,7 @@ async function pollProgress(){
       document.getElementById("pb-fill").style.width=pct+"%";
       document.getElementById("pb-sub").innerHTML=
         (d.current||0)+" / "+(d.total||0)+" checked &nbsp;·&nbsp; "+
-        "<b style=\"color:var(--success)\">"+(d.changed||0)+"</b> changed &nbsp;·&nbsp; "+
+        "<b style='color:var(--success)'>"+(d.changed||0)+"</b> changed &nbsp;·&nbsp; "+
         (d.same||0)+" same &nbsp;·&nbsp; <b>"+(d.remaining||0)+"</b> remaining";
       const g=d.group_type==="public"?"Public (April / October)":(d.group_type==="regular"?"On Demand + Stream 2":"all");
       document.getElementById("pb-label").textContent="Checking "+g+" students…";
