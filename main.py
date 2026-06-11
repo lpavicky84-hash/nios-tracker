@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -419,6 +419,9 @@ PORTAL_HTML = """<!DOCTYPE html>
               <option>Approved</option><option>Rejected</option><option>Fetch Error</option>
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
+            <button class="btn btn-outline btn-sm" onclick="exportStudents('normal')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export Excel</button>
           </div>
           <div id="s-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
@@ -437,8 +440,15 @@ PORTAL_HTML = """<!DOCTYPE html>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
             Inka admission pakka ho gaya. Download links (Phase 2) yahin aayenge.</p>
           <div class="filter-bar">
-            <input type="text" id="c-search" placeholder=" Search..." oninput="debounceConfirmed()">
+            <input type="text" id="c-search" placeholder="Search name / reference / email..." oninput="debounceConfirmed()">
+            <select id="c-status" onchange="loadConfirmed(1)">
+              <option value="">All Statuses</option>
+              <option>Admission Confirmed</option><option>Admitted</option>
+            </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
+            <button class="btn btn-outline btn-sm" onclick="exportStudents('confirmed')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export Excel</button>
           </div>
           <div id="c-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
@@ -457,8 +467,15 @@ PORTAL_HTML = """<!DOCTYPE html>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
             Counsellor inko resolve kare. Resolve hone ke baad next run mein wapas Active list mein chale jayenge.</p>
           <div class="filter-bar">
-            <input type="text" id="r-search" placeholder=" Search..." oninput="debounceRequired()">
+            <input type="text" id="r-search" placeholder="Search name / reference / email..." oninput="debounceRequired()">
+            <select id="r-status" onchange="loadRequired(1)">
+              <option value="">All Statuses</option>
+              <option>Document Required</option>
+            </select>
             <select id="r-session" onchange="loadRequired(1)"><option value="">All Sessions</option></select>
+            <button class="btn btn-outline btn-sm" onclick="exportStudents('required')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export Excel</button>
           </div>
           <div id="r-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
@@ -473,6 +490,34 @@ PORTAL_HTML = """<!DOCTYPE html>
       <section id="sec-history" class="page-section">
         <div class="card">
           <h3>Status Change History</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+            Date & time range chuno — e.g. kal 6:30 PM se ab tak ke confirmations dekhne ke liye "Custom range" use karo.</p>
+          <div class="filter-bar">
+            <select id="h-preset" onchange="onHistPreset()">
+              <option value="all">All time</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="24h">Last 24 hours</option>
+              <option value="custom">Custom range…</option>
+            </select>
+            <select id="h-status" onchange="loadHistory(1)">
+              <option value="">All status changes</option>
+              <option>Admission Confirmed</option><option>Verified</option>
+              <option>Documents Verification In Progress</option><option>Document Required</option>
+              <option>Approved</option><option>Rejected</option>
+            </select>
+            <button class="btn btn-outline btn-sm" onclick="exportHistory()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export Excel</button>
+          </div>
+          <div class="filter-bar" id="h-custom" style="display:none">
+            <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
+              <input type="datetime-local" id="h-from"></label>
+            <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">To
+              <input type="datetime-local" id="h-to"></label>
+            <button class="btn btn-primary btn-sm" onclick="loadHistory(1)">Apply</button>
+          </div>
+          <div id="h-count" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th>Reference No</th><th>Student</th><th>Old Status</th><th>New Status</th><th>Changed At</th>
@@ -937,6 +982,7 @@ async function loadConfirmed(page){
   page=page||1;
   const q=new URLSearchParams({page:page,per_page:perPage,view:"confirmed",
     search:document.getElementById("c-search").value,
+    status_filter:(document.getElementById("c-status")?document.getElementById("c-status").value:""),
     session_filter:document.getElementById("c-session").value});
   try{
     const d=await api("/api/students?"+q.toString());
@@ -958,6 +1004,7 @@ async function loadRequired(page){
   page=page||1;
   const q=new URLSearchParams({page:page,per_page:perPage,view:"required",
     search:document.getElementById("r-search").value,
+    status_filter:(document.getElementById("r-status")?document.getElementById("r-status").value:""),
     session_filter:document.getElementById("r-session").value});
   try{
     const d=await api("/api/students?"+q.toString());
@@ -989,18 +1036,66 @@ function renderPg(id,page,total,fnName){
 function setPerPage(v,fnName){perPage=parseInt(v);window[fnName](1);}
 
 let histPerPage=10;
+function fmtDT(d){
+  const p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+}
+function dtLocalToStr(v){ // "2026-06-11T18:30" -> "2026-06-11 18:30:00"
+  if(!v)return "";
+  v=v.replace("T"," ");
+  return v.length===16?v+":00":v;
+}
+function onHistPreset(){
+  const custom=document.getElementById("h-preset").value==="custom";
+  document.getElementById("h-custom").style.display=custom?"flex":"none";
+  if(custom){
+    const f=document.getElementById("h-from"),t=document.getElementById("h-to");
+    if(f&&!f.value){const y=new Date();y.setDate(y.getDate()-1);y.setHours(18,30,0,0);f.value=toLocalInput(y);}
+    if(t&&!t.value){t.value=toLocalInput(new Date());}
+  }else loadHistory(1);
+}
+function toLocalInput(d){const p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes());}
+function histRange(){
+  const preset=fval("h-preset");
+  const now=new Date();
+  let from="",to="";
+  if(preset==="today"){const s=new Date(now);s.setHours(0,0,0,0);from=fmtDT(s);to=fmtDT(now);}
+  else if(preset==="yesterday"){const s=new Date(now);s.setDate(s.getDate()-1);s.setHours(0,0,0,0);
+    const e=new Date(s);e.setHours(23,59,59,0);from=fmtDT(s);to=fmtDT(e);}
+  else if(preset==="24h"){const s=new Date(now.getTime()-86400000);from=fmtDT(s);to=fmtDT(now);}
+  else if(preset==="custom"){from=dtLocalToStr(fval("h-from"));to=dtLocalToStr(fval("h-to"));}
+  return {from,to};
+}
 async function loadHistory(page){
   page=page||1;
+  const rg=histRange();
+  const q=new URLSearchParams({page:page,per_page:histPerPage,from_dt:rg.from,to_dt:rg.to,
+    status:fval("h-status")});
   try{
-    const d=await api("/api/history?page="+page+"&per_page="+histPerPage);
+    const d=await api("/api/history?"+q.toString());
     const items=d.items||[];
+    const cnt=document.getElementById("h-count");
+    if(cnt)cnt.textContent=d.total+" change(s)"+(rg.from?" in selected range":"");
     document.getElementById("h-body").innerHTML=items.length?items.map(x=>'<tr>'+
       '<td><span class="ref-tag">'+(x.reference_no||"—")+'</span></td><td>'+(x.student_name||"—")+'</td>'+
       '<td>'+badge(x.old_status)+'</td><td>'+badge(x.new_status)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+x.changed_at+'</td></tr>').join("")
-      :'<tr><td colspan="5" class="empty">No changes recorded yet</td></tr>';
+      :'<tr><td colspan="5" class="empty">No changes in this range</td></tr>';
     renderHistPg(d.page,d.pages,d.total);
   }catch(e){showToast(""+e.message);}
+}
+async function exportHistory(){
+  const rg=histRange();
+  const q=new URLSearchParams({from_dt:rg.from,to_dt:rg.to,status:fval("h-status")});
+  try{
+    showToast("Excel ban rahi hai…");
+    const r=await fetch(API+"/api/export-history?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
+    if(!r.ok){showToast("Export failed");return;}
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download="nios_change_history.xlsx";a.click();
+    URL.revokeObjectURL(url);showToast("Excel downloaded");
+  }catch(e){showToast("Error: "+e.message);}
 }
 function renderHistPg(page,total,totalRows){
   const el=document.getElementById("h-pg");if(!el)return;
@@ -1096,6 +1191,24 @@ async function downloadExcel(){
   const blob=await r.blob();const url=URL.createObjectURL(blob);
   const a=document.createElement("a");a.href=url;a.download="nios_status_updated.xlsx";a.click();
   URL.revokeObjectURL(url);
+}
+function fval(id){const e=document.getElementById(id);return e?e.value:"";}
+async function exportStudents(view){
+  let search="",status="",session="";
+  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");}
+  else if(view==="required"){search=fval("r-search");status=fval("r-status");session=fval("r-session");}
+  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");}
+  const q=new URLSearchParams({view:view,search:search,status_filter:status,session_filter:session});
+  try{
+    showToast("Excel ban rahi hai…");
+    const r=await fetch(API+"/api/export-students?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
+    if(!r.ok){showToast("Export failed");return;}
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;
+    a.download="nios_"+(view==="normal"?"active":view)+"_students.xlsx";a.click();
+    URL.revokeObjectURL(url);
+    showToast("Excel downloaded");
+  }catch(e){showToast("Error: "+e.message);}
 }
 async function runNow(){
   const btn=document.getElementById("run-now-btn");
@@ -1328,19 +1441,113 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
             "per_page": per_page, "pages": max(1, (total+per_page-1)//per_page),
             "sessions": [s["session"] for s in sessions]}
 
-@app.get("/api/history")
-async def get_history(page: int = 1, per_page: int = 10, user=Depends(verify_token)):
+@app.get("/api/export-students")
+async def export_students(view: str="normal", search: str="", status_filter: str="",
+                         session_filter: str="", user=Depends(verify_token)):
+    """Export the CURRENTLY FILTERED list (active / confirmed / required) to .xlsx."""
+    import io, openpyxl
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
     conn = get_db()
-    total = conn.execute("SELECT COUNT(*) FROM status_history").fetchone()[0]
+    wc, params = [], []
+    if view == "confirmed":
+        wc.append("is_confirmed = 1")
+    elif view == "required":
+        wc.append("current_status = 'Document Required'")
+    else:
+        wc.append("is_confirmed = 0")
+    if search:
+        wc.append("(reference_no LIKE ? OR student_name LIKE ? OR email LIKE ?)")
+        params += [f"%{search}%", f"%{search}%", f"%{search}%"]
+    if status_filter:
+        wc.append("current_status = ?"); params.append(status_filter)
+    if session_filter:
+        wc.append("session = ?"); params.append(session_filter)
+    where = ("WHERE " + " AND ".join(wc)) if wc else ""
+    rows = conn.execute(f"SELECT * FROM student_status {where} ORDER BY student_name", params).fetchall()
+    conn.close()
+
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Students"
+    headers = ["#", "Reference No", "Student Name", "Mobile", "Class", "Email",
+               "Session", "Status", "Remark", "Last Checked"]
+    ws.append(headers)
+    for i, r in enumerate(rows, 1):
+        ws.append([i, r["reference_no"], r["student_name"], r["mobile"], r["class_level"],
+                   r["email"], r["session"], r["current_status"], r["remark"], r["last_checked"]])
+    hdr_fill = PatternFill("solid", fgColor="4F46E5")
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = hdr_fill
+    for idx, w in enumerate([5, 18, 26, 14, 8, 28, 22, 30, 44, 20], 1):
+        ws.column_dimensions[get_column_letter(idx)].width = w
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    label = {"confirmed": "confirmed", "required": "document_required"}.get(view, "active")
+    fname = f"nios_{label}_students.xlsx"
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+@app.get("/api/history")
+async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_dt: str = "",
+                     status: str = "", user=Depends(verify_token)):
+    conn = get_db()
+    wc, params = [], []
+    if from_dt:
+        wc.append("changed_at >= ?"); params.append(from_dt)
+    if to_dt:
+        wc.append("changed_at <= ?"); params.append(to_dt)
+    if status:
+        wc.append("new_status = ?"); params.append(status)
+    where = ("WHERE " + " AND ".join(wc)) if wc else ""
+    total = conn.execute(f"SELECT COUNT(*) FROM status_history {where}", params).fetchone()[0]
     per_page = max(1, min(per_page, 200))
     page = max(1, page)
     offset = (page - 1) * per_page
-    rows = conn.execute("SELECT * FROM status_history ORDER BY id DESC LIMIT ? OFFSET ?",
-                        (per_page, offset)).fetchall()
+    rows = conn.execute(f"SELECT * FROM status_history {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                        params + [per_page, offset]).fetchall()
     conn.close()
     pages = max(1, (total + per_page - 1) // per_page)
     return {"items": [dict(x) for x in rows], "total": total,
             "page": page, "pages": pages, "per_page": per_page}
+
+@app.get("/api/export-history")
+async def export_history(from_dt: str = "", to_dt: str = "", status: str = "", user=Depends(verify_token)):
+    """Export the filtered Change History to .xlsx."""
+    import io, openpyxl
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    conn = get_db()
+    wc, params = [], []
+    if from_dt:
+        wc.append("changed_at >= ?"); params.append(from_dt)
+    if to_dt:
+        wc.append("changed_at <= ?"); params.append(to_dt)
+    if status:
+        wc.append("new_status = ?"); params.append(status)
+    where = ("WHERE " + " AND ".join(wc)) if wc else ""
+    rows = conn.execute(f"SELECT * FROM status_history {where} ORDER BY id DESC", params).fetchall()
+    conn.close()
+
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Change History"
+    headers = ["#", "Reference No", "Student Name", "Old Status", "New Status", "Changed At"]
+    ws.append(headers)
+    for i, r in enumerate(rows, 1):
+        ws.append([i, r["reference_no"], r["student_name"], r["old_status"],
+                   r["new_status"], r["changed_at"]])
+    fill = PatternFill("solid", fgColor="4F46E5")
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF"); cell.fill = fill
+    for idx, w in enumerate([5, 18, 26, 28, 28, 20], 1):
+        ws.column_dimensions[get_column_letter(idx)].width = w
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=nios_change_history.xlsx"})
 
 @app.get("/api/run-logs")
 async def get_run_logs(limit: int=50, user=Depends(verify_token)):
