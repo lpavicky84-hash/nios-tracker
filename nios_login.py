@@ -114,7 +114,9 @@ def login_student(reference_no, dob, page_action=None):
 # ── Link discovery ──
 LINK_KEYWORDS = {
     "id_card":    ["i card", "icard", "id card", "id-card", "identity"],
-    "app_form":   ["application form", "application-form", "print application", "appform", "admission form"],
+    "app_form":   ["application form", "application-form", "print application", "appform",
+                   "admission form", "registration summary", "registration-summary",
+                   "reg summary", "registration form", "print registration"],
     "hall_ticket":["hall ticket", "hall-ticket", "hallticket", "admit card", "admit-card"],
 }
 

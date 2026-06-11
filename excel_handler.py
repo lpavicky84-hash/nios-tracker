@@ -133,7 +133,8 @@ def write_status_to_excel(filepath, updates):
     status_col = _find_col(hc, ["admission status"])
     remark_col = _find_col(hc, ["remarks", "remark"])
     idc_col    = _find_col(hc, ["download id card"])
-    app_col    = _find_col(hc, ["download application form"])
+    app_col    = _find_col(hc, ["download application form", "download registration summary",
+                                "registration summary", "application form"])
     hall_col   = _find_col(hc, ["hall ticket"])
     chk_col    = _find_col(hc, ["last checked"])
     ref_col    = _find_col(hc, ["reference number", "reference no", "ref no", "refno", "reference"])
