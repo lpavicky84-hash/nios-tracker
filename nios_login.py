@@ -219,16 +219,35 @@ def inline_resources(html, session):
     """Fetch images & CSS (using student's session for protected ones) and embed inline,
     so the document renders fully in the counsellor's browser."""
     soup = BeautifulSoup(html, "html.parser")
-    # Inline images
+    # Inline images + enforce NIOS sizing directly on each <img>
+    # (inline element styles beat any stylesheet, so this fixes the "huge photo/logo")
     for img in soup.find_all("img"):
         src = img.get("src")
         if not src or src.startswith("data:"):
             continue
+        classes = " ".join(img.get("class") or []).lower()
+        low = src.lower()
+        extra = ""
+        if "icone" in classes:                       # student photo
+            extra = "width:122px;height:157px;object-fit:cover;"
+        elif "signature" in classes or classes == "sign":   # signature
+            extra = "height:35px;max-width:120px;width:auto;object-fit:contain;"
+        elif "nios-logo" in low or "hall-ticket-2024" in low or "logo" in low:  # header logo
+            extra = "max-width:520px;width:auto;height:auto;"
+        elif "qrcode" in low or "qr" in low:         # QR code
+            extra = "width:92px;height:92px;"
+        if extra:
+            cur = (img.get("style") or "").strip().rstrip(";")
+            img["style"] = (cur + ";" + extra) if cur else extra
+        # resolve + inline the bytes (session for protected sdmis/relative URLs)
         full = src if src.startswith("http") else urljoin(BASE, src)
         data, ctype = _fetch_bytes(full, session)
         if data:
             mime = _guess_mime(full, ctype, data)
             img["src"] = f"data:{mime};base64,{base64.b64encode(data).decode()}"
+        elif not src.startswith("http"):
+            # couldn't inline a relative URL -> at least point it at NIOS (not the portal)
+            img["src"] = full
     # Inline external stylesheets
     for link in soup.find_all("link"):
         rel = link.get("rel") or []
@@ -243,6 +262,14 @@ def inline_resources(html, session):
             style = soup.new_tag("style")
             style.string = data.decode("utf-8", "ignore")
             link.replace_with(style)
+    # Safety-net override: force NIOS photo/signature sizes regardless of cascade
+    override = soup.new_tag("style")
+    override.string = (
+        "img.icone{width:122px!important;height:157px!important;object-fit:cover!important;}"
+        ".signature--img{height:35px!important;max-width:120px!important;width:auto!important;}"
+        "img.sign{width:50px!important;height:43px!important;}"
+    )
+    (soup.body or soup.head or soup).append(override)
     return str(soup)
 
 PRINT_BANNER = """
