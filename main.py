@@ -2061,7 +2061,6 @@ LOADING_PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
 body{background:linear-gradient(135deg,#4F46E5,#7C3AED);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
 .box{background:#fff;border-radius:20px;max-width:430px;width:100%;padding:40px 30px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)}
-.logo{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;margin:0 auto 18px}
 .spinner{width:52px;height:52px;border:5px solid #EEF2FF;border-top-color:#4F46E5;border-radius:50%;margin:0 auto 22px;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 h1{font-size:19px;color:#0F172A;margin-bottom:8px}
@@ -2085,13 +2084,10 @@ function loadDoc(){
   document.getElementById('err').style.display='none';
   document.getElementById('retry').style.display='none';
   document.getElementById('sp').style.display='block';
-  fetch('__RAW__').then(function(r){
-    if(!r.ok)throw new Error('failed');
-    var ct=r.headers.get('Content-Type')||'';
-    if(ct.indexOf('pdf')!==-1){ window.location='__RAW__'; return null; }
-    return r.text();
-  }).then(function(html){
-    if(html){ document.open(); document.write(html); document.close(); }
+  fetch('__PREP__').then(function(r){ return r.json(); })
+  .then(function(d){
+    if(d && d.ok){ window.location.replace('__VIEW__'); }
+    else { throw new Error((d && d.error) || 'failed'); }
   }).catch(function(e){
     document.getElementById('sp').style.display='none';
     document.getElementById('err').style.display='block';
@@ -2101,71 +2097,134 @@ function loadDoc(){
 loadDoc();
 </script></body></html>"""
 
+# Short-lived in-memory cache so the document is fetched from NIOS once (during the
+# loader's "prepare" step) and then served as a REAL page navigation at "view".
+# Real navigation (not document.write) is what makes the browser's Save-as-PDF /
+# Print work reliably on every device, including phones.
+import time as _time
+_DOC_CACHE = {}
+_DOC_TTL = 600  # 10 minutes
+
+def _cache_put(key, tup):
+    _DOC_CACHE[key] = (_time.time(),) + tuple(tup)
+    if len(_DOC_CACHE) > 150:
+        now = _time.time()
+        for k in [k for k, v in list(_DOC_CACHE.items()) if now - v[0] > _DOC_TTL]:
+            _DOC_CACHE.pop(k, None)
+
+def _cache_get(key):
+    v = _DOC_CACHE.get(key)
+    if not v:
+        return None
+    if _time.time() - v[0] > _DOC_TTL:
+        _DOC_CACHE.pop(key, None)
+        return None
+    return v[1], v[2], v[3]
+
+def _fetch_doc_for(row_key, kind):
+    """Return ((content, ctype, filename), None) or (None, error_message).
+    Never raises — a NIOS/network hiccup becomes a clean error so the student
+    sees a 'Try Again' instead of a server crash."""
+    try:
+        from nios_login import fetch_document
+        conn = get_db()
+        row = conn.execute("SELECT reference_no, dob FROM student_status WHERE row_key=?",
+                           (row_key,)).fetchone()
+        conn.close()
+        if not row or not row["reference_no"]:
+            return None, "student not found"
+        content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
+        if content is None:
+            return None, (ctype or "could not load document")
+        return (content, ctype, filename), None
+    except Exception as e:
+        logger.warning(f"doc fetch failed for {kind}: {e}")
+        return None, "could not load document"
+
+def _serve_doc(content, ctype, filename):
+    from fastapi import Response
+    # inline -> the browser renders it as a normal page so Print / Save-as-PDF works
+    return Response(content=content, media_type=ctype,
+                    headers={"Content-Disposition": "inline"})
+
+def _loader_html(kind, prep_url, view_url):
+    label = DOC_LABELS.get(kind, "Document")
+    return (LOADING_PAGE.replace("__LABEL__", label)
+            .replace("__PREP__", prep_url).replace("__VIEW__", view_url))
+
+def _invalid_link_html():
+    return HTMLResponse("<h3 style='font-family:sans-serif;text-align:center;margin-top:60px'>"
+                        "This link is invalid or has expired.</h3>", status_code=404)
+
+# ── Long signed links: /doc/{token} ──
 @app.get("/doc/{token}", response_class=HTMLResponse)
 async def public_single_doc(token: str):
-    """Instant loading page; the actual (slow) document loads from /doc/{token}/raw."""
     from links import verify_doc_link
     row_key, kind = verify_doc_link(token)
     if not row_key:
-        return HTMLResponse("<h3 style='font-family:sans-serif;text-align:center;margin-top:60px'>"
-                            "This link is invalid or has expired.</h3>", status_code=404)
-    label = DOC_LABELS.get(kind, "Document")
-    page = LOADING_PAGE.replace("__LABEL__", label).replace("__RAW__", f"/doc/{token}/raw")
-    return HTMLResponse(page)
+        return _invalid_link_html()
+    return HTMLResponse(_loader_html(kind, f"/doc/{token}/prepare", f"/doc/{token}/view"))
 
-@app.get("/doc/{token}/raw")
-async def public_single_doc_raw(token: str):
-    """The actual document (logs into NIOS, ~15s). Served to the loader page via fetch."""
-    from fastapi import Response
+@app.get("/doc/{token}/prepare")
+async def public_doc_prepare(token: str):
     from links import verify_doc_link
-    from nios_login import fetch_document
     row_key, kind = verify_doc_link(token)
     if not row_key:
-        raise HTTPException(status_code=404, detail="invalid link")
-    conn = get_db()
-    row = conn.execute("SELECT reference_no, dob FROM student_status WHERE row_key=?",
-                       (row_key,)).fetchone()
-    conn.close()
-    if not row or not row["reference_no"]:
-        raise HTTPException(status_code=404, detail="student not found")
-    content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
-    if content is None:
-        raise HTTPException(status_code=404, detail=ctype)
-    disp = f'attachment; filename="{filename}"' if "pdf" in ctype else "inline"
-    return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
+        return {"ok": False, "error": "invalid link"}
+    res, err = _fetch_doc_for(row_key, kind)
+    if err:
+        return {"ok": False, "error": err}
+    _cache_put("doc:" + token, res)
+    return {"ok": True}
 
+@app.get("/doc/{token}/view")
+async def public_doc_view(token: str):
+    cached = _cache_get("doc:" + token)
+    if not cached:
+        from links import verify_doc_link
+        row_key, kind = verify_doc_link(token)
+        if not row_key:
+            raise HTTPException(status_code=404, detail="invalid link")
+        res, err = _fetch_doc_for(row_key, kind)
+        if err:
+            raise HTTPException(status_code=404, detail=err)
+        cached = res
+    return _serve_doc(*cached)
+
+# ── Short links: /s/{code} ──
 @app.get("/s/{code}", response_class=HTMLResponse)
 async def short_doc(code: str):
-    """Short student link -> instant loader, then loads the document from /s/{code}/raw."""
     from shortlinks import resolve_short
     row_key, kind = resolve_short(code)
     if not row_key:
-        return HTMLResponse("<h3 style='font-family:sans-serif;text-align:center;margin-top:60px'>"
-                            "This link is invalid or has expired.</h3>", status_code=404)
-    label = DOC_LABELS.get(kind, "Document")
-    page = LOADING_PAGE.replace("__LABEL__", label).replace("__RAW__", f"/s/{code}/raw")
-    return HTMLResponse(page)
+        return _invalid_link_html()
+    return HTMLResponse(_loader_html(kind, f"/s/{code}/prepare", f"/s/{code}/view"))
 
-@app.get("/s/{code}/raw")
-async def short_doc_raw(code: str):
-    """Actual document for a short link (logs into NIOS, ~15s)."""
-    from fastapi import Response
+@app.get("/s/{code}/prepare")
+async def short_doc_prepare(code: str):
     from shortlinks import resolve_short
-    from nios_login import fetch_document
     row_key, kind = resolve_short(code)
     if not row_key:
-        raise HTTPException(status_code=404, detail="invalid link")
-    conn = get_db()
-    row = conn.execute("SELECT reference_no, dob FROM student_status WHERE row_key=?",
-                       (row_key,)).fetchone()
-    conn.close()
-    if not row or not row["reference_no"]:
-        raise HTTPException(status_code=404, detail="student not found")
-    content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
-    if content is None:
-        raise HTTPException(status_code=404, detail=ctype)
-    disp = f'attachment; filename="{filename}"' if "pdf" in ctype else "inline"
-    return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
+        return {"ok": False, "error": "invalid link"}
+    res, err = _fetch_doc_for(row_key, kind)
+    if err:
+        return {"ok": False, "error": err}
+    _cache_put("s:" + code, res)
+    return {"ok": True}
+
+@app.get("/s/{code}/view")
+async def short_doc_view(code: str):
+    cached = _cache_get("s:" + code)
+    if not cached:
+        from shortlinks import resolve_short
+        row_key, kind = resolve_short(code)
+        if not row_key:
+            raise HTTPException(status_code=404, detail="invalid link")
+        res, err = _fetch_doc_for(row_key, kind)
+        if err:
+            raise HTTPException(status_code=404, detail=err)
+        cached = res
+    return _serve_doc(*cached)
 
 @app.get("/logo.png")
 async def logo_png():
