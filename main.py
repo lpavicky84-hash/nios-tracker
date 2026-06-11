@@ -359,6 +359,9 @@ PORTAL_HTML = """<!DOCTYPE html>
       <div class="right">
         <button class="btn btn-success btn-sm" id="run-now-btn" onclick="runNow()">
           <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Now</button>
+        <div class="bell-btn" onclick="refreshPage(this)" title="Refresh this page" style="cursor:pointer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </div>
         <div class="bell-wrap">
           <div class="bell-btn" onclick="toggleBell(event)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="19" height="19"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -792,6 +795,17 @@ function renderTimers(){
 
 const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
   required:"Document Required",history:"Change History",runlogs:"Run Logs",upload:"Upload Excel",settings:"Settings"};
+function refreshPage(btn){
+  // reload the data of whichever page is currently open (no full reload, stays logged in)
+  if(btn){var ic=btn.querySelector("svg");if(ic){ic.style.transition="transform .6s";ic.style.transform="rotate(360deg)";
+    setTimeout(function(){ic.style.transition="";ic.style.transform="";},650);}}
+  const sec=document.querySelector(".page-section.active");
+  const page=sec?sec.id.replace("sec-",""):"dashboard";
+  nav(page);
+  refreshBell();
+  showToast("Refreshed");
+}
+
 function nav(page){
   document.querySelectorAll(".nav-item").forEach(n=>n.classList.toggle("active",n.dataset.page===page));
   document.querySelectorAll(".page-section").forEach(s=>s.classList.remove("active"));
