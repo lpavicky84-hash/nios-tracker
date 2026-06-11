@@ -371,6 +371,36 @@ def debug_doc(reference_no, dob, kind):
     inline = " ".join(s.get_text() for s in soup.find_all("script") if not s.get("src"))
     hints = re.findall(r'["\']([^"\']*(?:pdf|print|download|id.?card|hall|app|form|registration)[^"\']*)["\']',
                        inline, re.I)
+
+    # --- NEW: surface every <img> with its sizing/identity attributes ---
+    images = []
+    for im in soup.find_all("img"):
+        src = im.get("src") or ""
+        if src.startswith("data:"):
+            src = src[:40] + "...(base64)"
+        images.append({
+            "src": src[:120],
+            "width": im.get("width"), "height": im.get("height"),
+            "class": " ".join(im.get("class") or []),
+            "id": im.get("id"),
+            "style": (im.get("style") or "")[:120],
+            "alt": (im.get("alt") or "")[:30],
+        })
+
+    # --- NEW: stylesheets (note any media="print") + inline <style> blocks ---
+    stylesheets = [{"href": l.get("href"), "media": l.get("media") or "all"}
+                   for l in soup.find_all("link", rel="stylesheet")]
+    style_blocks = []
+    for st in soup.find_all("style"):
+        txt = re.sub(r"\s+", " ", st.get_text()).strip()
+        style_blocks.append({"media": st.get("media") or "all", "css": txt[:600]})
+
+    body = soup.find("body")
+    body_class = " ".join(body.get("class") or []) if body else None
+
+    # body-only preview (skips the long <head>/favicon block)
+    body_preview = re.sub(r"\s+", " ", body.decode_contents()).strip()[:2500] if body else ""
+
     return {
         "content_type": ct,
         "status": r.status_code,
@@ -380,5 +410,9 @@ def debug_doc(reference_no, dob, kind):
         "links": links,
         "script_srcs": scripts,
         "url_hints_in_js": sorted(set(h for h in hints if len(h) > 3))[:25],
-        "html_preview": re.sub(r"\s+", " ", r.text)[:2000],
+        "images": images,
+        "stylesheets": stylesheets,
+        "style_blocks": style_blocks,
+        "body_class": body_class,
+        "body_preview": body_preview,
     }
