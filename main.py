@@ -305,7 +305,7 @@ PORTAL_HTML = """<!DOCTYPE html>
 
 <div id="login-screen">
   <div class="login-card">
-    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="30" height="30"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></div>
+    <img src="/logo.png" alt="MVS Foundation" style="width:68px;height:68px;border-radius:50%;display:block;margin:0 auto 18px;object-fit:cover;box-shadow:0 4px 14px rgba(0,0,0,.18)">
     <h2>NIOS Status Tracker</h2>
     <p class="sub">MVS Foundation — Admin Portal</p>
     <label>Username</label>
@@ -321,7 +321,7 @@ PORTAL_HTML = """<!DOCTYPE html>
 <div id="app">
   <aside class="sidebar">
     <div class="brand">
-      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></div>
+      <img src="/logo.png" alt="MVS" style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0">
       <div class="tx"><b>NIOS Tracker</b><span>MVS Foundation</span></div>
     </div>
     <nav class="nav-scroll">
@@ -1927,6 +1927,10 @@ async def reset_data(body: dict, user=Depends(verify_token)):
     conn.execute("DELETE FROM student_status")
     conn.execute("DELETE FROM status_history")
     conn.execute("DELETE FROM run_logs")
+    try:
+        conn.execute("DELETE FROM short_links")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
     removed = False
@@ -1973,7 +1977,7 @@ h1{font-size:19px;text-align:center;color:#0F172A}
 .busy{opacity:.55;pointer-events:none}
 </style></head><body>
 <div class="card">
-  <div class="logo">MVS</div>
+  <img src="/logo.png" alt="MVS Foundation" style="width:60px;height:60px;border-radius:50%;object-fit:cover;display:block;margin:0 auto 14px">
   <h1>Your NIOS Documents</h1>
   <div class="sub">Admission Confirmed</div>
   <div class="name">__NAME__</div>
@@ -2054,7 +2058,7 @@ p{color:#64748B;font-size:14px;line-height:1.6;margin-top:6px}
 .retry{display:none;margin-top:14px;padding:11px 26px;border:none;border-radius:10px;background:#4F46E5;color:#fff;font-weight:600;font-size:15px;cursor:pointer}
 </style></head><body>
 <div class="box">
-  <div class="logo">MVS</div>
+  <img src="/logo.png" alt="MVS Foundation" style="width:60px;height:60px;border-radius:50%;object-fit:cover;display:block;margin:0 auto 14px">
   <div class="spinner" id="sp"></div>
   <h1>Preparing your <span class="doc">__LABEL__</span></h1>
   <p>Please wait a few seconds while we securely fetch your document from NIOS.</p>
@@ -2115,3 +2119,48 @@ async def public_single_doc_raw(token: str):
         raise HTTPException(status_code=404, detail=ctype)
     disp = f'attachment; filename="{filename}"' if "pdf" in ctype else "inline"
     return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
+
+@app.get("/s/{code}", response_class=HTMLResponse)
+async def short_doc(code: str):
+    """Short student link -> instant loader, then loads the document from /s/{code}/raw."""
+    from shortlinks import resolve_short
+    row_key, kind = resolve_short(code)
+    if not row_key:
+        return HTMLResponse("<h3 style='font-family:sans-serif;text-align:center;margin-top:60px'>"
+                            "This link is invalid or has expired.</h3>", status_code=404)
+    label = DOC_LABELS.get(kind, "Document")
+    page = LOADING_PAGE.replace("__LABEL__", label).replace("__RAW__", f"/s/{code}/raw")
+    return HTMLResponse(page)
+
+@app.get("/s/{code}/raw")
+async def short_doc_raw(code: str):
+    """Actual document for a short link (logs into NIOS, ~15s)."""
+    from fastapi import Response
+    from shortlinks import resolve_short
+    from nios_login import fetch_document
+    row_key, kind = resolve_short(code)
+    if not row_key:
+        raise HTTPException(status_code=404, detail="invalid link")
+    conn = get_db()
+    row = conn.execute("SELECT reference_no, dob FROM student_status WHERE row_key=?",
+                       (row_key,)).fetchone()
+    conn.close()
+    if not row or not row["reference_no"]:
+        raise HTTPException(status_code=404, detail="student not found")
+    content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
+    if content is None:
+        raise HTTPException(status_code=404, detail=ctype)
+    disp = f'attachment; filename="{filename}"' if "pdf" in ctype else "inline"
+    return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
+
+@app.get("/logo.png")
+async def logo_png():
+    """MVS Foundation logo (embedded, served for portal + student pages)."""
+    import base64
+    from fastapi import Response
+    try:
+        from assets import LOGO_B64
+        return Response(content=base64.b64decode(LOGO_B64), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    except Exception:
+        raise HTTPException(status_code=404, detail="logo not found")

@@ -101,7 +101,7 @@ def send_for_student(student):
     """Send the right template for this student's session group.
     student: dict with row_key, student_name, mobile, session, reference_no, dob.
     Returns (ok, info)."""
-    from links import doc_file_url
+    from links import short_doc_url as doc_file_url
     group = group_of(student.get("session"))
     campaign = campaign_for(group)
     if not campaign:

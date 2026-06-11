@@ -73,3 +73,15 @@ def verify_doc_link(token: str):
 def doc_file_url(row_key: str, kind: str) -> str:
     """Absolute URL that opens ONE document directly (id_card/app_form/hall_ticket)."""
     return f"{PUBLIC_BASE_URL}/doc/{make_doc_link(row_key, kind)}"
+
+
+def short_doc_url(row_key: str, kind: str) -> str:
+    """Compact /s/<code> URL for a document (falls back to the long URL if needed)."""
+    try:
+        from shortlinks import create_short
+        code = create_short(row_key, kind)
+        if code:
+            return f"{PUBLIC_BASE_URL}/s/{code}"
+    except Exception:
+        pass
+    return doc_file_url(row_key, kind)

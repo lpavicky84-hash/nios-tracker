@@ -172,6 +172,7 @@ def run_status_check(group_type="all"):
             # ── WhatsApp: auto-send documents ONCE when admission is confirmed ──
             try:
                 if new_status == "Admission Confirmed" and get_setting("wa_enabled", "0") == "1":
+                    conn.commit()   # release write lock so short-link creation can write
                     wrow = c.execute("SELECT whatsapp_sent FROM student_status WHERE row_key=?",
                                      (row_key,)).fetchone()
                     already = bool(wrow and wrow["whatsapp_sent"] == 1)

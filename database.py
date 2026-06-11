@@ -21,8 +21,12 @@ def now_ist_str():
     return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA busy_timeout=8000")
+    except Exception:
+        pass
     return conn
 
 def init_db():
@@ -103,6 +107,14 @@ def init_db():
     """)
     # Default intervals
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_regular', '6')")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS short_links (
+            code TEXT PRIMARY KEY,
+            row_key TEXT,
+            kind TEXT,
+            created TEXT DEFAULT (datetime('now'))
+        )
+    """)
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_public', '12')")
     # WhatsApp auto-send disabled until configured + turned on from the portal
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('wa_enabled', '0')")

@@ -217,31 +217,65 @@ def _guess_mime(url, ctype, data):
     if data[:3] == b"\xff\xd8\xff": return "image/jpeg"
     return "image/png"
 
+def _size_rules_from_soup(soup):
+    """Map class-name -> {prop: value} for width/height/max-width rules declared
+    in the page's OWN <style> blocks. Each NIOS document sizes its photo (img.icone),
+    signature and QR via its own CSS, and DIFFERENTLY per document (ID-card photo
+    60x77, hall-ticket photo 122x157). We read those exact sizes so we can pin them
+    inline (with !important) — this survives document.write / loader rendering and
+    any external print.css that would otherwise override them."""
+    rules = {}
+    for st in soup.find_all("style"):
+        css = st.get_text() or ""
+        for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+            props = {}
+            for prop in ("width", "height", "max-width", "max-height"):
+                m = re.search(r"(?<![\w-])" + prop + r"\s*:\s*([^;]+)", body, re.I)
+                if m:
+                    props[prop] = m.group(1).strip()
+            if not props:
+                continue
+            for cls in re.findall(r"\.([A-Za-z0-9_-]+)", sel):
+                rules.setdefault(cls, {}).update(props)
+    return rules
+
 def inline_resources(html, session):
     """Fetch images & CSS (using student's session for protected ones) and embed inline,
-    so the document renders fully in the counsellor's browser.
+    so the document renders fully in the counsellor's / student's browser.
 
     Each NIOS document (ID card / hall ticket / app form) already ships its OWN
     <style> block that sizes the photo (img.icone), signature (img.sign /
     .signature--img) and QR (img.code) correctly and DIFFERENTLY per document
-    (e.g. ID-card photo 60x77, hall-ticket photo 122x157). So we must NOT force a
-    one-size-fits-all here. We only bound images that have no size at all (the
-    header logo), so they can't render at their huge natural size."""
+    (e.g. ID-card photo 60x77, hall-ticket photo 122x157). We read those sizes and
+    pin them inline with !important so the photo can NEVER blow up to natural size,
+    regardless of how the page is later rendered. Unsized images (the header logo)
+    are simply bounded to max-width:100%."""
     soup = BeautifulSoup(html, "html.parser")
+    size_map = _size_rules_from_soup(soup)
     SIZED_CLASSES = ("icone", "sign", "code", "signature", "icon")
     for img in soup.find_all("img"):
         src = img.get("src")
-        if not src or src.startswith("data:"):
-            continue
-        classes = " ".join(img.get("class") or []).lower()
+        classes = img.get("class") or []
+        classes_l = " ".join(classes).lower()
         style_l = (img.get("style") or "").lower()
         has_size = bool(img.get("width") or img.get("height")
                         or "width" in style_l or "height" in style_l)
-        sized_by_css = any(cl in classes for cl in SIZED_CLASSES)
-        # Only constrain images the page does NOT size itself (header logo, etc.)
-        if not has_size and not sized_by_css:
+        sized_by_css = any(cl in classes_l for cl in SIZED_CLASSES)
+        # 1) Pin the page's OWN declared size inline (!important) for known classes.
+        pinned = False
+        for cls in classes:
+            if cls in size_map:
+                cur = (img.get("style") or "").strip().rstrip(";")
+                pins = ";".join(f"{p}:{v} !important" for p, v in size_map[cls].items())
+                img["style"] = (cur + ";" + pins) if cur else pins
+                pinned = True
+                break
+        # 2) Bound images the page does NOT size at all (header logo, etc.)
+        if not pinned and not has_size and not sized_by_css:
             cur = (img.get("style") or "").strip().rstrip(";")
             img["style"] = (cur + ";max-width:100%") if cur else "max-width:100%"
+        if not src or src.startswith("data:"):
+            continue
         # resolve + inline the bytes (session for protected sdmis/relative URLs)
         full = src if src.startswith("http") else urljoin(BASE, src)
         data, ctype = _fetch_bytes(full, session)
