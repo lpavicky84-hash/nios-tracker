@@ -7,7 +7,7 @@ try:
 except Exception:
     pass
 from datetime import datetime
-from database import get_db
+from database import get_db, get_setting
 from scraper import scrape_students
 from excel_handler import read_students_from_excel, write_status_to_excel, dedupe_students
 
@@ -163,6 +163,25 @@ def run_status_check(group_type="all"):
             if new_ref:
                 c.execute("DELETE FROM student_status WHERE reference_no=? AND row_key!=?",
                           (new_ref, row_key))
+
+            # ── WhatsApp: auto-send documents ONCE when admission is confirmed ──
+            try:
+                if new_status == "Admission Confirmed" and get_setting("wa_enabled", "0") == "1":
+                    wrow = c.execute("SELECT whatsapp_sent FROM student_status WHERE row_key=?",
+                                     (row_key,)).fetchone()
+                    already = bool(wrow and wrow["whatsapp_sent"] == 1)
+                    phone = res.get("mobile", "")
+                    if not already and phone:
+                        import whatsapp
+                        from links import doc_page_url
+                        link = doc_page_url(row_key)
+                        ok, info = whatsapp.send_confirmation(res.get("student_name", ""), phone, link)
+                        c.execute("UPDATE student_status SET whatsapp_sent=?, whatsapp_info=? WHERE row_key=?",
+                                  (1 if ok else 0, str(info)[:180], row_key))
+                        conn.commit()
+                        logger.info(f"WhatsApp {'sent' if ok else 'FAILED'} -> {phone}: {info}")
+            except Exception as we:
+                logger.warning(f"WhatsApp trigger error: {we}")
 
             excel_updates.append({
                 "row_key": row_key,

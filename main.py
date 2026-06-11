@@ -579,6 +579,27 @@ PORTAL_HTML = """<!DOCTYPE html>
           <div id="iv-status" style="margin-top:12px;font-size:13px"></div>
         </div>
         <div class="card">
+          <h3>&#128172; WhatsApp Auto-Send</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+            Jab kisi student ka status <b>Admission Confirmed</b> hota hai, uske WhatsApp pe documents ka
+            secure link <b>apne-aap</b> chala jata hai (ek student ko sirf <b>ek baar</b>).</p>
+          <div id="wa-config" style="font-size:13px;margin-bottom:14px;color:var(--muted)">Loading…</div>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:18px">
+            <input type="checkbox" id="wa-enabled" onchange="saveWa()" style="width:18px;height:18px;cursor:pointer">
+            <span style="font-weight:600">Auto-send ON karo</span>
+          </label>
+          <div style="border-top:1px solid var(--border);padding-top:16px">
+            <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
+              <b>Test message</b> — apna number daalo, ek sample confirmation message jayega:</p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <input type="text" id="wa-num" placeholder="WhatsApp number (e.g. 7065187637)"
+                style="flex:1;min-width:200px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
+              <button class="btn btn-primary btn-sm" onclick="testWa()">Send Test</button>
+            </div>
+          </div>
+          <div id="wa-status" style="margin-top:12px;font-size:13px"></div>
+        </div>
+        <div class="card">
           <h3>Status Colour Legend</h3>
           <div class="legend-grid">
             <div class="legend-item b-pending"><div class="nm">Pending</div><div class="ds">Awaiting review</div></div>
@@ -768,7 +789,7 @@ function nav(page){
   if(page==="required")loadRequired(1);
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
-  if(page==="settings")loadIntervals();
+  if(page==="settings"){loadIntervals();loadWa();}
 }
 
 async function loadDashboard(){
@@ -1239,6 +1260,34 @@ async function saveIntervals(){
     document.getElementById("iv-status").innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
     showToast("Intervals saved!");}
   catch(e){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
+}
+
+async function loadWa(){
+  try{const r=await api("/api/wa-settings");
+    document.getElementById("wa-enabled").checked=r.enabled;
+    const cfg=document.getElementById("wa-config");
+    if(r.configured){
+      cfg.innerHTML='<span style="color:var(--success)">&#10003; API key configured</span> &middot; Campaign: <b>'+r.campaign+'</b>';
+    }else{
+      cfg.innerHTML='<span style="color:var(--danger)">&#10007; AISENSY_API_KEY Railway env var mein set nahi hai</span>';
+    }
+  }catch(e){}
+}
+async function saveWa(){
+  const en=document.getElementById("wa-enabled").checked;
+  try{await api("/api/wa-settings","POST",{enabled:en});
+    showToast(en?"WhatsApp auto-send ON":"WhatsApp auto-send OFF");}
+  catch(e){showToast("Error: "+e.message);}
+}
+async function testWa(){
+  const num=document.getElementById("wa-num").value.trim();
+  const s=document.getElementById("wa-status");
+  if(!num){s.innerHTML='<span style="color:var(--danger)">Pehle number daalo</span>';return;}
+  s.innerHTML='Sending…';
+  try{const r=await api("/api/wa-test","POST",{number:num});
+    if(r.ok)s.innerHTML='<span style="color:var(--success)">&#10003; Test bhej diya! WhatsApp check karo.</span>';
+    else s.innerHTML='<span style="color:var(--danger)">&#10007; '+(r.info||"failed")+'</span>';}
+  catch(e){s.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
 
 function showToast(msg){
@@ -1740,3 +1789,141 @@ async def debug_doc_endpoint(ref: str, dob: str, kind: str, user=Depends(verify_
         return debug_doc(ref, dob, kind)
     except Exception as e:
         return {"error": str(e)}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WhatsApp (AiSensy) — settings, test, manual resend
+# ─────────────────────────────────────────────────────────────────────────────
+@app.get("/api/wa-settings")
+async def wa_settings_get(user=Depends(verify_token)):
+    import whatsapp
+    return {
+        "enabled": get_setting("wa_enabled", "0") == "1",
+        "configured": whatsapp.is_configured(),
+        "campaign": os.environ.get("AISENSY_CAMPAIGN", "admission_confirmed"),
+    }
+
+@app.post("/api/wa-settings")
+async def wa_settings_set(body: dict, user=Depends(verify_token)):
+    set_setting("wa_enabled", "1" if body.get("enabled") else "0")
+    return {"message": "saved", "enabled": bool(body.get("enabled"))}
+
+@app.post("/api/wa-test")
+async def wa_test(body: dict, user=Depends(verify_token)):
+    """Send a test confirmation message to any number."""
+    import whatsapp
+    from links import PUBLIC_BASE_URL
+    number = body.get("number", "")
+    name = body.get("name", "") or "Test Student"
+    ok, info = whatsapp.send_confirmation(name, number, PUBLIC_BASE_URL)
+    return {"ok": ok, "info": info}
+
+@app.post("/api/wa-resend")
+async def wa_resend(body: dict, user=Depends(verify_token)):
+    """Manually (re)send documents to one student by row_key."""
+    import whatsapp
+    from links import doc_page_url
+    row_key = body.get("row_key", "")
+    conn = get_db()
+    row = conn.execute("SELECT student_name, mobile FROM student_status WHERE row_key=?",
+                       (row_key,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="student not found")
+    ok, info = whatsapp.send_confirmation(row["student_name"], row["mobile"], doc_page_url(row_key))
+    conn.execute("UPDATE student_status SET whatsapp_sent=?, whatsapp_info=? WHERE row_key=?",
+                 (1 if ok else 0, str(info)[:180], row_key))
+    conn.commit()
+    conn.close()
+    return {"ok": ok, "info": info}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public document links (student opens WITHOUT portal login; token-signed)
+# ─────────────────────────────────────────────────────────────────────────────
+def _allowed_kinds(session):
+    s = (session or "").lower()
+    if any(k in s for k in ("april", "october", "public")):
+        return [("id_card", "ID Card")]
+    if "stream 2" in s:
+        return [("id_card", "ID Card"), ("app_form", "Application Form")]
+    return [("id_card", "ID Card"), ("app_form", "Application Form"), ("hall_ticket", "Hall Ticket")]
+
+DOC_PAGE_TPL = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your NIOS Documents — MVS Foundation</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+body{background:linear-gradient(135deg,#4F46E5,#7C3AED);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px}
+.card{background:#fff;border-radius:20px;max-width:440px;width:100%;padding:30px 26px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.logo{width:58px;height:58px;border-radius:14px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;margin:0 auto 14px}
+h1{font-size:19px;text-align:center;color:#0F172A}
+.sub{text-align:center;color:#64748B;font-size:13px;margin:6px 0 22px}
+.name{text-align:center;font-weight:700;color:#4F46E5;font-size:16px;margin-bottom:2px}
+.btns{display:flex;flex-direction:column;gap:12px;margin-top:8px}
+.docbtn{display:flex;align-items:center;gap:12px;padding:15px 18px;border:2px solid #E2E8F0;border-radius:14px;
+  color:#0F172A;font-weight:600;font-size:15px;cursor:pointer;background:#F8FAFC;transition:.15s;text-decoration:none}
+.docbtn:hover{border-color:#4F46E5;background:#EEF2FF}
+.docbtn .ico{width:34px;height:34px;border-radius:9px;background:#4F46E5;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:17px}
+.note{margin-top:18px;background:#FEF9C3;border:1px solid #FDE68A;border-radius:12px;padding:11px 14px;font-size:12.5px;color:#854D0E}
+.foot{text-align:center;color:#94A3B8;font-size:11.5px;margin-top:18px}
+.busy{opacity:.55;pointer-events:none}
+</style></head><body>
+<div class="card">
+  <div class="logo">MVS</div>
+  <h1>Your NIOS Documents</h1>
+  <div class="sub">Admission Confirmed &#127881;</div>
+  <div class="name">__NAME__</div>
+  <div class="sub" style="margin-top:0">Ref: __REF__</div>
+  <div class="btns">__BUTTONS__</div>
+  <div class="note">&#128161; Document kholne mein ~15 second lagte hain (NIOS se securely fetch hota hai). Khulne ke baad upar <b>"Save as PDF / Print"</b> dabakar save karein.</div>
+  <div class="foot">MVS Foundation &middot; NIOS Open Schooling</div>
+</div>
+<script>
+function openDoc(el,url){ if(el.dataset.b==='1')return; el.dataset.b='1';
+  var t=el.querySelector('.lbl'); var o=t.textContent; t.textContent='Opening… ~15s';
+  el.classList.add('busy'); window.open(url,'_blank');
+  setTimeout(function(){t.textContent=o;el.classList.remove('busy');el.dataset.b='';},16000); }
+</script>
+</body></html>"""
+
+@app.get("/d/{token}", response_class=HTMLResponse)
+async def public_doc_page(token: str):
+    from links import verify_doc_token
+    row_key = verify_doc_token(token)
+    if not row_key:
+        return HTMLResponse("<h3 style='font-family:sans-serif;text-align:center;margin-top:60px'>Invalid or broken link</h3>", status_code=404)
+    conn = get_db()
+    row = conn.execute("SELECT student_name, session, reference_no FROM student_status WHERE row_key=?",
+                       (row_key,)).fetchone()
+    conn.close()
+    if not row:
+        return HTMLResponse("<h3 style='font-family:sans-serif;text-align:center;margin-top:60px'>Student not found</h3>", status_code=404)
+    btns = ""
+    for kind, label in _allowed_kinds(row["session"]):
+        url = f"/d/{token}/{kind}"
+        btns += (f'<a class="docbtn" onclick="openDoc(this,\'{url}\')">'
+                 f'<span class="ico">&#128196;</span><span class="lbl">{label}</span></a>')
+    html = (DOC_PAGE_TPL
+            .replace("__NAME__", (row["student_name"] or "Student"))
+            .replace("__REF__", (row["reference_no"] or "—"))
+            .replace("__BUTTONS__", btns))
+    return HTMLResponse(html)
+
+@app.get("/d/{token}/{kind}")
+async def public_doc_file(token: str, kind: str):
+    from fastapi import Response
+    from links import verify_doc_token
+    from nios_login import fetch_document
+    row_key = verify_doc_token(token)
+    if not row_key:
+        raise HTTPException(status_code=404, detail="invalid link")
+    conn = get_db()
+    row = conn.execute("SELECT reference_no, dob FROM student_status WHERE row_key=?",
+                       (row_key,)).fetchone()
+    conn.close()
+    if not row or not row["reference_no"]:
+        raise HTTPException(status_code=404, detail="student not found")
+    content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
+    if content is None:
+        raise HTTPException(status_code=404, detail=ctype)
+    disp = f'attachment; filename="{filename}"' if "pdf" in ctype else "inline"
+    return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})

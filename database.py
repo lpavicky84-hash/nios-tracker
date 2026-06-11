@@ -82,9 +82,17 @@ def init_db():
             is_confirmed INTEGER DEFAULT 0,
             last_checked TEXT,
             last_changed TEXT,
-            check_count INTEGER DEFAULT 0
+            check_count INTEGER DEFAULT 0,
+            whatsapp_sent INTEGER DEFAULT 0,
+            whatsapp_info TEXT
         )
     """)
+    # Safe migration for older DBs missing the WhatsApp columns
+    for col, decl in (("whatsapp_sent", "INTEGER DEFAULT 0"), ("whatsapp_info", "TEXT")):
+        try:
+            c.execute(f"ALTER TABLE student_status ADD COLUMN {col} {decl}")
+        except Exception:
+            pass
 
     # Settings table for interval config
     c.execute("""
@@ -96,6 +104,8 @@ def init_db():
     # Default intervals
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_regular', '6')")
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_public', '12')")
+    # WhatsApp auto-send disabled until configured + turned on from the portal
+    c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('wa_enabled', '0')")
 
     conn.commit()
     conn.close()
