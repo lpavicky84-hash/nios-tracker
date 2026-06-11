@@ -217,28 +217,29 @@ def _guess_mime(url, ctype, data):
 
 def inline_resources(html, session):
     """Fetch images & CSS (using student's session for protected ones) and embed inline,
-    so the document renders fully in the counsellor's browser."""
+    so the document renders fully in the counsellor's browser.
+
+    Each NIOS document (ID card / hall ticket / app form) already ships its OWN
+    <style> block that sizes the photo (img.icone), signature (img.sign /
+    .signature--img) and QR (img.code) correctly and DIFFERENTLY per document
+    (e.g. ID-card photo 60x77, hall-ticket photo 122x157). So we must NOT force a
+    one-size-fits-all here. We only bound images that have no size at all (the
+    header logo), so they can't render at their huge natural size."""
     soup = BeautifulSoup(html, "html.parser")
-    # Inline images + enforce NIOS sizing directly on each <img>
-    # (inline element styles beat any stylesheet, so this fixes the "huge photo/logo")
+    SIZED_CLASSES = ("icone", "sign", "code", "signature", "icon")
     for img in soup.find_all("img"):
         src = img.get("src")
         if not src or src.startswith("data:"):
             continue
         classes = " ".join(img.get("class") or []).lower()
-        low = src.lower()
-        extra = ""
-        if "icone" in classes:                       # student photo
-            extra = "width:122px;height:157px;object-fit:cover;"
-        elif "signature" in classes or classes == "sign":   # signature
-            extra = "height:35px;max-width:120px;width:auto;object-fit:contain;"
-        elif "nios-logo" in low or "hall-ticket-2024" in low or "logo" in low:  # header logo
-            extra = "max-width:520px;width:auto;height:auto;"
-        elif "qrcode" in low or "qr" in low:         # QR code
-            extra = "width:92px;height:92px;"
-        if extra:
+        style_l = (img.get("style") or "").lower()
+        has_size = bool(img.get("width") or img.get("height")
+                        or "width" in style_l or "height" in style_l)
+        sized_by_css = any(cl in classes for cl in SIZED_CLASSES)
+        # Only constrain images the page does NOT size itself (header logo, etc.)
+        if not has_size and not sized_by_css:
             cur = (img.get("style") or "").strip().rstrip(";")
-            img["style"] = (cur + ";" + extra) if cur else extra
+            img["style"] = (cur + ";max-width:100%") if cur else "max-width:100%"
         # resolve + inline the bytes (session for protected sdmis/relative URLs)
         full = src if src.startswith("http") else urljoin(BASE, src)
         data, ctype = _fetch_bytes(full, session)
@@ -248,7 +249,7 @@ def inline_resources(html, session):
         elif not src.startswith("http"):
             # couldn't inline a relative URL -> at least point it at NIOS (not the portal)
             img["src"] = full
-    # Inline external stylesheets
+    # Inline external stylesheets (so the page's print layout/sizes apply on screen)
     for link in soup.find_all("link"):
         rel = link.get("rel") or []
         if "stylesheet" not in [r.lower() for r in rel]:
@@ -262,14 +263,6 @@ def inline_resources(html, session):
             style = soup.new_tag("style")
             style.string = data.decode("utf-8", "ignore")
             link.replace_with(style)
-    # Safety-net override: force NIOS photo/signature sizes regardless of cascade
-    override = soup.new_tag("style")
-    override.string = (
-        "img.icone{width:122px!important;height:157px!important;object-fit:cover!important;}"
-        ".signature--img{height:35px!important;max-width:120px!important;width:auto!important;}"
-        "img.sign{width:50px!important;height:43px!important;}"
-    )
-    (soup.body or soup.head or soup).append(override)
     return str(soup)
 
 PRINT_BANNER = """
