@@ -105,7 +105,22 @@ def run_status_check(group_type="all"):
             _finish(conn, run_id, 0, 0, 0, "Nothing to check")
             return
 
-        results = scrape_students(to_check, should_cancel=_is_cancelled)
+        # Record how many students this run will check (for the live progress bar)
+        conn.execute("UPDATE run_logs SET progress_total=?, progress_current=0 WHERE id=?",
+                     (len(to_check), run_id))
+        conn.commit()
+
+        def _progress(done, total):
+            try:
+                pc = get_db()
+                pc.execute("UPDATE run_logs SET progress_current=?, progress_total=? WHERE id=?",
+                           (done, total, run_id))
+                pc.commit()
+                pc.close()
+            except Exception:
+                pass
+
+        results = scrape_students(to_check, should_cancel=_is_cancelled, progress_cb=_progress)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         for res in results:

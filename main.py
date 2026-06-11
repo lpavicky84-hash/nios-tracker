@@ -6,7 +6,7 @@ try:
     _time.tzset()
 except Exception:
     pass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,11 +46,20 @@ PORTAL_HTML = """<!DOCTYPE html>
 <style>
   :root{
     --primary:#4F46E5; --primary-dark:#4338CA; --primary-light:#EEF2FF;
-    --sidebar:#1E293B; --sidebar-hover:#334155;
+    --sidebar:#1E293B; --sidebar-hover:#334155; --sidebar-text:#CBD5E1; --sidebar-muted:#64748B;
     --bg:#F1F5F9; --card:#FFFFFF; --border:#E2E8F0; --text:#0F172A;
     --muted:#64748B; --success:#16A34A; --danger:#DC2626; --warn:#EA580C;
+    --th-bg:#F8FAFC; --row-hover:#FAFBFF; --chip:#F1F5F9; --soft:#F8FAFC;
     --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
     --shadow-lg:0 10px 25px rgba(0,0,0,.08);
+  }
+  html[data-theme="dark"]{
+    --primary:#6366F1; --primary-dark:#4F46E5; --primary-light:#1E1B4B;
+    --sidebar:#0B1220; --sidebar-hover:#1E293B; --sidebar-text:#CBD5E1; --sidebar-muted:#64748B;
+    --bg:#0F172A; --card:#1E293B; --border:#334155; --text:#E2E8F0;
+    --muted:#94A3B8; --success:#22C55E; --danger:#F87171; --warn:#FB923C;
+    --th-bg:#172033; --row-hover:#243043; --chip:#334155; --soft:#172033;
+    --shadow:0 1px 3px rgba(0,0,0,.4); --shadow-lg:0 10px 25px rgba(0,0,0,.5);
   }
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -61,7 +70,7 @@ PORTAL_HTML = """<!DOCTYPE html>
 
   #login-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);z-index:1000}
-  .login-card{background:#fff;border-radius:18px;padding:42px;width:380px;
+  .login-card{background:var(--card);border-radius:18px;padding:42px;width:380px;
     box-shadow:0 20px 60px rgba(0,0,0,.3)}
   .login-card .logo{width:60px;height:60px;background:linear-gradient(135deg,#4F46E5,#7C3AED);
     border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 18px}
@@ -78,25 +87,31 @@ PORTAL_HTML = """<!DOCTYPE html>
 
   #app{display:none;min-height:100vh}
   .sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;background:var(--sidebar);
-    padding:20px 0;display:flex;flex-direction:column;z-index:100}
-  .sidebar .brand{padding:0 22px 22px;display:flex;align-items:center;gap:10px;
-    border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:14px}
+    padding:20px 0 12px;display:flex;flex-direction:column;z-index:100}
+  .sidebar .brand{padding:0 22px 20px;display:flex;align-items:center;gap:11px;
+    border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:12px}
   .sidebar .brand .ic{width:38px;height:38px;background:linear-gradient(135deg,#4F46E5,#7C3AED);
-    border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px}
+    border-radius:10px;display:flex;align-items:center;justify-content:center}
+  .sidebar .brand .ic svg{width:21px;height:21px}
   .sidebar .brand .tx b{color:#fff;font-size:15px;display:block}
   .sidebar .brand .tx span{color:#94A3B8;font-size:11px}
-  .nav-item{display:flex;align-items:center;gap:12px;padding:12px 22px;color:#CBD5E1;
+  .nav-scroll{flex:1;overflow-y:auto}
+  .side-foot{border-top:1px solid rgba(255,255,255,.08);padding-top:8px;margin-top:6px}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:11px 22px;color:var(--sidebar-text);
     cursor:pointer;font-size:14px;font-weight:500;transition:.15s;border-left:3px solid transparent}
   .nav-item:hover{background:var(--sidebar-hover);color:#fff}
-  .nav-item.active{background:var(--sidebar-hover);color:#fff;border-left-color:#818CF8}
-  .nav-item .ic{font-size:17px;width:20px;text-align:center}
+  .nav-item.active{background:var(--sidebar-hover);color:#fff;border-left-color:#818CF8;font-weight:600}
+  .nav-item.active .ic{color:#A5B4FC}
+  .nav-item.logout:hover{background:rgba(248,113,113,.14);color:#FCA5A5}
+  .nav-item .ic{width:20px;height:20px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .nav-item .ic svg{width:19px;height:19px}
   .nav-item .badge-count{margin-left:auto;background:var(--danger);color:#fff;
     font-size:11px;padding:1px 7px;border-radius:10px;font-weight:700;display:none}
-  .nav-sep{padding:14px 22px 6px;color:#64748B;font-size:11px;font-weight:700;
+  .nav-sep{padding:14px 22px 6px;color:var(--sidebar-muted);font-size:11px;font-weight:700;
     text-transform:uppercase;letter-spacing:.5px}
 
   .main{margin-left:240px;min-height:100vh}
-  .topbar{background:#fff;border-bottom:1px solid var(--border);padding:0 28px;height:64px;
+  .topbar{background:var(--card);border-bottom:1px solid var(--border);padding:0 28px;height:64px;
     display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
   .topbar h1{font-size:19px;font-weight:700}
   .topbar .right{display:flex;align-items:center;gap:16px}
@@ -109,14 +124,15 @@ PORTAL_HTML = """<!DOCTYPE html>
     font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;
     display:none;align-items:center;justify-content:center;padding:0 4px;border:2px solid #fff}
   .bell-dropdown{position:absolute;right:0;top:52px;width:360px;max-height:440px;overflow-y:auto;
-    background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);
+    background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);
     display:none;z-index:200}
   .bell-dropdown.open{display:block}
   .bell-head{padding:14px 18px;border-bottom:1px solid var(--border);font-weight:700;
     font-size:14px;display:flex;align-items:center;justify-content:space-between}
   .bell-head .cnt{background:var(--warn);color:#fff;font-size:11px;padding:2px 9px;border-radius:10px}
-  .notif-item{padding:13px 18px;border-bottom:1px solid #F1F5F9;display:flex;gap:11px}
+  .notif-item{padding:13px 18px;border-bottom:1px solid var(--border);display:flex;gap:11px}
   .notif-item:last-child{border-bottom:none}
+  .notif-item .nm{color:var(--text)}
   .notif-item .dot{width:9px;height:9px;border-radius:50%;background:var(--warn);margin-top:5px;flex-shrink:0}
   .notif-item .nm{font-weight:600;font-size:13px}
   .notif-item .rf{font-size:12px;color:var(--primary);font-family:monospace}
@@ -132,9 +148,11 @@ PORTAL_HTML = """<!DOCTYPE html>
   .card h3{font-size:15px;margin-bottom:16px;font-weight:700}
 
   .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px;margin-bottom:22px}
-  .stat{background:#fff;border:1px solid var(--border);border-radius:14px;padding:20px;
+  .stat{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;
     box-shadow:var(--shadow);position:relative;overflow:hidden}
-  .stat .ic{position:absolute;right:16px;top:16px;font-size:26px;opacity:.85}
+  .stat .ic{position:absolute;right:16px;top:16px;width:38px;height:38px;border-radius:10px;
+    display:flex;align-items:center;justify-content:center}
+  .stat .ic svg{width:20px;height:20px}
   .stat .lbl{font-size:13px;color:var(--muted);font-weight:600;margin-bottom:8px}
   .stat .val{font-size:30px;font-weight:800;line-height:1}
   .stat .bar{position:absolute;left:0;bottom:0;height:4px;width:100%}
@@ -143,7 +161,7 @@ PORTAL_HTML = """<!DOCTYPE html>
     font-size:14px;font-weight:600;cursor:pointer;border:none;transition:.15s}
   .btn-primary{background:var(--primary);color:#fff}
   .btn-primary:hover{background:var(--primary-dark);transform:translateY(-1px);box-shadow:0 4px 12px rgba(79,70,229,.3)}
-  .btn-outline{background:#fff;color:var(--primary);border:2px solid var(--primary)}
+  .btn-outline{background:var(--card);color:var(--primary);border:2px solid var(--primary)}
   .btn-outline:hover{background:var(--primary-light)}
   .btn-success{background:var(--success);color:#fff}
   .btn-success:hover{filter:brightness(1.08)}
@@ -151,18 +169,22 @@ PORTAL_HTML = """<!DOCTYPE html>
   .btn-dl{padding:6px 11px;font-size:12px;font-weight:600;border-radius:7px;cursor:pointer;
     border:1.5px solid var(--primary);background:var(--primary-light);color:var(--primary);transition:.15s}
   .btn-dl:hover{background:var(--primary);color:#fff}
+  .btn-dl.loading{background:var(--primary);color:#fff;pointer-events:none;opacity:.92}
+  .btn-dl svg{vertical-align:-2px}
+  .dl-spin{display:inline-block;width:11px;height:11px;border:2px solid rgba(255,255,255,.45);
+    border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-1px}
 
   .filter-bar{display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap}
   .filter-bar input,.filter-bar select{padding:11px 14px;border:2px solid var(--border);
-    border-radius:10px;font-size:14px;transition:.15s;background:#fff}
+    border-radius:10px;font-size:14px;transition:.15s;background:var(--card);color:var(--text)}
   .filter-bar input{flex:1;min-width:200px}
   .filter-bar input:focus,.filter-bar select:focus{outline:none;border-color:var(--primary)}
   table{width:100%;border-collapse:collapse}
   thead th{text-align:left;padding:13px 14px;font-size:12px;font-weight:700;color:var(--muted);
-    text-transform:uppercase;letter-spacing:.4px;background:#F8FAFC;border-bottom:2px solid var(--border)}
-  tbody td{padding:14px;border-bottom:1px solid #F1F5F9;font-size:14px;vertical-align:top}
-  tbody tr:hover{background:#FAFBFF}
-  .ref-tag{background:#F1F5F9;padding:3px 8px;border-radius:6px;font-family:monospace;font-size:13px}
+    text-transform:uppercase;letter-spacing:.4px;background:var(--th-bg);border-bottom:2px solid var(--border)}
+  tbody td{padding:14px;border-bottom:1px solid var(--border);font-size:14px;vertical-align:top}
+  tbody tr:hover{background:var(--row-hover)}
+  .ref-tag{background:var(--chip);padding:3px 8px;border-radius:6px;font-family:monospace;font-size:13px}
 
   .run-live{color:#2563EB;font-weight:700;font-size:13px}
   .run-done{color:#16A34A;font-weight:700;font-size:13px}
@@ -171,6 +193,39 @@ PORTAL_HTML = """<!DOCTYPE html>
   .btn-cancel{margin-left:8px;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;
     padding:3px 11px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer}
   .btn-cancel:hover{background:#FCA5A5;color:#7F1D1D}
+
+  .card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .card-head h3{margin-bottom:0}
+  .btn-refresh{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:8px;
+    font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--border);
+    background:var(--soft);color:var(--text);transition:.15s}
+  .btn-refresh:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .btn-refresh:hover svg{color:#fff}
+
+  .progress-banner{background:var(--card);border:1px solid var(--primary);border-left:4px solid var(--primary);
+    border-radius:12px;padding:16px 18px;margin-bottom:18px;box-shadow:var(--shadow)}
+  .pb-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+  .pb-title{display:flex;align-items:center;gap:9px;font-weight:700;font-size:14px;color:var(--text)}
+  .pb-pct{font-weight:800;font-size:18px;color:var(--primary)}
+  .pb-track{height:9px;background:var(--chip);border-radius:6px;overflow:hidden}
+  .pb-fill{height:100%;background:linear-gradient(90deg,#6366F1,#8B5CF6);border-radius:6px;
+    transition:width .5s ease;width:0%}
+  .pb-sub{font-size:12px;color:var(--muted);margin-top:7px}
+  .pb-spin{width:15px;height:15px;border:2.5px solid var(--chip);border-top-color:var(--primary);
+    border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .timer-row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .timer-chip{flex:1;min-width:230px;display:flex;align-items:center;gap:12px;background:var(--card);
+    border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+  .timer-chip .tc-ic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;
+    justify-content:center;background:var(--primary-light);color:var(--primary);flex-shrink:0}
+  .timer-chip.soon{border-color:var(--warn);border-left:4px solid var(--warn)}
+  .timer-chip.soon .tc-ic{background:rgba(234,88,12,.12);color:var(--warn)}
+  .tc-lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .tc-time{font-size:18px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums}
+  .tc-grp{font-size:11px;color:var(--muted)}
+  .run-prog{font-size:11px;color:var(--muted);font-weight:600;margin-left:8px}
 
   .badge{display:inline-block;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;white-space:nowrap}
   .b-pending{background:#FEF9C3;color:#854D0E}
@@ -226,7 +281,7 @@ PORTAL_HTML = """<!DOCTYPE html>
 
 <div id="login-screen">
   <div class="login-card">
-    <div class="logo">🎓</div>
+    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="30" height="30"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></div>
     <h2>NIOS Status Tracker</h2>
     <p class="sub">MVS Foundation — Admin Portal</p>
     <label>Username</label>
@@ -242,37 +297,47 @@ PORTAL_HTML = """<!DOCTYPE html>
 <div id="app">
   <aside class="sidebar">
     <div class="brand">
-      <div class="ic">🎓</div>
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></div>
       <div class="tx"><b>NIOS Tracker</b><span>MVS Foundation</span></div>
     </div>
+    <nav class="nav-scroll">
     <div class="nav-item active" data-page="dashboard" onclick="nav('dashboard')">
-      <span class="ic">📊</span><span class="lbl">Dashboard</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span><span class="lbl">Dashboard</span></div>
     <div class="nav-item" data-page="students" onclick="nav('students')">
-      <span class="ic">👥</span><span class="lbl">Active Students</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="lbl">Active Students</span></div>
     <div class="nav-item" data-page="confirmed" onclick="nav('confirmed')">
-      <span class="ic">✅</span><span class="lbl">Confirmed</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span class="lbl">Confirmed</span></div>
     <div class="nav-item" data-page="required" onclick="nav('required')">
-      <span class="ic">📄</span><span class="lbl">Required</span>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="15"/><line x1="12" y1="18" x2="12" y2="18"/></svg></span><span class="lbl">Required</span>
       <span class="badge-count" id="nav-required-badge">0</span></div>
     <div class="nav-sep">Activity</div>
     <div class="nav-item" data-page="history" onclick="nav('history')">
-      <span class="ic">🕑</span><span class="lbl">Change History</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="lbl">Change History</span></div>
     <div class="nav-item" data-page="runlogs" onclick="nav('runlogs')">
-      <span class="ic">🔄</span><span class="lbl">Run Logs</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span><span class="lbl">Run Logs</span></div>
     <div class="nav-sep">Manage</div>
     <div class="nav-item" data-page="upload" onclick="nav('upload')">
-      <span class="ic">📤</span><span class="lbl">Upload Excel</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span><span class="lbl">Upload Excel</span></div>
     <div class="nav-item" data-page="settings" onclick="nav('settings')">
-      <span class="ic">⚙️</span><span class="lbl">Settings</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span class="lbl">Settings</span></div>
+    </nav>
+    <div class="side-foot">
+      <div class="nav-item" onclick="toggleTheme()">
+        <span class="ic" id="theme-ic"></span><span class="lbl" id="theme-lbl">Dark Mode</span></div>
+      <div class="nav-item logout" onclick="doLogout()">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span class="lbl">Logout</span></div>
+    </div>
   </aside>
 
   <div class="main">
     <div class="topbar">
       <h1 id="page-title">Dashboard</h1>
       <div class="right">
-        <button class="btn btn-success btn-sm" onclick="runNow()">▶ Run Now</button>
+        <button class="btn btn-success btn-sm" id="run-now-btn" onclick="runNow()">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Now</button>
         <div class="bell-wrap">
-          <div class="bell-btn" onclick="toggleBell(event)">🔔
+          <div class="bell-btn" onclick="toggleBell(event)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="19" height="19"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
             <span class="bell-badge" id="bell-badge">0</span></div>
           <div class="bell-dropdown" id="bell-dropdown" onclick="event.stopPropagation()">
             <div class="bell-head">Document Required
@@ -285,17 +350,33 @@ PORTAL_HTML = """<!DOCTYPE html>
 
     <div class="content">
       <section id="sec-dashboard" class="page-section active">
+        <div id="run-progress" class="progress-banner" style="display:none">
+          <div class="pb-top">
+            <span class="pb-title"><span class="pb-spin"></span><span id="pb-label">Checking students…</span></span>
+            <span class="pb-pct" id="pb-pct">0%</span>
+          </div>
+          <div class="pb-track"><div class="pb-fill" id="pb-fill" style="width:0%"></div></div>
+          <div class="pb-sub" id="pb-sub">0 / 0 done</div>
+        </div>
+
+        <div id="next-runs" class="timer-row"></div>
+
         <div class="stat-grid" id="stat-grid"></div>
         <div class="card">
-          <h3>📚 Session-wise Students</h3>
+          <h3>Session-wise Students</h3>
           <div id="session-counts"><div class="empty">Loading...</div></div>
         </div>
         <div class="card">
-          <h3>📈 Status Distribution</h3>
+          <h3>Status Distribution</h3>
           <div id="distribution"><div class="empty">Loading...</div></div>
         </div>
         <div class="card">
-          <h3>🔄 Recent Runs</h3>
+          <div class="card-head">
+            <h3>Recent Runs</h3>
+            <button class="btn-refresh" onclick="loadDashboard()" title="Refresh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Refresh</button>
+          </div>
           <div style="overflow-x:auto"><table>
             <thead><tr><th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th></tr></thead>
             <tbody id="recent-runs"></tbody>
@@ -306,7 +387,7 @@ PORTAL_HTML = """<!DOCTYPE html>
       <section id="sec-students" class="page-section">
         <div class="card">
           <div class="filter-bar">
-            <input type="text" id="s-search" placeholder="🔍  Search name / reference / email..." oninput="debounceStudents()">
+            <input type="text" id="s-search" placeholder="Search name / reference / email..." oninput="debounceStudents()">
             <select id="s-status" onchange="loadStudents(1)">
               <option value="">All Statuses</option>
               <option>Pending</option><option>Documents Verification In Progress</option>
@@ -328,11 +409,11 @@ PORTAL_HTML = """<!DOCTYPE html>
 
       <section id="sec-confirmed" class="page-section">
         <div class="card">
-          <h3>✅ Admission Confirmed Students</h3>
+          <h3>Admission Confirmed Students</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
             Inka admission pakka ho gaya. Download links (Phase 2) yahin aayenge.</p>
           <div class="filter-bar">
-            <input type="text" id="c-search" placeholder="🔍  Search..." oninput="debounceConfirmed()">
+            <input type="text" id="c-search" placeholder=" Search..." oninput="debounceConfirmed()">
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
           </div>
           <div id="c-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
@@ -348,11 +429,11 @@ PORTAL_HTML = """<!DOCTYPE html>
 
       <section id="sec-required" class="page-section">
         <div class="card">
-          <h3>📄 Document Required — Action Needed</h3>
+          <h3>Document Required — Action Needed</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
             Counsellor inko resolve kare. Resolve hone ke baad next run mein wapas Active list mein chale jayenge.</p>
           <div class="filter-bar">
-            <input type="text" id="r-search" placeholder="🔍  Search..." oninput="debounceRequired()">
+            <input type="text" id="r-search" placeholder=" Search..." oninput="debounceRequired()">
             <select id="r-session" onchange="loadRequired(1)"><option value="">All Sessions</option></select>
           </div>
           <div id="r-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
@@ -367,7 +448,7 @@ PORTAL_HTML = """<!DOCTYPE html>
 
       <section id="sec-history" class="page-section">
         <div class="card">
-          <h3>🕑 Status Change History</h3>
+          <h3>Status Change History</h3>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th>Reference No</th><th>Student</th><th>Old Status</th><th>New Status</th><th>Changed At</th>
@@ -378,7 +459,7 @@ PORTAL_HTML = """<!DOCTYPE html>
 
       <section id="sec-runlogs" class="page-section">
         <div class="card">
-          <h3>🔄 Run Logs</h3>
+          <h3>Run Logs</h3>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th>
@@ -389,7 +470,7 @@ PORTAL_HTML = """<!DOCTYPE html>
 
       <section id="sec-upload" class="page-section">
         <div class="card">
-          <h3>📤 Upload Student Excel</h3>
+          <h3>Upload Student Excel</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:18px">
             Excel upload karo (.xlsx). Columns: Student Name, Mobile, Class, Reference Number, Email, DOB, Admission Session.</p>
           <div class="drop" id="drop" onclick="document.getElementById('file-input').click()">
@@ -400,7 +481,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           <input type="file" id="file-input" accept=".xlsx,.xls" style="display:none" onchange="handleFile(this.files[0])">
           <div id="upload-status" style="margin-top:16px"></div>
           <div style="margin-top:18px;display:flex;gap:12px">
-            <button class="btn btn-outline btn-sm" onclick="downloadExcel()">⬇ Download Updated Excel</button>
+            <button class="btn btn-outline btn-sm" onclick="downloadExcel()">Download Updated Excel</button>
           </div>
         </div>
       </section>
@@ -422,23 +503,23 @@ PORTAL_HTML = """<!DOCTYPE html>
               style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
             <span style="color:var(--muted)">hours</span>
           </div>
-          <button class="btn btn-primary btn-sm" onclick="saveIntervals()">💾 Save Intervals</button>
+          <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
           <div id="iv-status" style="margin-top:12px;font-size:13px"></div>
         </div>
         <div class="card">
-          <h3>🎨 Status Colour Legend</h3>
+          <h3>Status Colour Legend</h3>
           <div class="legend-grid">
-            <div class="legend-item b-pending"><div class="nm">🟡 Pending</div><div class="ds">Awaiting review</div></div>
-            <div class="legend-item b-docs"><div class="nm">🟠 Documents Verification In Progress</div><div class="ds">Under review</div></div>
-            <div class="legend-item b-required"><div class="nm">📄 Document Required</div><div class="ds">Action needed by counsellor</div></div>
-            <div class="legend-item b-verified"><div class="nm">🟢 Verified</div><div class="ds">Documents verified</div></div>
-            <div class="legend-item b-approved"><div class="nm">🔷 Approved</div><div class="ds">Application approved</div></div>
-            <div class="legend-item b-confirmed"><div class="nm">🎉 Admission Confirmed</div><div class="ds">Admission pakka!</div></div>
-            <div class="legend-item b-rejected"><div class="nm">🔴 Rejected</div><div class="ds">Application rejected</div></div>
+            <div class="legend-item b-pending"><div class="nm">Pending</div><div class="ds">Awaiting review</div></div>
+            <div class="legend-item b-docs"><div class="nm">Documents Verification In Progress</div><div class="ds">Under review</div></div>
+            <div class="legend-item b-required"><div class="nm">Document Required</div><div class="ds">Action needed by counsellor</div></div>
+            <div class="legend-item b-verified"><div class="nm">Verified</div><div class="ds">Documents verified</div></div>
+            <div class="legend-item b-approved"><div class="nm">Approved</div><div class="ds">Application approved</div></div>
+            <div class="legend-item b-confirmed"><div class="nm">Admission Confirmed</div><div class="ds">Admission pakka!</div></div>
+            <div class="legend-item b-rejected"><div class="nm">Rejected</div><div class="ds">Application rejected</div></div>
           </div>
         </div>
         <div class="card">
-          <h3>🔧 Phase 2 — Test Login & Find Download Links</h3>
+          <h3>Phase 2 — Test Login & Find Download Links</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
             Ek <b>confirmed student</b> ka Reference No + DOB daalo. Ye login karke dashboard ke download links dhundega.
             (Isse hum dekhenge links kaise dikhte hain, phir automate karenge.)</p>
@@ -448,7 +529,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             <input type="text" id="dbg-dob" placeholder="DOB DD-MM-YYYY (e.g. 08-08-2007)"
               style="flex:1;min-width:180px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
           </div>
-          <button class="btn btn-primary btn-sm" onclick="testLogin()">🔍 Test Login & Find Links</button>
+          <button class="btn btn-primary btn-sm" onclick="testLogin()">Test Login & Find Links</button>
           <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
             <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
               <b>Doc page inspect</b> — agar download fail ho to ye chalao (PDF kaise embedded hai dekhne ke liye):</p>
@@ -458,7 +539,7 @@ PORTAL_HTML = """<!DOCTYPE html>
                 <option value="app_form">Application Form</option>
                 <option value="hall_ticket">Hall Ticket</option>
               </select>
-              <button class="btn btn-outline btn-sm" onclick="inspectDoc()">🔬 Inspect Doc Page</button>
+              <button class="btn btn-outline btn-sm" onclick="inspectDoc()">Inspect Doc Page</button>
             </div>
           </div>
           <div id="dbg-status" style="margin-top:12px;font-size:13px"></div>
@@ -492,7 +573,10 @@ async function doLogin(){
     document.getElementById("login-screen").style.display="none";
     document.getElementById("app").style.display="block";
     loadDashboard();
+    loadNextRuns();
+    startProgressPoll();
     setInterval(refreshBell,60000);
+    setInterval(loadNextRuns,60000);
   }catch(e){err.textContent="Connection error: "+e.message;}
 }
 
@@ -503,6 +587,90 @@ async function api(path,method="GET",body=null){
   if(r.status===401){location.reload();throw new Error("Session expired");}
   if(!r.ok){const e=await r.json().catch(()=>({detail:"Error"}));throw new Error(e.detail||"Request failed");}
   return r.json();
+}
+
+/* ---------- icons ---------- */
+const DL_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" style="vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+const SUN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+const MOON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+const CLOCK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>';
+
+/* ---------- theme ---------- */
+function applyTheme(t){
+  document.documentElement.setAttribute("data-theme",t);
+  const ic=document.getElementById("theme-ic"),lb=document.getElementById("theme-lbl");
+  if(ic)ic.innerHTML=(t==="dark")?SUN:MOON;
+  if(lb)lb.textContent=(t==="dark")?"Light Mode":"Dark Mode";
+}
+function toggleTheme(){
+  const cur=(document.documentElement.getAttribute("data-theme")==="dark")?"light":"dark";
+  try{localStorage.setItem("nios_theme",cur);}catch(e){}
+  applyTheme(cur);
+}
+(function(){var t="light";try{t=localStorage.getItem("nios_theme")||"light";}catch(e){}applyTheme(t);})();
+
+/* ---------- logout ---------- */
+function doLogout(){
+  if(!confirm("Logout karna hai? Portal band ho jayega.")) return;
+  TOKEN="";stopProgressPoll();if(timerInt){clearInterval(timerInt);timerInt=null;}
+  document.getElementById("app").style.display="none";
+  document.getElementById("login-screen").style.display="flex";
+  const p=document.getElementById("lg-pass");if(p)p.value="";
+}
+
+/* ---------- helpers ---------- */
+function secActive(id){const e=document.getElementById("sec-"+id);return e&&e.classList.contains("active");}
+
+/* ---------- live progress ---------- */
+let progInt=null,wasRunning=false;
+function startProgressPoll(){if(progInt)return;pollProgress();progInt=setInterval(pollProgress,2500);}
+function stopProgressPoll(){if(progInt){clearInterval(progInt);progInt=null;}}
+async function pollProgress(){
+  try{
+    const d=await api("/api/progress");
+    const box=document.getElementById("run-progress");if(!box)return;
+    if(d.running){
+      wasRunning=true;box.style.display="block";
+      const pct=d.percent||0;
+      document.getElementById("pb-pct").textContent=pct+"%";
+      document.getElementById("pb-fill").style.width=pct+"%";
+      document.getElementById("pb-sub").textContent=(d.current||0)+" / "+(d.total||0)+" students checked";
+      const g=d.group_type==="public"?"Public (April / October)":(d.group_type==="regular"?"On Demand + Stream 2":"all");
+      document.getElementById("pb-label").textContent="Checking "+g+" students…";
+    }else{
+      box.style.display="none";
+      if(wasRunning){wasRunning=false;if(secActive("dashboard"))loadDashboard();if(secActive("runlogs"))loadRunLogs();}
+    }
+  }catch(e){}
+}
+
+/* ---------- next-run timers ---------- */
+let timers=[],timerInt=null;
+async function loadNextRuns(){
+  try{
+    const d=await api("/api/next-runs");
+    timers=(d.runs||[]).map(r=>({label:r.label,remain:(r.seconds==null?null:r.seconds),at:Date.now()}));
+    renderTimers();
+    if(!timerInt)timerInt=setInterval(renderTimers,1000);
+  }catch(e){}
+}
+function fmtDur(s){
+  if(s==null)return "Not scheduled";if(s<0)s=0;
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;
+  let o="";if(h>0)o+=h+"h ";o+=(m<10&&h>0?"0":"")+m+"m ";o+=(ss<10?"0":"")+ss+"s";return o;
+}
+function renderTimers(){
+  const el=document.getElementById("next-runs");if(!el)return;
+  if(!timers.length){el.innerHTML="";return;}
+  el.innerHTML=timers.map(t=>{
+    let rem=(t.remain==null)?null:Math.max(0,t.remain-Math.floor((Date.now()-t.at)/1000));
+    const soon=(rem!=null&&rem<=1800);
+    return '<div class="timer-chip'+(soon?' soon':'')+'">'+
+      '<div class="tc-ic">'+CLOCK+'</div><div>'+
+      '<div class="tc-lbl">Next auto-run'+(soon?' — running soon':'')+'</div>'+
+      '<div class="tc-time">'+fmtDur(rem)+'</div>'+
+      '<div class="tc-grp">'+t.label+'</div></div></div>';
+  }).join("");
 }
 
 const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
@@ -526,31 +694,41 @@ async function loadDashboard(){
     const d=await api("/api/dashboard");
     const c=d.counts||{};
     document.getElementById("stat-grid").innerHTML=
-      statCard("Total Students",d.total_students,"👥","#4F46E5")+
-      statCard("Changes Today",c.changes_today||0,"🔄","#0891B2")+
-      statCard("Admission Confirmed",c.confirmed||0,"🎉","#16A34A")+
-      statCard("Verified",c.verified||0,"🟢","#65A30D")+
-      statCard("Document Required",c.document_required||0,"📄","#EA580C")+
-      statCard("In Verification",c.doc_verification||0,"🟠","#D97706");
+      statCard("Total Students",d.total_students,SI.users,"#4F46E5")+
+      statCard("Changes Today",c.changes_today||0,SI.activity,"#0891B2")+
+      statCard("Admission Confirmed",c.confirmed||0,SI.check,"#16A34A")+
+      statCard("Verified",c.verified||0,SI.shield,"#65A30D")+
+      statCard("Document Required",c.document_required||0,SI.file,"#EA580C")+
+      statCard("In Verification",c.doc_verification||0,SI.loader,"#D97706");
     renderDistribution(d.status_distribution,d.total_students);
     renderSessionCounts(d.session_counts||[]);
     renderRuns(d.recent_runs,"recent-runs");
     renderBell(d.notifications||[]);
-  }catch(e){showToast("❌ "+e.message);}
+    loadNextRuns();
+  }catch(e){showToast("Error: "+e.message);}
 }
 function renderSessionCounts(arr){
   const el=document.getElementById("session-counts");
   if(!arr.length){el.innerHTML='<div class="empty">No data yet</div>';return;}
   el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">'+
     arr.map(s=>'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;'+
-      'background:#F8FAFC;border:1px solid var(--border);border-radius:11px">'+
+      'background:var(--soft);border:1px solid var(--border);border-radius:11px">'+
       '<span style="font-size:13px;font-weight:600">'+(s.session||"—")+'</span>'+
       '<span style="font-size:18px;font-weight:800;color:var(--primary)">'+s.cnt+'</span></div>').join("")+'</div>';
 }
-function statCard(lbl,val,ic,col){
-  return '<div class="stat"><div class="ic">'+ic+'</div><div class="lbl">'+lbl+
-    '</div><div class="val">'+val+'</div><div class="bar" style="background:'+col+'"></div></div>';
+function statCard(lbl,val,svg,col){
+  return '<div class="stat"><div class="ic" style="background:'+col+'1A;color:'+col+'">'+svg+
+    '</div><div class="lbl">'+lbl+'</div><div class="val">'+val+
+    '</div><div class="bar" style="background:'+col+'"></div></div>';
 }
+const SI={
+  users:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  activity:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>',
+  file:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  loader:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>'
+};
 const DIST_COLOURS={
   "Pending":"#FBBF24","Documents Verification In Progress":"#FB923C","Document Required":"#F97316",
   "Verified":"#4ADE80","Approved":"#2DD4BF","Admission Confirmed":"#22C55E",
@@ -601,7 +779,7 @@ async function cancelRun(rid){
     const rlog=document.getElementById("sec-runlogs");
     if(dash&&dash.classList.contains("active")) loadDashboard();
     if(rlog&&rlog.classList.contains("active")) loadRunLogs();
-  }catch(e){showToast("❌ "+e.message);}
+  }catch(e){showToast(""+e.message);}
 }
 
 function toggleBell(e){e.stopPropagation();document.getElementById("bell-dropdown").classList.toggle("open");}
@@ -619,7 +797,7 @@ function renderBell(notifs){
     '<div class="nm">'+(x.student_name||"—")+'</div>'+
     '<div class="rf">'+(x.reference_no||"No ref")+'</div>'+
     (x.remark?'<div class="rk">'+x.remark+'</div>':"")+'</div></div>').join("")
-    :'<div class="notif-empty">🎉 No pending documents!</div>';
+    :'<div class="notif-empty">No pending documents</div>';
 }
 
 let stTimer,cTimer,rTimer;
@@ -649,28 +827,41 @@ function dlLinks(s){
   return '<div style="display:flex;flex-wrap:wrap;gap:5px">'+b.join("")+'</div>';
 }
 function dlBtn(s,kind,label){
-  return '<button class="btn-dl" onclick="downloadDoc(&quot;'+s.reference_no+'&quot;,&quot;'+
-    (s.dob||"")+'&quot;,&quot;'+kind+'&quot;,&quot;'+label+'&quot;)">⬇ '+label+'</button>';
+  return '<button class="btn-dl" onclick="downloadDoc(this,&quot;'+s.reference_no+'&quot;,&quot;'+
+    (s.dob||"")+'&quot;,&quot;'+kind+'&quot;,&quot;'+label+'&quot;)">'+DL_ICON+' '+label+'</button>';
 }
-async function downloadDoc(ref,dob,kind,name){
-  showToast("⏳ "+name+" laa rahe hain (login + ~15s)...");
+async function downloadDoc(btn,ref,dob,kind,name){
+  if(btn&&btn.dataset.busy==="1")return;          // already running -> ignore extra clicks
+  let orig="",pct=1,fake=null;
+  if(btn){
+    btn.dataset.busy="1";btn.classList.add("loading");orig=btn.innerHTML;
+    btn.innerHTML='<span class="dl-spin"></span> '+pct+'%';
+    fake=setInterval(()=>{ if(pct<92){pct+=Math.max(1,Math.floor((92-pct)/9));
+      btn.innerHTML='<span class="dl-spin"></span> '+pct+'%';}},650);
+  }
+  const restore=(txt)=>{
+    if(fake)clearInterval(fake);
+    if(btn){ btn.innerHTML=txt||orig;
+      setTimeout(()=>{btn.innerHTML=orig;btn.dataset.busy="";btn.classList.remove("loading");},1400); }
+  };
   try{
     const q=new URLSearchParams({ref:ref,dob:dob,kind:kind});
     const r=await fetch(API+"/api/download-doc?"+q.toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
-    if(!r.ok){const e=await r.json().catch(()=>({detail:"failed"}));showToast("❌ "+(e.detail||"download failed"));return;}
+    if(!r.ok){const e=await r.json().catch(()=>({detail:"failed"}));showToast("Error: "+(e.detail||"download failed"));restore();return;}
     const ctype=r.headers.get("Content-Type")||"";
     const blob=await r.blob();
     const url=URL.createObjectURL(blob);
     if(ctype.includes("pdf")){
       const a=document.createElement("a");a.href=url;a.download=name.replace(/ /g,"_")+"_"+ref+".pdf";a.click();
-      showToast("✅ "+name+" downloaded!");
+      showToast(name+" downloaded");
     }else{
       const w=window.open(url,"_blank");
-      if(!w){showToast("⚠️ Popup block hua — allow karo phir dobara click karo");}
-      else{showToast("✅ "+name+" khul gaya — upar 'Save as PDF' dabao");}
+      if(!w){showToast("Popup block hua — allow karke dobara click karo");}
+      else{showToast(name+" khul gaya — upar 'Save as PDF' dabao");}
     }
     setTimeout(()=>URL.revokeObjectURL(url),120000);
-  }catch(e){showToast("❌ "+e.message);}
+    restore('100%');
+  }catch(e){showToast("Error: "+e.message);restore();}
 }
 function fillSessions(arr){
   if(!arr)return;
@@ -703,7 +894,7 @@ async function loadStudents(page){
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+'</td></tr>').join("")
       :'<tr><td colspan="6" class="empty">No active students found</td></tr>';
     renderPg("s-pg",page,d.pages,"loadStudents");
-  }catch(e){showToast("❌ "+e.message);}
+  }catch(e){showToast(""+e.message);}
 }
 
 async function loadConfirmed(page){
@@ -724,7 +915,7 @@ async function loadConfirmed(page){
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_changed||"—")+'</td></tr>').join("")
       :'<tr><td colspan="7" class="empty">No confirmed students yet</td></tr>';
     renderPg("c-pg",page,d.pages,"loadConfirmed");
-  }catch(e){showToast("❌ "+e.message);}
+  }catch(e){showToast(""+e.message);}
 }
 
 async function loadRequired(page){
@@ -742,9 +933,9 @@ async function loadRequired(page){
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'</td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td style="font-size:13px;color:var(--warn);max-width:420px">'+(s.remark||"(no comment captured)")+'</td></tr>').join("")
-      :'<tr><td colspan="5" class="empty">🎉 No pending documents!</td></tr>';
+      :'<tr><td colspan="5" class="empty">No pending documents</td></tr>';
     renderPg("r-pg",page,d.pages,"loadRequired");
-  }catch(e){showToast("❌ "+e.message);}
+  }catch(e){showToast(""+e.message);}
 }
 
 function renderPg(id,page,total,fnName){
@@ -768,10 +959,10 @@ async function loadHistory(){
       '<td>'+badge(x.old_status)+'</td><td>'+badge(x.new_status)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+x.changed_at+'</td></tr>').join("")
       :'<tr><td colspan="5" class="empty">No changes recorded yet</td></tr>';
-  }catch(e){showToast("❌ "+e.message);}
+  }catch(e){showToast(""+e.message);}
 }
 async function loadRunLogs(){
-  try{const l=await api("/api/run-logs");renderRuns(l,"rl-body");}catch(e){showToast("❌ "+e.message);}
+  try{const l=await api("/api/run-logs");renderRuns(l,"rl-body");}catch(e){showToast(""+e.message);}
 }
 
 const drop=document.getElementById("drop");
@@ -781,27 +972,39 @@ drop.addEventListener("drop",e=>{if(e.dataTransfer.files[0])handleFile(e.dataTra
 async function handleFile(file){
   if(!file)return;
   const st=document.getElementById("upload-status");
-  st.innerHTML='<div style="color:var(--muted)">⏳ Uploading...</div>';
+  st.innerHTML='<div style="color:var(--muted)">Uploading...</div>';
   const fd=new FormData();fd.append("file",file);
   try{
     const r=await fetch(API+"/api/upload-excel",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN},body:fd});
     const d=await r.json();
     if(!r.ok)throw new Error(d.detail||"Upload failed");
-    st.innerHTML='<div style="color:var(--success);font-weight:600">✅ '+d.message+'</div>'+
-      '<div style="margin-top:12px"><button class="btn btn-success btn-sm" onclick="runNow()">▶ Run Check Now</button></div>';
-    showToast("✅ Excel uploaded!");
-  }catch(e){st.innerHTML='<div style="color:var(--danger)">❌ '+e.message+'</div>';}
+    st.innerHTML='<div style="color:var(--success);font-weight:600">'+d.message+'</div>'+
+      '<div style="margin-top:12px"><button class="btn btn-success btn-sm" onclick="runNow()">Run Check Now</button></div>';
+    showToast("Excel uploaded!");
+  }catch(e){st.innerHTML='<div style="color:var(--danger)">'+e.message+'</div>';}
 }
 async function downloadExcel(){
   const r=await fetch(API+"/api/download-excel",{headers:{"Authorization":"Bearer "+TOKEN}});
-  if(!r.ok){showToast("❌ No Excel found. Run a check first.");return;}
+  if(!r.ok){showToast("No Excel found. Run a check first.");return;}
   const blob=await r.blob();const url=URL.createObjectURL(blob);
   const a=document.createElement("a");a.href=url;a.download="nios_status_updated.xlsx";a.click();
   URL.revokeObjectURL(url);
 }
 async function runNow(){
-  try{const r=await api("/api/run-now","POST");showToast("▶ "+r.message+" (background mein chal raha hai)");}
-  catch(e){showToast("❌ "+e.message);}
+  const btn=document.getElementById("run-now-btn");
+  if(btn&&btn.dataset.busy==="1")return;
+  if(btn){btn.dataset.busy="1";btn.style.opacity="0.6";btn.style.pointerEvents="none";}
+  try{
+    const r=await api("/api/run-now","POST");
+    showToast(r.message+" — background mein chal raha hai");
+    const box=document.getElementById("run-progress");
+    if(box){box.style.display="block";document.getElementById("pb-pct").textContent="0%";
+      document.getElementById("pb-fill").style.width="0%";
+      document.getElementById("pb-sub").textContent="Starting…";
+      document.getElementById("pb-label").textContent="Checking students…";}
+    startProgressPoll();
+  }catch(e){showToast("Error: "+e.message);}
+  finally{ setTimeout(()=>{if(btn){btn.dataset.busy="";btn.style.opacity="";btn.style.pointerEvents="";}},4000); }
 }
 
 async function loadIntervals(){
@@ -813,9 +1016,9 @@ async function saveIntervals(){
   const regular=parseInt(document.getElementById("iv-regular").value);
   const pub=parseInt(document.getElementById("iv-public").value);
   try{const r=await api("/api/intervals","POST",{regular:regular,public:pub});
-    document.getElementById("iv-status").innerHTML='<span style="color:var(--success)">✅ '+r.message+'</span>';
-    showToast("✅ Intervals saved!");}
-  catch(e){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">❌ '+e.message+'</span>';}
+    document.getElementById("iv-status").innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
+    showToast("Intervals saved!");}
+  catch(e){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
 
 function showToast(msg){
@@ -826,40 +1029,40 @@ function showToast(msg){
 async function testLogin(){
   const ref=document.getElementById("dbg-ref").value.trim();
   const dob=document.getElementById("dbg-dob").value.trim();
-  if(!ref||!dob){showToast("❌ Reference No aur DOB dono daalo");return;}
+  if(!ref||!dob){showToast("Reference No aur DOB dono daalo");return;}
   const st=document.getElementById("dbg-status");
   const pre=document.getElementById("dbg-result");
-  st.innerHTML='<span style="color:var(--muted)">⏳ Login ho raha hai (captcha solve + ~15 sec)...</span>';
+  st.innerHTML='<span style="color:var(--muted)">Login ho raha hai (captcha solve + ~15 sec)...</span>';
   pre.style.display="none";
   try{
     const q=new URLSearchParams({ref:ref,dob:dob});
     const d=await api("/api/debug-login?"+q.toString());
-    if(d.error){st.innerHTML='<span style="color:var(--danger)">❌ '+d.error+'</span>';return;}
+    if(d.error){st.innerHTML='<span style="color:var(--danger)">'+d.error+'</span>';return;}
     const ok=d.logged_in_guess;
-    st.innerHTML=ok?'<span style="color:var(--success)">✅ Login successful! Links niche dekho.</span>'
-      :'<span style="color:var(--warn)">⚠️ Login shayad fail hua (ya page alag hai). Details niche.</span>';
+    st.innerHTML=ok?'<span style="color:var(--success)">Login successful! Links niche dekho.</span>'
+      :'<span style="color:var(--warn)">Login shayad fail hua (ya page alag hai). Details niche.</span>';
     pre.style.display="block";
     pre.textContent=JSON.stringify(d,null,2);
-  }catch(e){st.innerHTML='<span style="color:var(--danger)">❌ '+e.message+'</span>';}
+  }catch(e){st.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
 
 async function inspectDoc(){
   const ref=document.getElementById("dbg-ref").value.trim();
   const dob=document.getElementById("dbg-dob").value.trim();
   const kind=document.getElementById("dbg-kind").value;
-  if(!ref||!dob){showToast("❌ Reference No aur DOB dono daalo");return;}
+  if(!ref||!dob){showToast("Reference No aur DOB dono daalo");return;}
   const st=document.getElementById("dbg-status");
   const pre=document.getElementById("dbg-result");
-  st.innerHTML='<span style="color:var(--muted)">⏳ '+kind+' page inspect ho raha hai (~15 sec)...</span>';
+  st.innerHTML='<span style="color:var(--muted)">'+kind+' page inspect ho raha hai (~15 sec)...</span>';
   pre.style.display="none";
   try{
     const q=new URLSearchParams({ref:ref,dob:dob,kind:kind});
     const d=await api("/api/debug-doc?"+q.toString());
-    if(d.error){st.innerHTML='<span style="color:var(--danger)">❌ '+d.error+'</span>';return;}
-    st.innerHTML='<span style="color:var(--success)">✅ Inspect done — structure niche</span>';
+    if(d.error){st.innerHTML='<span style="color:var(--danger)">'+d.error+'</span>';return;}
+    st.innerHTML='<span style="color:var(--success)">Inspect done — structure niche</span>';
     pre.style.display="block";
     pre.textContent=JSON.stringify(d,null,2);
-  }catch(e){st.innerHTML='<span style="color:var(--danger)">❌ '+e.message+'</span>';}
+  }catch(e){st.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
 </script>
 </body>
@@ -1051,6 +1254,41 @@ async def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
     conn.commit()
     conn.close()
     return {"message": "Run cancelled", "status": "cancelled"}
+
+@app.get("/api/progress")
+async def run_progress(user=Depends(verify_token)):
+    """Live progress of the currently running check (for the progress bar)."""
+    conn = get_db()
+    row = conn.execute("SELECT id, group_type, run_at, progress_current, progress_total "
+                       "FROM run_logs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    if not row:
+        return {"running": False}
+    cur = row["progress_current"] or 0
+    tot = row["progress_total"] or 0
+    pct = int(cur * 100 / tot) if tot else 0
+    return {"running": True, "id": row["id"], "group_type": row["group_type"],
+            "run_at": row["run_at"], "current": cur, "total": tot, "percent": pct}
+
+GROUP_LABELS = {"regular": "On Demand + Stream 2", "public": "Public (April / October)"}
+
+@app.get("/api/next-runs")
+async def next_runs(user=Depends(verify_token)):
+    """Seconds remaining until the next automatic run of each group."""
+    now = datetime.now(timezone.utc)
+    out = []
+    for grp, jid in [("regular", "job_regular"), ("public", "job_public")]:
+        job = scheduler.get_job(jid)
+        secs = None
+        if job and job.next_run_time:
+            nrt = job.next_run_time
+            if nrt.tzinfo is None:
+                delta = (nrt - datetime.now()).total_seconds()
+            else:
+                delta = (nrt - now).total_seconds()
+            secs = max(0, int(delta))
+        out.append({"group": grp, "label": GROUP_LABELS.get(grp, grp), "seconds": secs})
+    return {"runs": out}
 
 @app.post("/api/upload-excel")
 async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token)):

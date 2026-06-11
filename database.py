@@ -1,7 +1,16 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 DB_PATH = "nios_tracker.db"
+
+# India Standard Time (UTC+5:30) — Railway runs in UTC
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def now_ist():
+    return datetime.now(IST)
+
+def now_ist_str():
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -21,9 +30,17 @@ def init_db():
             total_changed INTEGER DEFAULT 0,
             total_failed INTEGER DEFAULT 0,
             status TEXT DEFAULT 'running',
+            progress_current INTEGER DEFAULT 0,
+            progress_total INTEGER DEFAULT 0,
             notes TEXT
         )
     """)
+    # Safe migration for older DBs missing the progress columns
+    for col in ("progress_current", "progress_total"):
+        try:
+            c.execute(f"ALTER TABLE run_logs ADD COLUMN {col} INTEGER DEFAULT 0")
+        except Exception:
+            pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS status_history (

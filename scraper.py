@@ -175,11 +175,13 @@ def fetch_status(session, ref_no, email, csrf, token):
         result["raw_text"] = str(e)[:200]
     return result
 
-def scrape_students(students, should_cancel=None):
+def scrape_students(students, should_cancel=None, progress_cb=None):
     """students: list of dicts with reference_no/email. Returns results list.
-    should_cancel: optional callable -> True to stop early (cooperative cancel)."""
+    should_cancel: optional callable -> True to stop early (cooperative cancel).
+    progress_cb: optional callable(done, total) called after each student."""
     logger.info(f"Scraping {len(students)} students...")
     results = []
+    total = len(students)
     if not CAPSOLVER_API_KEY:
         for s in students:
             results.append({**s, "status": "Fetch Error", "raw_text": "No captcha key",
@@ -190,20 +192,24 @@ def scrape_students(students, should_cancel=None):
         csrf = get_csrf(session)
         for i, s in enumerate(students):
             if should_cancel and should_cancel():
-                logger.info(f"Scrape cancelled at {i}/{len(students)} by request")
+                logger.info(f"Scrape cancelled at {i}/{total} by request")
                 break
             ref = s.get("reference_no", "")
             email = s.get("email", "")
-            logger.info(f"[{i+1}/{len(students)}] {ref or email}")
+            logger.info(f"[{i+1}/{total}] {ref or email}")
             token = solve_recaptcha_v3()
             if not token:
                 results.append({**s, "status": "Fetch Error", "raw_text": "Captcha failed",
                                 "success": False, "remark": "", "discovered_ref": ""})
+                if progress_cb:
+                    progress_cb(i + 1, total)
                 continue
             if i > 0 and i % 15 == 0:
                 csrf = get_csrf(session)
             res = fetch_status(session, ref, email, csrf, token)
             results.append({**s, **res})
+            if progress_cb:
+                progress_cb(i + 1, total)
             time.sleep(2)   # polite gap between students
     except Exception as e:
         logger.error(f"Session error: {e}")
