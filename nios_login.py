@@ -278,8 +278,8 @@ PRINT_BANNER = """
 color:#fff;padding:10px 16px;text-align:center;font-family:-apple-system,Arial,sans-serif;
 box-shadow:0 2px 8px rgba(0,0,0,.2)">
   <button onclick="window.print()" style="padding:9px 22px;font-size:15px;border:none;border-radius:8px;
-  background:#fff;color:#4F46E5;font-weight:700;cursor:pointer">📄 Save as PDF / Print</button>
-  <span style="margin-left:12px;font-size:13px">ya keyboard pe Ctrl+P (Mac: Cmd+P) dabao</span>
+  background:#fff;color:#4F46E5;font-weight:700;cursor:pointer">&#128196; Save as PDF / Print</button>
+  <span style="margin-left:12px;font-size:13px">or press Ctrl+P (Mac: Cmd+P) to save</span>
 </div>
 <style>@media print{#__mvs_bar{display:none!important}} body{padding-top:56px!important}</style>
 """

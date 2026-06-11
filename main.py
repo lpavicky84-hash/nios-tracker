@@ -438,7 +438,7 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="card">
           <h3>Admission Confirmed Students</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            Inka admission pakka ho gaya. Download links (Phase 2) yahin aayenge.</p>
+            Their admission is confirmed. Document download links appear here.</p>
           <div class="filter-bar">
             <input type="text" id="c-search" placeholder="Search name / reference / email..." oninput="debounceConfirmed()">
             <select id="c-status" onchange="loadConfirmed(1)">
@@ -465,7 +465,7 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="card">
           <h3>Document Required — Action Needed</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            Counsellor inko resolve kare. Resolve hone ke baad next run mein wapas Active list mein chale jayenge.</p>
+            These need to be resolved by the counsellor. Once resolved, they return to the Active list on the next run.</p>
           <div class="filter-bar">
             <input type="text" id="r-search" placeholder="Search name / reference / email..." oninput="debounceRequired()">
             <select id="r-status" onchange="loadRequired(1)">
@@ -491,7 +491,7 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="card">
           <h3>Status Change History</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
-            Date & time range chuno — e.g. kal 6:30 PM se ab tak ke confirmations dekhne ke liye "Custom range" use karo.</p>
+            Choose a date &amp; time range — e.g. use "Custom range" to view confirmations from yesterday 6:30 PM until now.</p>
           <div class="filter-bar">
             <select id="h-preset" onchange="onHistPreset()">
               <option value="all">All time</option>
@@ -542,7 +542,7 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="card">
           <h3>Upload Student Excel</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:18px">
-            Excel upload karo (.xlsx). Columns: Student Name, Mobile, Class, Reference Number, Email, DOB, Admission Session.</p>
+            Upload an Excel file (.xlsx). Columns: Student Name, Mobile, Class, Reference Number, Email, DOB, Admission Session.</p>
           <div class="drop" id="drop" onclick="document.getElementById('file-input').click()">
             <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
             <div style="font-weight:600;font-size:15px">Click or drag Excel file here</div>
@@ -562,7 +562,7 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="card">
           <h3>⏱ Recheck Intervals</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:18px">
-            Alag-alag intervals. Confirmed students automatically skip ho jaate hain.</p>
+            Set separate intervals for each group. Confirmed students are skipped automatically.</p>
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
             <span style="width:280px;font-weight:600">📗 Regular (On Demand + Stream 2)</span>
             <input type="number" id="iv-regular" min="1" max="72" value="6"
@@ -581,16 +581,16 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="card">
           <h3>&#128172; WhatsApp Auto-Send</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            Jab kisi student ka status <b>Admission Confirmed</b> hota hai, uske WhatsApp pe documents ka
-            secure link <b>apne-aap</b> chala jata hai (ek student ko sirf <b>ek baar</b>).</p>
+            When a student's status becomes <b>Admission Confirmed</b>, their documents are
+            automatically sent to their WhatsApp as secure links (each student receives this <b>only once</b>).</p>
           <div id="wa-config" style="font-size:13px;margin-bottom:14px;color:var(--muted)">Loading…</div>
           <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:18px">
             <input type="checkbox" id="wa-enabled" onchange="saveWa()" style="width:18px;height:18px;cursor:pointer">
-            <span style="font-weight:600">Auto-send ON karo</span>
+            <span style="font-weight:600">Enable auto-send</span>
           </label>
           <div style="border-top:1px solid var(--border);padding-top:16px">
             <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
-              <b>Test message</b> — template chuno, apna number daalo, sample message jayega:</p>
+              <b>Send a test message</b> — choose a template, enter your number, and a sample message will be sent:</p>
             <div style="display:flex;gap:10px;flex-wrap:wrap">
               <select id="wa-group" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
                 <option value="ondemand">On Demand (3inone)</option>
@@ -612,15 +612,15 @@ PORTAL_HTML = """<!DOCTYPE html>
             <div class="legend-item b-required"><div class="nm">Document Required</div><div class="ds">Action needed by counsellor</div></div>
             <div class="legend-item b-verified"><div class="nm">Verified</div><div class="ds">Documents verified</div></div>
             <div class="legend-item b-approved"><div class="nm">Approved</div><div class="ds">Application approved</div></div>
-            <div class="legend-item b-confirmed"><div class="nm">Admission Confirmed</div><div class="ds">Admission pakka!</div></div>
+            <div class="legend-item b-confirmed"><div class="nm">Admission Confirmed</div><div class="ds">Admission confirmed</div></div>
             <div class="legend-item b-rejected"><div class="nm">Rejected</div><div class="ds">Application rejected</div></div>
           </div>
         </div>
         <div class="card">
           <h3>Phase 2 — Test Login & Find Download Links</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            Ek <b>confirmed student</b> ka Reference No + DOB daalo. Ye login karke dashboard ke download links dhundega.
-            (Isse hum dekhenge links kaise dikhte hain, phir automate karenge.)</p>
+            Enter a <b>confirmed student's</b> Reference No + DOB. This logs in and finds the download links on the dashboard.
+            (Used to verify how the links appear.)</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
             <input type="text" id="dbg-ref" placeholder="Reference No (e.g. D0026300046)"
               style="flex:1;min-width:180px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
@@ -630,7 +630,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           <button class="btn btn-primary btn-sm" onclick="testLogin()">Test Login & Find Links</button>
           <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
             <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
-              <b>Doc page inspect</b> — agar download fail ho to ye chalao (PDF kaise embedded hai dekhne ke liye):</p>
+              <b>Inspect document page</b> — run this if a download fails (to see how the PDF is embedded):</p>
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
               <select id="dbg-kind" style="padding:10px;border:2px solid var(--border);border-radius:10px;font-size:14px">
                 <option value="id_card">ID Card</option>
@@ -648,8 +648,8 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="card" style="border:1px solid var(--danger)">
           <h3 style="color:var(--danger)">&#9888; Danger Zone — Clear All Data</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            Saare students, status, change history aur uploaded sheet <b>permanently delete</b> ho jayenge.
-            Settings (intervals, WhatsApp) safe rahenge. Iske baad nayi sheet upload karni hogi.</p>
+            This will <b>permanently delete</b> all students, statuses, change history and the uploaded sheet.
+            Your settings (intervals, WhatsApp) will be kept. You will need to upload a new sheet afterwards.</p>
           <button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="resetData()">Clear All Data</button>
           <div id="reset-status" style="margin-top:12px;font-size:13px"></div>
         </div>
@@ -718,7 +718,7 @@ function toggleTheme(){
 
 /* ---------- logout ---------- */
 function doLogout(){
-  if(!confirm("Logout karna hai? Portal band ho jayega.")) return;
+  if(!confirm("Log out of the portal?")) return;
   TOKEN="";stopProgressPoll();if(timerInt){clearInterval(timerInt);timerInt=null;}
   document.getElementById("app").style.display="none";
   document.getElementById("login-screen").style.display="flex";
@@ -884,7 +884,7 @@ function renderRuns(runs,id){
 }
 
 async function cancelRun(rid){
-  if(!confirm("Is run ko cancel karna hai?")) return;
+  if(!confirm("Cancel this run?")) return;
   try{
     const fd=new FormData();fd.append("run_id",rid);
     const res=await fetch("/api/cancel-run",{method:"POST",headers:{Authorization:"Bearer "+TOKEN},body:fd});
@@ -950,16 +950,16 @@ function waBtn(s){
   if(!s.row_key)return "";
   const sent=(s.whatsapp_sent==1);
   return '<button class="btn-dl" style="background:#16A34A;color:#fff;border-color:#16A34A;margin-top:4px" '+
-    'onclick="resendWa(&quot;'+s.row_key+'&quot;,this)">'+(sent?'WhatsApp dobara':'WhatsApp bhejo')+'</button>';
+    'onclick="resendWa(&quot;'+s.row_key+'&quot;,this)">'+(sent?'Resend WhatsApp':'Send WhatsApp')+'</button>';
 }
 async function resendWa(rowKey,btn){
   if(btn&&btn.dataset.busy==="1")return;
-  if(!confirm("Is student ko WhatsApp pe documents bhejein?"))return;
+  if(!confirm("Send the documents to this student on WhatsApp?"))return;
   let orig="";
-  if(btn){btn.dataset.busy="1";orig=btn.innerHTML;btn.innerHTML="Sending…";}
+  if(btn){btn.dataset.busy="1";orig=btn.innerHTML;btn.innerHTML="Sending...";}
   try{const r=await api("/api/wa-resend","POST",{row_key:rowKey});
-    if(r.ok)showToast("WhatsApp bhej diya!");
-    else showToast("Fail: "+(r.info||"error"));}
+    if(r.ok)showToast("WhatsApp sent successfully");
+    else showToast("Failed: "+(r.info||"error"));}
   catch(e){showToast("Error: "+e.message);}
   finally{if(btn){btn.innerHTML=orig;btn.dataset.busy="";}}
 }
@@ -989,8 +989,8 @@ async function downloadDoc(btn,ref,dob,kind,name){
       showToast(name+" downloaded");
     }else{
       const w=window.open(url,"_blank");
-      if(!w){showToast("Popup block hua — allow karke dobara click karo");}
-      else{showToast(name+" khul gaya — upar 'Save as PDF' dabao");}
+      if(!w){showToast("Popup blocked — please allow popups and click again");}
+      else{showToast(name+" opened — tap 'Save as PDF' at the top");}
     }
     setTimeout(()=>URL.revokeObjectURL(url),120000);
     restore('100%');
@@ -1141,7 +1141,7 @@ async function exportHistory(){
   const rg=histRange();
   const q=new URLSearchParams({from_dt:rg.from,to_dt:rg.to,status:fval("h-status")});
   try{
-    showToast("Excel ban rahi hai…");
+    showToast("Preparing Excel...");
     const r=await fetch(API+"/api/export-history?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
     if(!r.ok){showToast("Export failed");return;}
     const blob=await r.blob();const url=URL.createObjectURL(blob);
@@ -1219,7 +1219,7 @@ function renderUploadSummary(d){
     '</div>'+
     (d.duplicates>0?'<div style="font-size:12px;color:var(--muted);margin-top:8px">'+
       d.duplicates+' student(s) already tracked (matched by reference / email / name+phone) — '+
-      'inko dobara add nahi kiya jayega, sirf status update hoga. '+(d.unique||0)+' new student(s) add honge.</div>':
+      'these will not be added again, only their status will be updated. '+(d.unique||0)+' new student(s) will be added.</div>':
       '<div style="font-size:12px;color:var(--success);margin-top:8px">Sabhi '+(d.unique||0)+' students new hain.</div>');
 }
 function renderUploadPreview(rows){
@@ -1252,7 +1252,7 @@ async function exportStudents(view){
   else{search=fval("s-search");status=fval("s-status");session=fval("s-session");}
   const q=new URLSearchParams({view:view,search:search,status_filter:status,session_filter:session});
   try{
-    showToast("Excel ban rahi hai…");
+    showToast("Preparing Excel...");
     const r=await fetch(API+"/api/export-students?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
     if(!r.ok){showToast("Export failed");return;}
     const blob=await r.blob();const url=URL.createObjectURL(blob);
@@ -1268,7 +1268,7 @@ async function runNow(){
   if(btn){btn.dataset.busy="1";btn.style.opacity="0.6";btn.style.pointerEvents="none";}
   try{
     const r=await api("/api/run-now","POST");
-    showToast(r.message+" — background mein chal raha hai");
+    showToast(r.message+" — running in the background");
     const box=document.getElementById("run-progress");
     if(box){box.style.display="block";document.getElementById("pb-pct").textContent="0%";
       document.getElementById("pb-fill").style.width="0%";
@@ -1298,7 +1298,7 @@ async function loadWa(){
     document.getElementById("wa-enabled").checked=r.enabled;
     const cfg=document.getElementById("wa-config");
     if(!r.configured){
-      cfg.innerHTML='<span style="color:var(--danger)">&#10007; AISENSY_API_KEY Railway env var mein set nahi hai</span>';
+      cfg.innerHTML='<span style="color:var(--danger)">&#10007; AISENSY_API_KEY is not set in Railway environment variables</span>';
     }else{
       const c=r.campaigns||{};
       const row=(lbl,v)=>'<div style="margin:2px 0">'+lbl+': '+
@@ -1311,17 +1311,17 @@ async function loadWa(){
 async function saveWa(){
   const en=document.getElementById("wa-enabled").checked;
   try{await api("/api/wa-settings","POST",{enabled:en});
-    showToast(en?"WhatsApp auto-send ON":"WhatsApp auto-send OFF");}
+    showToast(en?"WhatsApp auto-send enabled":"WhatsApp auto-send disabled");}
   catch(e){showToast("Error: "+e.message);}
 }
 async function testWa(){
   const num=document.getElementById("wa-num").value.trim();
   const group=document.getElementById("wa-group").value;
   const s=document.getElementById("wa-status");
-  if(!num){s.innerHTML='<span style="color:var(--danger)">Pehle number daalo</span>';return;}
-  s.innerHTML='Sending…';
+  if(!num){s.innerHTML='<span style="color:var(--danger)">Please enter a number</span>';return;}
+  s.innerHTML='Sending...';
   try{const r=await api("/api/wa-test","POST",{number:num,group:group});
-    if(r.ok)s.innerHTML='<span style="color:var(--success)">&#10003; Test bhej diya! WhatsApp check karo.</span>';
+    if(r.ok)s.innerHTML='<span style="color:var(--success)">&#10003; Test message sent. Please check your WhatsApp.</span>';
     else s.innerHTML='<span style="color:var(--danger)">&#10007; '+(r.info||"failed")+'</span>';}
   catch(e){s.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
@@ -1334,18 +1334,18 @@ function showToast(msg){
 async function testLogin(){
   const ref=document.getElementById("dbg-ref").value.trim();
   const dob=document.getElementById("dbg-dob").value.trim();
-  if(!ref||!dob){showToast("Reference No aur DOB dono daalo");return;}
+  if(!ref||!dob){showToast("Please enter both Reference No and DOB");return;}
   const st=document.getElementById("dbg-status");
   const pre=document.getElementById("dbg-result");
-  st.innerHTML='<span style="color:var(--muted)">Login ho raha hai (captcha solve + ~15 sec)...</span>';
+  st.innerHTML='<span style="color:var(--muted)">Logging in (solving captcha, ~15 sec)...</span>';
   pre.style.display="none";
   try{
     const q=new URLSearchParams({ref:ref,dob:dob});
     const d=await api("/api/debug-login?"+q.toString());
     if(d.error){st.innerHTML='<span style="color:var(--danger)">'+d.error+'</span>';return;}
     const ok=d.logged_in_guess;
-    st.innerHTML=ok?'<span style="color:var(--success)">Login successful! Links niche dekho.</span>'
-      :'<span style="color:var(--warn)">Login shayad fail hua (ya page alag hai). Details niche.</span>';
+    st.innerHTML=ok?'<span style="color:var(--success)">Login successful! See the links below.</span>'
+      :'<span style="color:var(--warn)">Login may have failed (or the page is different). Details below.</span>';
     pre.style.display="block";
     pre.textContent=JSON.stringify(d,null,2);
   }catch(e){st.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
@@ -1355,16 +1355,16 @@ async function inspectDoc(){
   const ref=document.getElementById("dbg-ref").value.trim();
   const dob=document.getElementById("dbg-dob").value.trim();
   const kind=document.getElementById("dbg-kind").value;
-  if(!ref||!dob){showToast("Reference No aur DOB dono daalo");return;}
+  if(!ref||!dob){showToast("Please enter both Reference No and DOB");return;}
   const st=document.getElementById("dbg-status");
   const pre=document.getElementById("dbg-result");
-  st.innerHTML='<span style="color:var(--muted)">'+kind+' page inspect ho raha hai (~15 sec)...</span>';
+  st.innerHTML='<span style="color:var(--muted)">Inspecting the '+kind+' page (~15 sec)...</span>';
   pre.style.display="none";
   try{
     const q=new URLSearchParams({ref:ref,dob:dob,kind:kind});
     const d=await api("/api/debug-doc?"+q.toString());
     if(d.error){st.innerHTML='<span style="color:var(--danger)">'+d.error+'</span>';return;}
-    st.innerHTML='<span style="color:var(--success)">Inspect done — structure niche</span>';
+    st.innerHTML='<span style="color:var(--success)">Inspection complete — structure below</span>';
     pre.style.display="block";
     pre.textContent=JSON.stringify(d,null,2);
   }catch(e){st.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
@@ -1373,29 +1373,29 @@ async function inspectDoc(){
 async function findAddr(){
   const ref=document.getElementById("dbg-ref").value.trim();
   const dob=document.getElementById("dbg-dob").value.trim();
-  if(!ref||!dob){showToast("Reference No aur DOB dono daalo");return;}
+  if(!ref||!dob){showToast("Please enter both Reference No and DOB");return;}
   const st=document.getElementById("dbg-status");
   const pre=document.getElementById("dbg-result");
-  st.innerHTML='<span style="color:var(--muted)">ID card se Regional Centre address dhundh rahe hain (~15 sec)...</span>';
+  st.innerHTML='<span style="color:var(--muted)">Finding the Regional Centre address from the ID card (~15 sec)...</span>';
   pre.style.display="none";
   try{
     const q=new URLSearchParams({ref:ref,dob:dob});
     const d=await api("/api/debug-idcard?"+q.toString());
     if(d.error){st.innerHTML='<span style="color:var(--danger)">'+d.error+'</span>';return;}
-    st.innerHTML='<span style="color:var(--success)">Extracted address: <b>'+(d.extracted_address||"(blank — niche text bhejo)")+'</b></span>';
+    st.innerHTML='<span style="color:var(--success)">Extracted address: <b>'+(d.extracted_address||"(blank — please share the text below)")+'</b></span>';
     pre.style.display="block";
     pre.textContent=JSON.stringify(d,null,2);
   }catch(e){st.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
 
 async function resetData(){
-  if(!confirm("Pakka? Saare students, status, history aur sheet DELETE ho jayenge. Ye undo nahi hoga."))return;
-  if(!confirm("Last confirmation — sach mein sab clear karein?"))return;
+  if(!confirm("Are you sure? All students, statuses, history and the sheet will be DELETED. This cannot be undone."))return;
+  if(!confirm("Final confirmation — do you really want to clear all data?"))return;
   const s=document.getElementById("reset-status");
-  s.innerHTML="Clearing…";
+  s.innerHTML="Clearing...";
   try{const r=await api("/api/reset-data","POST",{});
-    s.innerHTML='<span style="color:var(--success)">&#10003; '+r.message+'. Ab nayi sheet upload karo.</span>';
-    showToast("Saara data clear ho gaya");}
+    s.innerHTML='<span style="color:var(--success)">&#10003; '+r.message+' You can now upload a new sheet.</span>';
+    showToast("All data cleared");}
   catch(e){s.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
 </script>
@@ -1937,7 +1937,7 @@ async def reset_data(body: dict, user=Depends(verify_token)):
     except Exception:
         pass
     logger.info("All student data cleared via reset endpoint")
-    return {"message": "Saara data clear ho gaya", "excel_removed": removed}
+    return {"message": "All data has been cleared.", "excel_removed": removed}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public document links (student opens WITHOUT portal login; token-signed)
@@ -1975,16 +1975,16 @@ h1{font-size:19px;text-align:center;color:#0F172A}
 <div class="card">
   <div class="logo">MVS</div>
   <h1>Your NIOS Documents</h1>
-  <div class="sub">Admission Confirmed &#127881;</div>
+  <div class="sub">Admission Confirmed</div>
   <div class="name">__NAME__</div>
   <div class="sub" style="margin-top:0">Ref: __REF__</div>
   <div class="btns">__BUTTONS__</div>
-  <div class="note">&#128161; Document kholne mein ~15 second lagte hain (NIOS se securely fetch hota hai). Khulne ke baad upar <b>"Save as PDF / Print"</b> dabakar save karein.</div>
+  <div class="note">&#128161; It may take a few seconds to open each document (securely fetched from NIOS). Once it opens, tap <b>"Save as PDF / Print"</b> at the top to save it.</div>
   <div class="foot">MVS Foundation &middot; NIOS Open Schooling</div>
 </div>
 <script>
 function openDoc(el,url){ if(el.dataset.b==='1')return; el.dataset.b='1';
-  var t=el.querySelector('.lbl'); var o=t.textContent; t.textContent='Opening… ~15s';
+  var t=el.querySelector('.lbl'); var o=t.textContent; t.textContent='Opening...';
   el.classList.add('busy'); window.open(url,'_blank');
   setTimeout(function(){t.textContent=o;el.classList.remove('busy');el.dataset.b='';},16000); }
 </script>
@@ -2033,9 +2033,71 @@ async def public_doc_file(token: str, kind: str):
     disp = f'attachment; filename="{filename}"' if "pdf" in ctype else "inline"
     return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
 
-@app.get("/doc/{token}")
+DOC_LABELS = {"id_card": "ID Card", "app_form": "Application / Registration Form",
+              "hall_ticket": "Hall Ticket"}
+
+LOADING_PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Preparing your document — MVS Foundation</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+body{background:linear-gradient(135deg,#4F46E5,#7C3AED);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.box{background:#fff;border-radius:20px;max-width:430px;width:100%;padding:40px 30px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.logo{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,#4F46E5,#7C3AED);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;margin:0 auto 18px}
+.spinner{width:52px;height:52px;border:5px solid #EEF2FF;border-top-color:#4F46E5;border-radius:50%;margin:0 auto 22px;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+h1{font-size:19px;color:#0F172A;margin-bottom:8px}
+.doc{color:#4F46E5;font-weight:700}
+p{color:#64748B;font-size:14px;line-height:1.6;margin-top:6px}
+.warn{margin-top:22px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:12px;padding:12px 14px;color:#92400E;font-size:13px;font-weight:600}
+.err{display:none;margin-top:18px;color:#DC2626;font-size:14px}
+.retry{display:none;margin-top:14px;padding:11px 26px;border:none;border-radius:10px;background:#4F46E5;color:#fff;font-weight:600;font-size:15px;cursor:pointer}
+</style></head><body>
+<div class="box">
+  <div class="logo">MVS</div>
+  <div class="spinner" id="sp"></div>
+  <h1>Preparing your <span class="doc">__LABEL__</span></h1>
+  <p>Please wait a few seconds while we securely fetch your document from NIOS.</p>
+  <div class="warn">&#9203; Please do not refresh this page or press the back button.</div>
+  <div class="err" id="err">Sorry, the document could not be loaded. Please try again.</div>
+  <button class="retry" id="retry" onclick="loadDoc()">Try Again</button>
+</div>
+<script>
+function loadDoc(){
+  document.getElementById('err').style.display='none';
+  document.getElementById('retry').style.display='none';
+  document.getElementById('sp').style.display='block';
+  fetch('__RAW__').then(function(r){
+    if(!r.ok)throw new Error('failed');
+    var ct=r.headers.get('Content-Type')||'';
+    if(ct.indexOf('pdf')!==-1){ window.location='__RAW__'; return null; }
+    return r.text();
+  }).then(function(html){
+    if(html){ document.open(); document.write(html); document.close(); }
+  }).catch(function(e){
+    document.getElementById('sp').style.display='none';
+    document.getElementById('err').style.display='block';
+    document.getElementById('retry').style.display='inline-block';
+  });
+}
+loadDoc();
+</script></body></html>"""
+
+@app.get("/doc/{token}", response_class=HTMLResponse)
 async def public_single_doc(token: str):
-    """Open ONE document directly from a per-document signed link (WhatsApp)."""
+    """Instant loading page; the actual (slow) document loads from /doc/{token}/raw."""
+    from links import verify_doc_link
+    row_key, kind = verify_doc_link(token)
+    if not row_key:
+        return HTMLResponse("<h3 style='font-family:sans-serif;text-align:center;margin-top:60px'>"
+                            "This link is invalid or has expired.</h3>", status_code=404)
+    label = DOC_LABELS.get(kind, "Document")
+    page = LOADING_PAGE.replace("__LABEL__", label).replace("__RAW__", f"/doc/{token}/raw")
+    return HTMLResponse(page)
+
+@app.get("/doc/{token}/raw")
+async def public_single_doc_raw(token: str):
+    """The actual document (logs into NIOS, ~15s). Served to the loader page via fetch."""
     from fastapi import Response
     from links import verify_doc_link
     from nios_login import fetch_document
