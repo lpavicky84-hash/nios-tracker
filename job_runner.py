@@ -37,11 +37,28 @@ def run_status_check(group_type="all"):
 
     conn = get_db()
     c = conn.cursor()
+    # Auto-cancel any previously 'running' run so two checks never overlap.
+    # The old run's worker polls its own status and stops cooperatively.
+    prev = c.execute("SELECT id FROM run_logs WHERE status='running'").fetchall()
+    if prev:
+        c.execute("UPDATE run_logs SET status='cancelled' WHERE status='running'")
+        conn.commit()
+        logger.info(f"Auto-cancelled {len(prev)} previous running run(s)")
     run_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute("INSERT INTO run_logs (run_at, group_type, status) VALUES (?,?, 'running')",
               (run_at, group_type))
     conn.commit()
     run_id = c.lastrowid
+
+    def _is_cancelled():
+        """Cooperative cancel check (fresh connection; sees other threads' commits)."""
+        try:
+            cc = get_db()
+            row = cc.execute("SELECT status FROM run_logs WHERE id=?", (run_id,)).fetchone()
+            cc.close()
+            return bool(row and row["status"] != "running")
+        except Exception:
+            return False
 
     checked = changed = failed = 0
     excel_updates = []
@@ -88,7 +105,7 @@ def run_status_check(group_type="all"):
             _finish(conn, run_id, 0, 0, 0, "Nothing to check")
             return
 
-        results = scrape_students(to_check)
+        results = scrape_students(to_check, should_cancel=_is_cancelled)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         for res in results:
@@ -148,8 +165,16 @@ def run_status_check(group_type="all"):
 
         conn.commit()
         write_status_to_excel(EXCEL_PATH, excel_updates)
-        _finish(conn, run_id, checked, changed, failed, "completed")
-        logger.info(f"Run done | Checked:{checked} Changed:{changed} Failed:{failed}")
+        # If this run was cancelled mid-way, keep it 'cancelled' (save partial counts).
+        cur = c.execute("SELECT status FROM run_logs WHERE id=?", (run_id,)).fetchone()
+        if cur and cur["status"] == "cancelled":
+            conn.execute("UPDATE run_logs SET total_checked=?, total_changed=?, total_failed=? WHERE id=?",
+                         (checked, changed, failed, run_id))
+            conn.commit()
+            logger.info(f"Run cancelled | Checked:{checked} Changed:{changed} Failed:{failed}")
+        else:
+            _finish(conn, run_id, checked, changed, failed, "completed")
+            logger.info(f"Run done | Checked:{checked} Changed:{changed} Failed:{failed}")
 
     except Exception as e:
         logger.error(f"Run failed: {e}")

@@ -8,7 +8,7 @@ except Exception:
     pass
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse, HTMLResponse
@@ -163,6 +163,14 @@ PORTAL_HTML = """<!DOCTYPE html>
   tbody td{padding:14px;border-bottom:1px solid #F1F5F9;font-size:14px;vertical-align:top}
   tbody tr:hover{background:#FAFBFF}
   .ref-tag{background:#F1F5F9;padding:3px 8px;border-radius:6px;font-family:monospace;font-size:13px}
+
+  .run-live{color:#2563EB;font-weight:700;font-size:13px}
+  .run-done{color:#16A34A;font-weight:700;font-size:13px}
+  .run-cancel{color:#94A3B8;font-weight:700;font-size:13px}
+  .run-err{color:var(--danger);font-weight:700;font-size:12px}
+  .btn-cancel{margin-left:8px;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;
+    padding:3px 11px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer}
+  .btn-cancel:hover{background:#FCA5A5;color:#7F1D1D}
 
   .badge{display:inline-block;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;white-space:nowrap}
   .b-pending{background:#FEF9C3;color:#854D0E}
@@ -562,10 +570,38 @@ function renderDistribution(dist,total){
 function renderRuns(runs,id){
   const el=document.getElementById(id);
   if(!runs||!runs.length){el.innerHTML='<tr><td colspan="6" class="empty">No runs yet</td></tr>';return;}
-  el.innerHTML=runs.map(r=>'<tr><td>'+r.run_at+'</td><td><span class="ref-tag">'+(r.group_type||"all")+
-    '</span></td><td>'+r.total_checked+'</td><td style="color:var(--primary);font-weight:700">'+r.total_changed+
-    '</td><td style="color:'+(r.total_failed?'var(--danger)':'inherit')+'">'+r.total_failed+
-    '</td><td>'+r.status+'</td></tr>').join("");
+  el.innerHTML=runs.map(r=>{
+    var st;
+    if(r.status==="running"){
+      st='<span class="run-live">● running</span>'+
+         ' <button class="btn-cancel" onclick="cancelRun('+r.id+')">Cancel</button>';
+    }else if(r.status==="cancelled"){
+      st='<span class="run-cancel">✕ cancelled</span>';
+    }else if(r.status==="completed"){
+      st='<span class="run-done">✓ completed</span>';
+    }else{
+      st='<span class="run-err">'+r.status+'</span>';
+    }
+    return '<tr><td>'+r.run_at+'</td><td><span class="ref-tag">'+(r.group_type||"all")+
+      '</span></td><td>'+r.total_checked+'</td><td style="color:var(--primary);font-weight:700">'+r.total_changed+
+      '</td><td style="color:'+(r.total_failed?'var(--danger)':'inherit')+'">'+r.total_failed+
+      '</td><td>'+st+'</td></tr>';
+  }).join("");
+}
+
+async function cancelRun(rid){
+  if(!confirm("Is run ko cancel karna hai?")) return;
+  try{
+    const fd=new FormData();fd.append("run_id",rid);
+    const res=await fetch("/api/cancel-run",{method:"POST",headers:{Authorization:"Bearer "+TOKEN},body:fd});
+    const d=await res.json();
+    if(!res.ok) throw new Error(d.detail||"failed");
+    showToast("✓ "+(d.message||"Cancelled"));
+    const dash=document.getElementById("sec-dashboard");
+    const rlog=document.getElementById("sec-runlogs");
+    if(dash&&dash.classList.contains("active")) loadDashboard();
+    if(rlog&&rlog.classList.contains("active")) loadRunLogs();
+  }catch(e){showToast("❌ "+e.message);}
 }
 
 function toggleBell(e){e.stopPropagation();document.getElementById("bell-dropdown").classList.toggle("open");}
@@ -1000,6 +1036,21 @@ async def get_run_logs(limit: int=50, user=Depends(verify_token)):
 async def run_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
     background_tasks.add_task(run_status_check, "all")
     return {"message": "Run triggered for all students!"}
+
+@app.post("/api/cancel-run")
+async def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
+    conn = get_db()
+    row = conn.execute("SELECT status FROM run_logs WHERE id=?", (run_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Run not found")
+    if row["status"] != "running":
+        conn.close()
+        return {"message": f"Run already {row['status']}", "status": row["status"]}
+    conn.execute("UPDATE run_logs SET status='cancelled' WHERE id=?", (run_id,))
+    conn.commit()
+    conn.close()
+    return {"message": "Run cancelled", "status": "cancelled"}
 
 @app.post("/api/upload-excel")
 async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token)):

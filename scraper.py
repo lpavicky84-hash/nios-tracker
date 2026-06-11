@@ -175,8 +175,9 @@ def fetch_status(session, ref_no, email, csrf, token):
         result["raw_text"] = str(e)[:200]
     return result
 
-def scrape_students(students):
-    """students: list of dicts with reference_no/email. Returns results list."""
+def scrape_students(students, should_cancel=None):
+    """students: list of dicts with reference_no/email. Returns results list.
+    should_cancel: optional callable -> True to stop early (cooperative cancel)."""
     logger.info(f"Scraping {len(students)} students...")
     results = []
     if not CAPSOLVER_API_KEY:
@@ -188,6 +189,9 @@ def scrape_students(students):
         session = requests.Session()
         csrf = get_csrf(session)
         for i, s in enumerate(students):
+            if should_cancel and should_cancel():
+                logger.info(f"Scrape cancelled at {i}/{len(students)} by request")
+                break
             ref = s.get("reference_no", "")
             email = s.get("email", "")
             logger.info(f"[{i+1}/{len(students)}] {ref or email}")
