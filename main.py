@@ -645,6 +645,14 @@ PORTAL_HTML = """<!DOCTYPE html>
           <pre id="dbg-result" style="margin-top:12px;background:#0F172A;color:#A5F3FC;padding:16px;
             border-radius:10px;font-size:12px;overflow-x:auto;max-height:400px;display:none;white-space:pre-wrap"></pre>
         </div>
+        <div class="card" style="border:1px solid var(--danger)">
+          <h3 style="color:var(--danger)">&#9888; Danger Zone — Clear All Data</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+            Saare students, status, change history aur uploaded sheet <b>permanently delete</b> ho jayenge.
+            Settings (intervals, WhatsApp) safe rahenge. Iske baad nayi sheet upload karni hogi.</p>
+          <button class="btn btn-sm" style="background:var(--danger);color:#fff" onclick="resetData()">Clear All Data</button>
+          <div id="reset-status" style="margin-top:12px;font-size:13px"></div>
+        </div>
       </section>
     </div>
   </div>
@@ -938,6 +946,23 @@ function dlBtn(s,kind,label){
   return '<button class="btn-dl" onclick="downloadDoc(this,&quot;'+s.reference_no+'&quot;,&quot;'+
     (s.dob||"")+'&quot;,&quot;'+kind+'&quot;,&quot;'+label+'&quot;)">'+DL_ICON+' '+label+'</button>';
 }
+function waBtn(s){
+  if(!s.row_key)return "";
+  const sent=(s.whatsapp_sent==1);
+  return '<button class="btn-dl" style="background:#16A34A;color:#fff;border-color:#16A34A;margin-top:4px" '+
+    'onclick="resendWa(&quot;'+s.row_key+'&quot;,this)">'+(sent?'WhatsApp dobara':'WhatsApp bhejo')+'</button>';
+}
+async function resendWa(rowKey,btn){
+  if(btn&&btn.dataset.busy==="1")return;
+  if(!confirm("Is student ko WhatsApp pe documents bhejein?"))return;
+  let orig="";
+  if(btn){btn.dataset.busy="1";orig=btn.innerHTML;btn.innerHTML="Sending…";}
+  try{const r=await api("/api/wa-resend","POST",{row_key:rowKey});
+    if(r.ok)showToast("WhatsApp bhej diya!");
+    else showToast("Fail: "+(r.info||"error"));}
+  catch(e){showToast("Error: "+e.message);}
+  finally{if(btn){btn.innerHTML=orig;btn.dataset.busy="";}}
+}
 async function downloadDoc(btn,ref,dob,kind,name){
   if(btn&&btn.dataset.busy==="1")return;          // already running -> ignore extra clicks
   let orig="",pct=1,fake=null;
@@ -1020,7 +1045,7 @@ async function loadConfirmed(page){
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'</td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
-      '<td>'+badge(s.current_status)+'</td><td style="font-size:12px">'+dlLinks(s)+'</td>'+
+      '<td>'+badge(s.current_status)+'</td><td style="font-size:12px">'+dlLinks(s)+waBtn(s)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_changed||"—")+'</td></tr>').join("")
       :'<tr><td colspan="7" class="empty">No confirmed students yet</td></tr>';
     renderPg("c-pg",page,d.pages,"loadConfirmed");
@@ -1361,6 +1386,17 @@ async function findAddr(){
     pre.style.display="block";
     pre.textContent=JSON.stringify(d,null,2);
   }catch(e){st.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
+}
+
+async function resetData(){
+  if(!confirm("Pakka? Saare students, status, history aur sheet DELETE ho jayenge. Ye undo nahi hoga."))return;
+  if(!confirm("Last confirmation — sach mein sab clear karein?"))return;
+  const s=document.getElementById("reset-status");
+  s.innerHTML="Clearing…";
+  try{const r=await api("/api/reset-data","POST",{});
+    s.innerHTML='<span style="color:var(--success)">&#10003; '+r.message+'. Ab nayi sheet upload karo.</span>';
+    showToast("Saara data clear ho gaya");}
+  catch(e){s.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
 </script>
 </body>
@@ -1881,6 +1917,27 @@ async def debug_idcard(ref: str, dob: str, user=Depends(verify_token)):
         return debug_idcard_text(ref, dob)
     except Exception as e:
         return {"error": str(e)}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Danger zone — wipe all student data for a fresh upload (keeps settings)
+# ─────────────────────────────────────────────────────────────────────────────
+@app.post("/api/reset-data")
+async def reset_data(body: dict, user=Depends(verify_token)):
+    conn = get_db()
+    conn.execute("DELETE FROM student_status")
+    conn.execute("DELETE FROM status_history")
+    conn.execute("DELETE FROM run_logs")
+    conn.commit()
+    conn.close()
+    removed = False
+    try:
+        if os.path.exists(EXCEL_PATH):
+            os.remove(EXCEL_PATH)
+            removed = True
+    except Exception:
+        pass
+    logger.info("All student data cleared via reset endpoint")
+    return {"message": "Saara data clear ho gaya", "excel_removed": removed}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public document links (student opens WITHOUT portal login; token-signed)
