@@ -52,12 +52,14 @@ def read_students_from_excel(filepath):
     email_col   = _find_col(hc, ["email"])
     dob_col     = _find_col(hc, ["date of birth", "dob", "birth"])
     session_col = _find_col(hc, ["admission session", "session"])
+    enroll_col  = _find_col(hc, ["enrollment number", "enrolment number", "enrollment no",
+                                 "enrolment no", "enroll no", "enrolment", "enrollment"])
 
-    logger.info(f"Cols ref:{ref_col} name:{name_col} email:{email_col} dob:{dob_col} session:{session_col}")
+    logger.info(f"Cols ref:{ref_col} name:{name_col} email:{email_col} dob:{dob_col} session:{session_col} enroll:{enroll_col}")
 
-    if ref_col is None and email_col is None:
+    if ref_col is None and email_col is None and enroll_col is None:
         wb.close()
-        raise ValueError(f"Need 'Reference Number' or 'Email' column. Found: {hc}")
+        raise ValueError(f"Need 'Reference Number', 'Email' or 'Enrollment Number' column. Found: {hc}")
 
     def cell(row, col):
         return str(ws.cell(row, col).value or "").strip() if col else ""
@@ -73,22 +75,29 @@ def read_students_from_excel(filepath):
 
     students = []
     for row in range(2, ws.max_row + 1):
-        ref   = cell(row, ref_col)
-        email = cell(row, email_col)
-        if not ref and not email:
+        ref    = cell(row, ref_col)
+        email  = cell(row, email_col)
+        enroll = cell(row, enroll_col)
+        if not ref and not email and not enroll:
             continue
+        if email:
+            rk = f"email:{email.lower()}"
+        elif ref:
+            rk = f"ref:{ref}"
+        else:
+            rk = f"enr:{enroll}"
         students.append({
             "row_index":    row,
             "reference_no": ref,
+            "enrollment_no": enroll,
             "email":        email,
             "dob":          cell(row, dob_col),
             "student_name": cell(row, name_col),
             "mobile":       cell(row, mobile_col),
             "class_level":  cell(row, class_col),
             "session":      session_cell(row, session_col),
-            # Stable key: prefer email (never changes). Reference can appear later
-            # for email-only students, so keying on email avoids duplicate rows.
-            "row_key":      f"email:{email.lower()}" if email else f"ref:{ref}",
+            # Stable key: prefer email, then reference, then enrollment (SYC students).
+            "row_key":      rk,
         })
     wb.close()
     logger.info(f"Read {len(students)} students from Excel")

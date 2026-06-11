@@ -24,8 +24,66 @@ def is_public_session(session):
         return False
     return ("april" in s) or ("october" in s) or ("public" in s)
 
+def is_syc_session(session):
+    """SYC students: no status check; documents via enrollment+DOB login only."""
+    return "syc" in (session or "").lower()
+
 def session_group(session):
     return "public" if is_public_session(session) else "regular"
+
+def _process_syc(conn, c, syc_list, run_id):
+    """Register SYC students (NO NIOS status check). Store enrollment_no, mark status
+    'SYC', and send the hall-ticket WhatsApp once — only if a SYC campaign is set up."""
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    wa_on = get_setting("wa_enabled", "0") == "1"
+    for s in syc_list:
+        row_key = s["row_key"]
+        c.execute("""INSERT INTO student_status
+            (row_key, reference_no, enrollment_no, email, dob, student_name, mobile, class_level,
+             session, current_status, remark, is_confirmed, last_checked, last_changed, check_count)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+            ON CONFLICT(row_key) DO UPDATE SET
+                enrollment_no = CASE WHEN excluded.enrollment_no != '' THEN excluded.enrollment_no ELSE enrollment_no END,
+                student_name = excluded.student_name,
+                mobile = excluded.mobile,
+                dob = excluded.dob,
+                session = excluded.session,
+                current_status = 'SYC',
+                last_checked = excluded.last_checked,
+                check_count = check_count + 1""",
+            (row_key, s.get("reference_no", ""), s.get("enrollment_no", ""), s.get("email", ""),
+             s.get("dob", ""), s.get("student_name", ""), s.get("mobile", ""), s.get("class_level", ""),
+             s.get("session", ""), "SYC", "", 0, now_s, now_s))
+        conn.commit()
+        # WhatsApp hall ticket — once per student, only when a SYC campaign is configured
+        try:
+            if wa_on:
+                wrow = c.execute("SELECT whatsapp_sent FROM student_status WHERE row_key=?",
+                                 (row_key,)).fetchone()
+                already = bool(wrow and wrow["whatsapp_sent"] == 1)
+                phone = s.get("mobile", "")
+                if not already and phone:
+                    import whatsapp
+                    ok, info = whatsapp.send_for_student({
+                        "row_key": row_key,
+                        "student_name": s.get("student_name", ""),
+                        "mobile": phone,
+                        "session": s.get("session", ""),
+                        "reference_no": s.get("reference_no", ""),
+                        "enrollment_no": s.get("enrollment_no", ""),
+                        "dob": s.get("dob", ""),
+                    })
+                    if ok:
+                        c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
+                                  (str(info)[:180], row_key))
+                    else:
+                        c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                                  (str(info)[:180], row_key))
+                    conn.commit()
+                    logger.info(f"SYC WhatsApp {'sent' if ok else 'skip/fail'} -> {phone}: {info}")
+        except Exception as we:
+            logger.warning(f"SYC WhatsApp error: {we}")
+
 
 def run_status_check(group_type="all"):
     """
@@ -93,7 +151,14 @@ def run_status_check(group_type="all"):
         # Filter by group; confirmed students are re-checked in the 'public'
         # (slower) job so NIOS detail changes are still caught — not skipped forever.
         to_check = []
+        syc_list = []
         for s in all_students:
+            # SYC students are never status-checked. They're only registered (and
+            # their hall ticket made available) on a MANUAL run (group_type == 'all').
+            if is_syc_session(s["session"]):
+                if group_type == "all":
+                    syc_list.append(s)
+                continue
             row = c.execute("SELECT is_confirmed FROM student_status WHERE row_key=?",
                             (s["row_key"],)).fetchone()
             confirmed = bool(row and row["is_confirmed"] == 1)
@@ -109,7 +174,11 @@ def run_status_check(group_type="all"):
             # group_type == "all": check everyone
             to_check.append(s)
 
-        logger.info(f"{len(to_check)} students to check (group={group_type})")
+        # Register SYC students now (no scraping) so they appear in the SYC category.
+        if syc_list:
+            _process_syc(conn, c, syc_list, run_id)
+
+        logger.info(f"{len(to_check)} students to check (group={group_type}); SYC registered: {len(syc_list)}")
 
         if not to_check:
             _finish(conn, run_id, 0, 0, 0, "Nothing to check")
@@ -149,11 +218,12 @@ def run_status_check(group_type="all"):
                 stats["same"] += 1
 
             c.execute("""INSERT INTO student_status
-                (row_key, reference_no, email, dob, student_name, mobile, class_level,
+                (row_key, reference_no, enrollment_no, email, dob, student_name, mobile, class_level,
                  session, current_status, remark, is_confirmed, last_checked, last_changed, check_count)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
                 ON CONFLICT(row_key) DO UPDATE SET
                     reference_no = CASE WHEN excluded.reference_no != '' THEN excluded.reference_no ELSE reference_no END,
+                    enrollment_no = CASE WHEN excluded.enrollment_no != '' THEN excluded.enrollment_no ELSE enrollment_no END,
                     current_status = excluded.current_status,
                     remark = excluded.remark,
                     is_confirmed = excluded.is_confirmed,
@@ -161,7 +231,7 @@ def run_status_check(group_type="all"):
                     last_changed = CASE WHEN current_status != excluded.current_status
                                         THEN excluded.last_changed ELSE last_changed END,
                     check_count = check_count + 1""",
-                (row_key, new_ref, res.get("email", ""), res.get("dob", ""),
+                (row_key, new_ref, res.get("enrollment_no", ""), res.get("email", ""), res.get("dob", ""),
                  res.get("student_name", ""), res.get("mobile", ""), res.get("class_level", ""),
                  res.get("session", ""), new_status, res.get("remark", ""), is_conf, now_s, now_s))
 

@@ -88,11 +88,13 @@ def init_db():
             last_changed TEXT,
             check_count INTEGER DEFAULT 0,
             whatsapp_sent INTEGER DEFAULT 0,
-            whatsapp_info TEXT
+            whatsapp_info TEXT,
+            enrollment_no TEXT
         )
     """)
-    # Safe migration for older DBs missing the WhatsApp columns
-    for col, decl in (("whatsapp_sent", "INTEGER DEFAULT 0"), ("whatsapp_info", "TEXT")):
+    # Safe migration for older DBs missing the WhatsApp / enrollment columns
+    for col, decl in (("whatsapp_sent", "INTEGER DEFAULT 0"), ("whatsapp_info", "TEXT"),
+                      ("enrollment_no", "TEXT")):
         try:
             c.execute(f"ALTER TABLE student_status ADD COLUMN {col} {decl}")
         except Exception:

@@ -28,6 +28,7 @@ _CAMPAIGN_ENV = {
     "ondemand": "AISENSY_CAMPAIGN_ONDEMAND",
     "stream2":  "AISENSY_CAMPAIGN_STREAM2",
     "public":   "AISENSY_CAMPAIGN_PUBLIC",
+    "syc":      "AISENSY_CAMPAIGN_SYC",
 }
 
 
@@ -51,6 +52,8 @@ def group_of(session) -> str:
       - 'April' / 'October' (with or without a year, e.g. 'April 2027') -> public
       - anything else -> ondemand (safe default)"""
     s = (session or "").lower()
+    if "syc" in s:
+        return "syc"
     if "stream 2" in s or "stream2" in s or "stream-2" in s:
         return "stream2"
     if "on demand" in s or "ondemand" in s or "on-demand" in s:
@@ -119,6 +122,8 @@ def send_for_student(student):
             # don't send a broken/blank-address message; will retry next run
             return False, "regional address fetch failed"
         params = [name, doc_file_url(rk, "id_card"), doc_file_url(rk, "app_form"), addr]
+    elif group == "syc":
+        params = [name, doc_file_url(rk, "hall_ticket")]   # SYC: hall ticket only
     else:  # public
         params = [name, doc_file_url(rk, "id_card")]
 

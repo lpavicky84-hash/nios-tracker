@@ -334,6 +334,8 @@ PORTAL_HTML = """<!DOCTYPE html>
     <div class="nav-item" data-page="required" onclick="nav('required')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="15"/><line x1="12" y1="18" x2="12" y2="18"/></svg></span><span class="lbl">Required</span>
       <span class="badge-count" id="nav-required-badge">0</span></div>
+    <div class="nav-item" data-page="syc" onclick="nav('syc')">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="lbl">SYC Students</span></div>
     <div class="nav-sep">Activity</div>
     <div class="nav-item" data-page="history" onclick="nav('history')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="lbl">Change History</span></div>
@@ -461,6 +463,26 @@ PORTAL_HTML = """<!DOCTYPE html>
             </tr></thead><tbody id="c-body"></tbody></table>
           </div>
           <div class="pg-bar" id="c-pg"></div>
+        </div>
+      </section>
+
+      <section id="sec-syc" class="page-section">
+        <div class="card">
+          <h3>SYC Students</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+            SYC students are <b>not status-checked</b>. Their Hall Ticket is fetched directly using
+            <b>Enrollment Number + Date of Birth</b>. Click "Download Hall Ticket" — it shows progress and opens the hall ticket in the correct format (then use Save as PDF).</p>
+          <div class="filter-bar">
+            <input type="text" id="syc-search" placeholder="Search name / enrollment / mobile..." oninput="debounceSyc()">
+            <button class="btn btn-outline btn-sm" onclick="loadSyc(1)">Refresh</button>
+          </div>
+          <div id="syc-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>#</th><th>Enrollment No</th><th>Student Name</th><th>Mobile</th><th>DOB</th><th>Hall Ticket</th>
+            </tr></thead><tbody id="syc-body"></tbody></table>
+          </div>
+          <div class="pg-bar" id="syc-pg"></div>
         </div>
       </section>
 
@@ -599,6 +621,7 @@ PORTAL_HTML = """<!DOCTYPE html>
                 <option value="ondemand">On Demand (3inone)</option>
                 <option value="stream2">Stream 2 (str2toc1)</option>
                 <option value="public">Public April/October</option>
+                <option value="syc">SYC (Hall Ticket)</option>
               </select>
               <input type="text" id="wa-num" placeholder="WhatsApp number (e.g. 7065187637)"
                 style="flex:1;min-width:180px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
@@ -794,6 +817,7 @@ function renderTimers(){
 }
 
 const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
+  syc:"SYC Students",
   required:"Document Required",history:"Change History",runlogs:"Run Logs",upload:"Upload Excel",settings:"Settings"};
 function refreshPage(btn){
   // reload the data of whichever page is currently open (no full reload, stays logged in)
@@ -814,6 +838,7 @@ function nav(page){
   if(page==="dashboard")loadDashboard();
   if(page==="students")loadStudents(1);
   if(page==="confirmed")loadConfirmed(1);
+  if(page==="syc")loadSyc(1);
   if(page==="required")loadRequired(1);
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
@@ -1064,6 +1089,47 @@ async function loadConfirmed(page){
       :'<tr><td colspan="7" class="empty">No confirmed students yet</td></tr>';
     renderPg("c-pg",page,d.pages,"loadConfirmed");
   }catch(e){showToast(""+e.message);}
+}
+
+let sycTimer;
+function debounceSyc(){clearTimeout(sycTimer);sycTimer=setTimeout(()=>loadSyc(1),400);}
+async function loadSyc(page){
+  page=page||1;
+  const search=fval("syc-search");
+  try{
+    const q=new URLSearchParams({page:page,search:search});
+    const d=await api("/api/syc?"+q.toString());
+    document.getElementById("syc-count").textContent=(d.total||0)+" SYC student(s)";
+    const tb=document.getElementById("syc-body");
+    if(!d.students||!d.students.length){tb.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">No SYC students yet. Upload a sheet with ADMISSION SESSION = SYC and click Run Now.</td></tr>';document.getElementById("syc-pg").innerHTML="";return;}
+    tb.innerHTML=d.students.map((s,i)=>sycRow(s,(page-1)*20+i+1)).join("");
+    renderPg("syc-pg",page,d.pages,"loadSyc");
+  }catch(e){showToast(""+e.message);}
+}
+function sycRow(s,i){
+  return '<tr><td>'+i+'</td><td>'+(s.enrollment_no||'—')+'</td><td>'+(s.student_name||'')+'</td>'+
+    '<td>'+(s.mobile||'')+'</td><td>'+(s.dob||'')+'</td><td>'+
+    '<button class="btn-dl" onclick="downloadSycHall(&quot;'+s.row_key+'&quot;,this)">'+DL_ICON+' Download Hall Ticket</button>'+
+    '<div class="syc-prog" style="display:none;height:7px;background:#E2E8F0;border-radius:4px;margin-top:7px;overflow:hidden;max-width:220px"><div class="syc-bar" style="height:100%;width:0;background:#4F46E5;transition:width .35s"></div></div>'+
+    '<div class="syc-msg" style="font-size:11px;color:var(--muted);margin-top:3px"></div></td></tr>';
+}
+async function downloadSycHall(rowKey,btn){
+  if(btn.dataset.busy==="1")return;
+  btn.dataset.busy="1";
+  const cell=btn.parentElement;
+  const prog=cell.querySelector(".syc-prog"),bar=cell.querySelector(".syc-bar"),msg=cell.querySelector(".syc-msg");
+  prog.style.display="block";bar.style.background="#4F46E5";bar.style.width="3%";msg.textContent="Fetching from NIOS... (~15 sec)";
+  let p=3;const tick=setInterval(function(){p=Math.min(p+(p<70?7:2),92);bar.style.width=p+"%";},900);
+  try{
+    const r=await fetch(API+"/api/syc-doc?"+new URLSearchParams({row_key:rowKey}).toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
+    clearInterval(tick);
+    if(!r.ok){let dt="failed";try{dt=(await r.json()).detail||dt;}catch(e){}throw new Error(dt);}
+    bar.style.width="100%";msg.textContent="Opening...";
+    const blob=await r.blob();
+    window.open(URL.createObjectURL(blob),"_blank");
+    msg.innerHTML='<span style="color:var(--success)">&#10003; Opened — use "Save as PDF" to download</span>';
+  }catch(e){clearInterval(tick);bar.style.background="var(--danger)";bar.style.width="100%";msg.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
+  finally{btn.dataset.busy="";setTimeout(function(){prog.style.display="none";},5000);}
 }
 
 async function loadRequired(page){
@@ -1318,7 +1384,7 @@ async function loadWa(){
       const row=(lbl,v)=>'<div style="margin:2px 0">'+lbl+': '+
         (v?'<b style="color:var(--success)">'+v+'</b>':'<span style="color:var(--warn)">not set</span>')+'</div>';
       cfg.innerHTML='<div style="color:var(--success);margin-bottom:6px">&#10003; API key configured</div>'+
-        row("On Demand",c.ondemand)+row("Stream 2",c.stream2)+row("Public",c.public);
+        row("On Demand",c.ondemand)+row("Stream 2",c.stream2)+row("Public",c.public)+row("SYC",c.syc);
     }
   }catch(e){}
 }
@@ -1860,8 +1926,31 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
         disp = "inline"
     return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
 
-@app.get("/api/debug-doc")
-async def debug_doc_endpoint(ref: str, dob: str, kind: str, user=Depends(verify_token)):
+@app.get("/api/syc")
+async def get_syc(page: int = 1, per_page: int = 20, search: str = "", user=Depends(verify_token)):
+    """List SYC students (session contains SYC). No status check is done for these."""
+    conn = get_db()
+    where = "WHERE (session LIKE '%syc%' OR current_status='SYC')"
+    params = []
+    if search:
+        where += " AND (student_name LIKE ? OR enrollment_no LIKE ? OR mobile LIKE ? OR reference_no LIKE ?)"
+        like = f"%{search}%"
+        params += [like, like, like, like]
+    total = conn.execute(f"SELECT COUNT(*) c FROM student_status {where}", params).fetchone()["c"]
+    rows = conn.execute(
+        f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
+        params + [per_page, (page - 1) * per_page]).fetchall()
+    conn.close()
+    return {"students": [dict(r) for r in rows], "total": total, "page": page,
+            "pages": max(1, (total + per_page - 1) // per_page)}
+
+@app.get("/api/syc-doc")
+async def syc_doc(row_key: str, kind: str = "hall_ticket", user=Depends(verify_token)):
+    """Fetch a SYC student's document (enrollment-login aware) for the counsellor."""
+    res, err = _fetch_doc_for(row_key, kind)
+    if err:
+        raise HTTPException(status_code=404, detail=err)
+    return _serve_doc(*res)
     """Inspect a document page's structure (Phase 2 debug)."""
     try:
         from nios_login import debug_doc
@@ -1882,6 +1971,7 @@ async def wa_settings_get(user=Depends(verify_token)):
             "ondemand": whatsapp.campaign_for("ondemand"),
             "stream2": whatsapp.campaign_for("stream2"),
             "public": whatsapp.campaign_for("public"),
+            "syc": whatsapp.campaign_for("syc"),
         },
     }
 
@@ -2128,12 +2218,14 @@ def _fetch_doc_for(row_key, kind):
     try:
         from nios_login import fetch_document
         conn = get_db()
-        row = conn.execute("SELECT reference_no, dob FROM student_status WHERE row_key=?",
+        row = conn.execute("SELECT reference_no, enrollment_no, dob FROM student_status WHERE row_key=?",
                            (row_key,)).fetchone()
         conn.close()
-        if not row or not row["reference_no"]:
+        ref = (row["reference_no"] if row else "") or ""
+        enroll = (row["enrollment_no"] if row else "") or ""
+        if not row or (not ref and not enroll):
             return None, "student not found"
-        content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
+        content, ctype, filename = fetch_document(ref, row["dob"], kind, enrollment_no=enroll)
         if content is None:
             return None, (ctype or "could not load document")
         return (content, ctype, filename), None

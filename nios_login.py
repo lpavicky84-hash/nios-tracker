@@ -88,8 +88,8 @@ def get_login_csrf(session):
     inp = soup.find("input", {"name": "_csrf"})
     return inp.get("value", "") if inp else ""
 
-def login_student(reference_no, dob, page_action=None):
-    """Login. Returns (session, final_response)."""
+def login_student(reference_no, dob, page_action=None, enrollment_no=""):
+    """Login with reference_no OR enrollment_no (+ DOB). Returns (session, final_response)."""
     session = requests.Session()
     csrf = get_login_csrf(session)
     token = solve_recaptcha_v3(LOGIN_URL, page_action)
@@ -98,8 +98,8 @@ def login_student(reference_no, dob, page_action=None):
         return session, None
     payload = {
         "_csrf": csrf,
-        "LoginForm[reference_no]": reference_no,
-        "LoginForm[enrollment_no]": "",
+        "LoginForm[reference_no]": "" if enrollment_no else reference_no,
+        "LoginForm[enrollment_no]": enrollment_no or "",
         "LoginForm[application_no]": "",
         "LoginForm[date_of_birth]": format_dob(dob),
         "LoginForm[google_recapcha_response]": token,
@@ -183,16 +183,18 @@ DOC_URLS = {
 
 _session_cache = {}   # reference_no -> (session, expiry_ts)
 
-def get_logged_in_session(reference_no, dob):
-    """Return a logged-in session (cached ~5 min) or None."""
+def get_logged_in_session(reference_no, dob, enrollment_no=""):
+    """Return a logged-in session (cached ~5 min) or None.
+    Uses enrollment_no for login when given (SYC students), else reference_no."""
     now = time.time()
-    cached = _session_cache.get(reference_no)
+    key = ("enr:" + enrollment_no) if enrollment_no else reference_no
+    cached = _session_cache.get(key)
     if cached and cached[1] > now:
         return cached[0]
-    session, resp = login_student(reference_no, dob)
+    session, resp = login_student(reference_no, dob, enrollment_no=enrollment_no)
     if resp is None or not is_logged_in(resp.text):
         return None
-    _session_cache[reference_no] = (session, now + 300)
+    _session_cache[key] = (session, now + 300)
     return session
 
 def _fetch_bytes(url, session):
@@ -341,18 +343,19 @@ def html_to_pdf(html, session, base_url=BASE):
         return default_url_fetcher(url)
     return HTML(string=html, base_url=base_url, url_fetcher=fetcher).write_pdf()
 
-def fetch_document(reference_no, dob, kind):
-    """Login as student & return the document. Prefers a real PDF (print layout);
-    falls back to print-ready HTML if PDF rendering isn't available.
+def fetch_document(reference_no, dob, kind, enrollment_no=""):
+    """Login as student & return the document. Logs in with enrollment_no when given
+    (SYC students), else reference_no.
     Returns (bytes, content_type, filename) or (None, error, None)."""
     if not CAPSOLVER_API_KEY:
         return None, "CAPTCHA_API_KEY not set", None
     path = DOC_URLS.get(kind)
     if not path:
         return None, "invalid document kind", None
-    session = get_logged_in_session(reference_no, dob)
+    session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no)
     if session is None:
-        return None, "login failed (check reference/DOB)", None
+        return None, "login failed (check reference/enrollment/DOB)", None
+    ident = reference_no or enrollment_no or "doc"
     target = urljoin(BASE, path)
     try:
         r = session.get(target, headers=HEADERS, timeout=45)
@@ -361,19 +364,19 @@ def fetch_document(reference_no, dob, kind):
     ct = r.headers.get("Content-Type", "").lower()
     # Already a PDF? serve directly
     if "pdf" in ct or r.content[:4] == b"%PDF":
-        return r.content, "application/pdf", f"{kind}_{reference_no}.pdf"
+        return r.content, "application/pdf", f"{kind}_{ident}.pdf"
     # Print-ready HTML -> render a real PDF (best: print layout + embedded images)
     if "html" in ct:
         try:
             pdf = html_to_pdf(r.text, session)
             if pdf and pdf[:4] == b"%PDF":
-                return pdf, "application/pdf", f"{kind}_{reference_no}.pdf"
+                return pdf, "application/pdf", f"{kind}_{ident}.pdf"
         except Exception as e:
             logger.warning(f"PDF render failed for {kind}, falling back to HTML: {e}")
         # Fallback: inline images + Save-as-PDF banner
         html = inline_resources(r.text, session)
         html = _inject_banner(html)
-        return html.encode("utf-8"), "text/html; charset=utf-8", f"{kind}_{reference_no}.html"
+        return html.encode("utf-8"), "text/html; charset=utf-8", f"{kind}_{ident}.html"
     return None, f"unexpected content ({ct or 'unknown'})", None
 
 def fetch_id_card_html(reference_no, dob):
