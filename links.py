@@ -50,3 +50,26 @@ def verify_doc_token(token: str):
 def doc_page_url(row_key: str) -> str:
     """Absolute URL the student taps to see all their documents."""
     return f"{PUBLIC_BASE_URL}/d/{make_doc_token(row_key)}"
+
+
+# ── Per-document direct links (used by the WhatsApp templates) ──
+def make_doc_link(row_key: str, kind: str) -> str:
+    payload = _b64e(row_key.encode()) + "~" + kind
+    return payload + "." + _sign(payload)
+
+
+def verify_doc_link(token: str):
+    """Return (row_key, kind) if valid, else (None, None)."""
+    try:
+        payload, sig = token.rsplit(".", 1)
+        if not hmac.compare_digest(sig, _sign(payload)):
+            return None, None
+        b64rk, kind = payload.split("~", 1)
+        return _b64d(b64rk).decode("utf-8", "ignore"), kind
+    except Exception:
+        return None, None
+
+
+def doc_file_url(row_key: str, kind: str) -> str:
+    """Absolute URL that opens ONE document directly (id_card/app_form/hall_ticket)."""
+    return f"{PUBLIC_BASE_URL}/doc/{make_doc_link(row_key, kind)}"

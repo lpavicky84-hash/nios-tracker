@@ -590,10 +590,15 @@ PORTAL_HTML = """<!DOCTYPE html>
           </label>
           <div style="border-top:1px solid var(--border);padding-top:16px">
             <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
-              <b>Test message</b> — apna number daalo, ek sample confirmation message jayega:</p>
+              <b>Test message</b> — template chuno, apna number daalo, sample message jayega:</p>
             <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <select id="wa-group" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
+                <option value="ondemand">On Demand (3inone)</option>
+                <option value="stream2">Stream 2 (str2toc1)</option>
+                <option value="public">Public April/October</option>
+              </select>
               <input type="text" id="wa-num" placeholder="WhatsApp number (e.g. 7065187637)"
-                style="flex:1;min-width:200px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
+                style="flex:1;min-width:180px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
               <button class="btn btn-primary btn-sm" onclick="testWa()">Send Test</button>
             </div>
           </div>
@@ -633,6 +638,7 @@ PORTAL_HTML = """<!DOCTYPE html>
                 <option value="hall_ticket">Hall Ticket</option>
               </select>
               <button class="btn btn-outline btn-sm" onclick="inspectDoc()">Inspect Doc Page</button>
+              <button class="btn btn-outline btn-sm" onclick="findAddr()">Find RC Address (Stream 2)</button>
             </div>
           </div>
           <div id="dbg-status" style="margin-top:12px;font-size:13px"></div>
@@ -1266,10 +1272,14 @@ async function loadWa(){
   try{const r=await api("/api/wa-settings");
     document.getElementById("wa-enabled").checked=r.enabled;
     const cfg=document.getElementById("wa-config");
-    if(r.configured){
-      cfg.innerHTML='<span style="color:var(--success)">&#10003; API key configured</span> &middot; Campaign: <b>'+r.campaign+'</b>';
-    }else{
+    if(!r.configured){
       cfg.innerHTML='<span style="color:var(--danger)">&#10007; AISENSY_API_KEY Railway env var mein set nahi hai</span>';
+    }else{
+      const c=r.campaigns||{};
+      const row=(lbl,v)=>'<div style="margin:2px 0">'+lbl+': '+
+        (v?'<b style="color:var(--success)">'+v+'</b>':'<span style="color:var(--warn)">not set</span>')+'</div>';
+      cfg.innerHTML='<div style="color:var(--success);margin-bottom:6px">&#10003; API key configured</div>'+
+        row("On Demand",c.ondemand)+row("Stream 2",c.stream2)+row("Public",c.public);
     }
   }catch(e){}
 }
@@ -1281,10 +1291,11 @@ async function saveWa(){
 }
 async function testWa(){
   const num=document.getElementById("wa-num").value.trim();
+  const group=document.getElementById("wa-group").value;
   const s=document.getElementById("wa-status");
   if(!num){s.innerHTML='<span style="color:var(--danger)">Pehle number daalo</span>';return;}
   s.innerHTML='Sending…';
-  try{const r=await api("/api/wa-test","POST",{number:num});
+  try{const r=await api("/api/wa-test","POST",{number:num,group:group});
     if(r.ok)s.innerHTML='<span style="color:var(--success)">&#10003; Test bhej diya! WhatsApp check karo.</span>';
     else s.innerHTML='<span style="color:var(--danger)">&#10007; '+(r.info||"failed")+'</span>';}
   catch(e){s.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
@@ -1329,6 +1340,24 @@ async function inspectDoc(){
     const d=await api("/api/debug-doc?"+q.toString());
     if(d.error){st.innerHTML='<span style="color:var(--danger)">'+d.error+'</span>';return;}
     st.innerHTML='<span style="color:var(--success)">Inspect done — structure niche</span>';
+    pre.style.display="block";
+    pre.textContent=JSON.stringify(d,null,2);
+  }catch(e){st.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
+}
+
+async function findAddr(){
+  const ref=document.getElementById("dbg-ref").value.trim();
+  const dob=document.getElementById("dbg-dob").value.trim();
+  if(!ref||!dob){showToast("Reference No aur DOB dono daalo");return;}
+  const st=document.getElementById("dbg-status");
+  const pre=document.getElementById("dbg-result");
+  st.innerHTML='<span style="color:var(--muted)">ID card se Regional Centre address dhundh rahe hain (~15 sec)...</span>';
+  pre.style.display="none";
+  try{
+    const q=new URLSearchParams({ref:ref,dob:dob});
+    const d=await api("/api/debug-idcard?"+q.toString());
+    if(d.error){st.innerHTML='<span style="color:var(--danger)">'+d.error+'</span>';return;}
+    st.innerHTML='<span style="color:var(--success)">Extracted address: <b>'+(d.extracted_address||"(blank — niche text bhejo)")+'</b></span>';
     pre.style.display="block";
     pre.textContent=JSON.stringify(d,null,2);
   }catch(e){st.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
@@ -1799,7 +1828,11 @@ async def wa_settings_get(user=Depends(verify_token)):
     return {
         "enabled": get_setting("wa_enabled", "0") == "1",
         "configured": whatsapp.is_configured(),
-        "campaign": os.environ.get("AISENSY_CAMPAIGN", "admission_confirmed"),
+        "campaigns": {
+            "ondemand": whatsapp.campaign_for("ondemand"),
+            "stream2": whatsapp.campaign_for("stream2"),
+            "public": whatsapp.campaign_for("public"),
+        },
     }
 
 @app.post("/api/wa-settings")
@@ -1809,32 +1842,45 @@ async def wa_settings_set(body: dict, user=Depends(verify_token)):
 
 @app.post("/api/wa-test")
 async def wa_test(body: dict, user=Depends(verify_token)):
-    """Send a test confirmation message to any number."""
+    """Send a test message of a chosen template group to any number."""
     import whatsapp
-    from links import PUBLIC_BASE_URL
     number = body.get("number", "")
+    group = body.get("group", "ondemand")
     name = body.get("name", "") or "Test Student"
-    ok, info = whatsapp.send_confirmation(name, number, PUBLIC_BASE_URL)
+    ok, info = whatsapp.send_test(number, name, group)
     return {"ok": ok, "info": info}
 
 @app.post("/api/wa-resend")
 async def wa_resend(body: dict, user=Depends(verify_token)):
-    """Manually (re)send documents to one student by row_key."""
+    """Manually (re)send documents to one student by row_key (session-aware)."""
     import whatsapp
-    from links import doc_page_url
     row_key = body.get("row_key", "")
     conn = get_db()
-    row = conn.execute("SELECT student_name, mobile FROM student_status WHERE row_key=?",
-                       (row_key,)).fetchone()
+    row = conn.execute("SELECT row_key, student_name, mobile, session, reference_no, dob "
+                       "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="student not found")
-    ok, info = whatsapp.send_confirmation(row["student_name"], row["mobile"], doc_page_url(row_key))
-    conn.execute("UPDATE student_status SET whatsapp_sent=?, whatsapp_info=? WHERE row_key=?",
-                 (1 if ok else 0, str(info)[:180], row_key))
+    ok, info = whatsapp.send_for_student(dict(row))
+    if ok:
+        conn.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
+                     (str(info)[:180], row_key))
+    else:
+        conn.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                     (str(info)[:180], row_key))
     conn.commit()
     conn.close()
     return {"ok": ok, "info": info}
+
+@app.get("/api/debug-idcard")
+async def debug_idcard(ref: str, dob: str, user=Depends(verify_token)):
+    """Show the ID card's visible text + best-effort Regional Centre address
+    (used to finalise the Stream 2 address parser)."""
+    try:
+        from nios_login import debug_idcard_text
+        return debug_idcard_text(ref, dob)
+    except Exception as e:
+        return {"error": str(e)}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public document links (student opens WITHOUT portal login; token-signed)
@@ -1914,6 +1960,27 @@ async def public_doc_file(token: str, kind: str):
     from links import verify_doc_token
     from nios_login import fetch_document
     row_key = verify_doc_token(token)
+    if not row_key:
+        raise HTTPException(status_code=404, detail="invalid link")
+    conn = get_db()
+    row = conn.execute("SELECT reference_no, dob FROM student_status WHERE row_key=?",
+                       (row_key,)).fetchone()
+    conn.close()
+    if not row or not row["reference_no"]:
+        raise HTTPException(status_code=404, detail="student not found")
+    content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
+    if content is None:
+        raise HTTPException(status_code=404, detail=ctype)
+    disp = f'attachment; filename="{filename}"' if "pdf" in ctype else "inline"
+    return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
+
+@app.get("/doc/{token}")
+async def public_single_doc(token: str):
+    """Open ONE document directly from a per-document signed link (WhatsApp)."""
+    from fastapi import Response
+    from links import verify_doc_link
+    from nios_login import fetch_document
+    row_key, kind = verify_doc_link(token)
     if not row_key:
         raise HTTPException(status_code=404, detail="invalid link")
     conn = get_db()

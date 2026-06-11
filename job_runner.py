@@ -173,11 +173,21 @@ def run_status_check(group_type="all"):
                     phone = res.get("mobile", "")
                     if not already and phone:
                         import whatsapp
-                        from links import doc_page_url
-                        link = doc_page_url(row_key)
-                        ok, info = whatsapp.send_confirmation(res.get("student_name", ""), phone, link)
-                        c.execute("UPDATE student_status SET whatsapp_sent=?, whatsapp_info=? WHERE row_key=?",
-                                  (1 if ok else 0, str(info)[:180], row_key))
+                        ok, info = whatsapp.send_for_student({
+                            "row_key": row_key,
+                            "student_name": res.get("student_name", ""),
+                            "mobile": phone,
+                            "session": res.get("session", ""),
+                            "reference_no": new_ref,
+                            "dob": res.get("dob", ""),
+                        })
+                        # Only mark as sent on success; failures retry next run.
+                        if ok:
+                            c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
+                                      (str(info)[:180], row_key))
+                        else:
+                            c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                                      (str(info)[:180], row_key))
                         conn.commit()
                         logger.info(f"WhatsApp {'sent' if ok else 'FAILED'} -> {phone}: {info}")
             except Exception as we:

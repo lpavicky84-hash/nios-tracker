@@ -340,6 +340,67 @@ def fetch_document(reference_no, dob, kind):
         return html.encode("utf-8"), "text/html; charset=utf-8", f"{kind}_{reference_no}.html"
     return None, f"unexpected content ({ct or 'unknown'})", None
 
+def fetch_id_card_html(reference_no, dob):
+    """Return the raw ID-card page HTML (logged in as the student), or ''. """
+    session = get_logged_in_session(reference_no, dob)
+    if session is None:
+        return ""
+    try:
+        r = session.get(urljoin(BASE, DOC_URLS["id_card"]), headers=HEADERS, timeout=45)
+        return r.text or ""
+    except Exception as e:
+        logger.warning(f"id-card fetch failed: {e}")
+        return ""
+
+def extract_regional_address(html):
+    """Best-effort: pull the Regional Centre address block from the ID card HTML.
+    Heuristic until the exact markup is confirmed: find text around a
+    'Regional' label and capture through the 6-digit PIN code."""
+    if not html:
+        return ""
+    soup = BeautifulSoup(html, "html.parser")
+    text = soup.get_text("\n")
+    lines = [re.sub(r"[ \t]+", " ", l).strip() for l in text.splitlines()]
+    lines = [l for l in lines if l]
+    # 1) Look for an explicit 'Regional' label and gather following lines until a PIN.
+    for i, l in enumerate(lines):
+        if re.search(r"regional\s*(centre|center|c\.?)", l, re.I):
+            block = []
+            tail = re.sub(r".*?regional\s*(centre|center|c\.?)\s*[:\-]*", "", l, flags=re.I).strip()
+            if tail:
+                block.append(tail)
+            for nxt in lines[i + 1:i + 7]:
+                block.append(nxt)
+                if re.search(r"\b\d{6}\b", nxt):
+                    break
+            addr = ", ".join(b for b in block if b)
+            if re.search(r"\b\d{6}\b", addr):
+                return re.sub(r"\s*,\s*,\s*", ", ", addr).strip(" ,")
+    # 2) Fallback: any block that ends in a 6-digit PIN.
+    for i, l in enumerate(lines):
+        if re.search(r"\b\d{6}\b", l) and len(l) > 12:
+            start = max(0, i - 3)
+            addr = ", ".join(lines[start:i + 1])
+            return addr.strip(" ,")
+    return ""
+
+def fetch_regional_address(reference_no, dob):
+    return extract_regional_address(fetch_id_card_html(reference_no, dob))
+
+def debug_idcard_text(reference_no, dob):
+    """Return the ID card's visible text + best-effort extracted address (for tuning)."""
+    if not CAPSOLVER_API_KEY:
+        return {"error": "CAPTCHA_API_KEY not set"}
+    html = fetch_id_card_html(reference_no, dob)
+    if not html:
+        return {"error": "login failed or empty id card"}
+    soup = BeautifulSoup(html, "html.parser")
+    text = re.sub(r"\n\s*\n+", "\n", soup.get_text("\n")).strip()
+    return {
+        "extracted_address": extract_regional_address(html),
+        "id_card_text": text[:4000],
+    }
+
 def probe_links(session, classified):
     """Fetch each classified link to report content-type/size (debug)."""
     for kind, url in classified.items():

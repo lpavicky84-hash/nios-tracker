@@ -1,19 +1,19 @@
 """
-WhatsApp sender via AiSensy API campaigns.
-(Combirds resells AiSensy — the API key is an AiSensy token.)
+WhatsApp sender via AiSensy API campaigns (Combirds resells AiSensy).
 
-Docs: POST https://backend.aisensy.com/campaign/t1/api/v2
+Each NIOS session group has its OWN approved template -> its OWN API campaign:
+  On Demand  -> AISENSY_CAMPAIGN_ONDEMAND  (template "3inone")
+                params: [name, idCardLink, registrationLink, hallTicketLink]
+  Stream 2   -> AISENSY_CAMPAIGN_STREAM2   (template "str2toc1")
+                params: [name, idCardLink, registrationLink, regionalCentreAddress]
+  Public     -> AISENSY_CAMPAIGN_PUBLIC    (April/October; id card only)
+                params: [name, idCardLink]
+
+Endpoint: POST https://backend.aisensy.com/campaign/t1/api/v2
 Body: { apiKey, campaignName, destination, userName, templateParams: [...] }
 
-Setup required on the AiSensy/Combirds dashboard:
-  1. Create + get approved a template (default name below) with 2 variables:
-       {{1}} = student name, {{2}} = secure documents link
-  2. Create an API Campaign that uses that template, set it LIVE.
-     The campaign name must match AISENSY_CAMPAIGN (default 'admission_confirmed').
-
-Credentials come from env vars (never hard-code):
-  AISENSY_API_KEY   -> the long JWT api key
-  AISENSY_CAMPAIGN  -> the API-campaign name (default 'admission_confirmed')
+Credentials/campaign names come from env vars (never hard-code):
+  AISENSY_API_KEY, AISENSY_CAMPAIGN_ONDEMAND, AISENSY_CAMPAIGN_STREAM2, AISENSY_CAMPAIGN_PUBLIC
 """
 import os
 import re
@@ -24,17 +24,32 @@ logger = logging.getLogger(__name__)
 
 AISENSY_URL = "https://backend.aisensy.com/campaign/t1/api/v2"
 
+_CAMPAIGN_ENV = {
+    "ondemand": "AISENSY_CAMPAIGN_ONDEMAND",
+    "stream2":  "AISENSY_CAMPAIGN_STREAM2",
+    "public":   "AISENSY_CAMPAIGN_PUBLIC",
+}
+
 
 def _api_key() -> str:
     return os.environ.get("AISENSY_API_KEY", "").strip()
 
 
-def _campaign() -> str:
-    return os.environ.get("AISENSY_CAMPAIGN", "admission_confirmed").strip()
+def campaign_for(group: str) -> str:
+    return os.environ.get(_CAMPAIGN_ENV.get(group, ""), "").strip()
 
 
 def is_configured() -> bool:
     return bool(_api_key())
+
+
+def group_of(session) -> str:
+    s = (session or "").lower()
+    if any(k in s for k in ("april", "october", "public")):
+        return "public"
+    if "stream 2" in s:
+        return "stream2"
+    return "ondemand"
 
 
 def normalize_number(num) -> str:
@@ -42,34 +57,78 @@ def normalize_number(num) -> str:
     d = re.sub(r"\D", "", str(num or ""))
     if not d:
         return ""
-    if len(d) == 10:                       # bare 10-digit Indian number
+    if len(d) == 10:
         d = "91" + d
     elif len(d) == 11 and d.startswith("0"):
         d = "91" + d[1:]
     return d
 
 
-def send_confirmation(name, phone, doc_link):
-    """Send the approved confirmation template to one student.
-    Returns (ok: bool, info: str)."""
+def _post(campaign, phone, name, params):
     key = _api_key()
     if not key:
         return False, "AISENSY_API_KEY not set"
+    if not campaign:
+        return False, "campaign name not set (Railway env var)"
     dest = normalize_number(phone)
     if len(dest) < 11:
         return False, f"bad number: {phone}"
-    name = (str(name).strip() or "Student")
     payload = {
         "apiKey": key,
-        "campaignName": _campaign(),
+        "campaignName": campaign,
         "destination": dest,
-        "userName": name,
-        "templateParams": [name, doc_link],
+        "userName": name or "Student",
+        "templateParams": [str(p) for p in params],
     }
     try:
-        r = requests.post(AISENSY_URL, json=payload, timeout=30)
+        r = requests.post(AISENSY_URL, json=payload, timeout=40)
         if r.status_code in (200, 201):
             return True, "sent"
         return False, f"HTTP {r.status_code}: {r.text[:160]}"
     except Exception as e:
         return False, f"error: {e}"
+
+
+def send_for_student(student):
+    """Send the right template for this student's session group.
+    student: dict with row_key, student_name, mobile, session, reference_no, dob.
+    Returns (ok, info)."""
+    from links import doc_file_url
+    group = group_of(student.get("session"))
+    campaign = campaign_for(group)
+    if not campaign:
+        return False, f"no campaign set for {group}"
+    name = (str(student.get("student_name") or "Student").strip() or "Student")
+    rk = student.get("row_key", "")
+
+    if group == "ondemand":
+        params = [name, doc_file_url(rk, "id_card"),
+                  doc_file_url(rk, "app_form"), doc_file_url(rk, "hall_ticket")]
+    elif group == "stream2":
+        from nios_login import fetch_regional_address
+        addr = fetch_regional_address(student.get("reference_no"), student.get("dob")) or ""
+        if not addr:
+            # don't send a broken/blank-address message; will retry next run
+            return False, "regional address fetch failed"
+        params = [name, doc_file_url(rk, "id_card"), doc_file_url(rk, "app_form"), addr]
+    else:  # public
+        params = [name, doc_file_url(rk, "id_card")]
+
+    ok, info = _post(campaign, student.get("mobile"), name, params)
+    return ok, info
+
+
+def send_test(number, name="Test Student", group="ondemand"):
+    """Send a test message of the chosen template to any number (demo links)."""
+    from links import PUBLIC_BASE_URL
+    campaign = campaign_for(group)
+    if not campaign:
+        return False, f"no campaign set for {group} (set its Railway env var)"
+    demo = PUBLIC_BASE_URL
+    if group == "ondemand":
+        params = [name, demo, demo, demo]
+    elif group == "stream2":
+        params = [name, demo, demo, "NIOS Regional Centre, Sample Address - 110001"]
+    else:
+        params = [name, demo]
+    return _post(campaign, number, name, params)
