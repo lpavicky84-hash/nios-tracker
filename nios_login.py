@@ -354,37 +354,47 @@ def fetch_id_card_html(reference_no, dob):
         logger.warning(f"id-card fetch failed: {e}")
         return ""
 
+def _address_from_text(text):
+    """Pull the Regional Centre address from the ID-card's visible text.
+    NIOS card structure:
+        Regional Centre: CHANDIGARH
+        YMCA Complex, Sector-11C, Chandigarh - 160011
+    Returns a clean single-line address ending at the 6-digit PIN code."""
+    if not text:
+        return ""
+    lines = [re.sub(r"\s+", " ", l).strip() for l in text.splitlines()]
+    lines = [l for l in lines if l]
+    # Primary: explicit "Regional Centre" label (NOT "Study Centre")
+    for i, l in enumerate(lines):
+        m = re.search(r"regional\s*cent(?:re|er)\s*[:\-]?\s*(.*)$", l, re.I)
+        if not m:
+            continue
+        head = m.group(1).strip(" :-")
+        parts = [head] if head else []
+        if not re.search(r"\d{6}", head):           # address continues on next line(s)
+            for nxt in lines[i + 1:i + 6]:
+                if re.match(r"(?i)^note\b", nxt):    # stop at the Note section
+                    break
+                parts.append(nxt)
+                if re.search(r"\d{6}", nxt):
+                    break
+        full = ", ".join(p for p in parts if p)
+        full = re.sub(r"\s*,\s*,\s*", ", ", full).strip(" ,")
+        if full:
+            return full if full.lower().startswith("nios") else ("NIOS Regional Centre " + full)
+    # Fallback: any block ending in a 6-digit PIN (skip the student's own "Address")
+    for i, l in enumerate(lines):
+        if re.search(r"\b\d{6}\b", l) and len(l) > 12 and "regional" not in lines[max(0, i - 1)].lower():
+            start = max(0, i - 2)
+            return ", ".join(lines[start:i + 1]).strip(" ,")
+    return ""
+
 def extract_regional_address(html):
-    """Best-effort: pull the Regional Centre address block from the ID card HTML.
-    Heuristic until the exact markup is confirmed: find text around a
-    'Regional' label and capture through the 6-digit PIN code."""
+    """Best-effort Regional Centre address from the ID card HTML."""
     if not html:
         return ""
     soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text("\n")
-    lines = [re.sub(r"[ \t]+", " ", l).strip() for l in text.splitlines()]
-    lines = [l for l in lines if l]
-    # 1) Look for an explicit 'Regional' label and gather following lines until a PIN.
-    for i, l in enumerate(lines):
-        if re.search(r"regional\s*(centre|center|c\.?)", l, re.I):
-            block = []
-            tail = re.sub(r".*?regional\s*(centre|center|c\.?)\s*[:\-]*", "", l, flags=re.I).strip()
-            if tail:
-                block.append(tail)
-            for nxt in lines[i + 1:i + 7]:
-                block.append(nxt)
-                if re.search(r"\b\d{6}\b", nxt):
-                    break
-            addr = ", ".join(b for b in block if b)
-            if re.search(r"\b\d{6}\b", addr):
-                return re.sub(r"\s*,\s*,\s*", ", ", addr).strip(" ,")
-    # 2) Fallback: any block that ends in a 6-digit PIN.
-    for i, l in enumerate(lines):
-        if re.search(r"\b\d{6}\b", l) and len(l) > 12:
-            start = max(0, i - 3)
-            addr = ", ".join(lines[start:i + 1])
-            return addr.strip(" ,")
-    return ""
+    return _address_from_text(soup.get_text("\n"))
 
 def fetch_regional_address(reference_no, dob):
     return extract_regional_address(fetch_id_card_html(reference_no, dob))
