@@ -14,9 +14,14 @@ from excel_handler import read_students_from_excel, write_status_to_excel, dedup
 logger = logging.getLogger(__name__)
 EXCEL_PATH = os.environ.get("EXCEL_PATH", os.path.join(os.environ.get("DATA_DIR", "."), "students.xlsx"))
 
-# Which sessions belong to "public exam" group (April/October + year)
+# Which sessions belong to "public exam" group (April/October + year).
+# Stream 2 / On Demand always count as REGULAR even if other words appear.
 def is_public_session(session):
     s = (session or "").lower()
+    if "stream 2" in s or "stream2" in s or "stream-2" in s:
+        return False
+    if "on demand" in s or "ondemand" in s or "on-demand" in s:
+        return False
     return ("april" in s) or ("october" in s) or ("public" in s)
 
 def session_group(session):

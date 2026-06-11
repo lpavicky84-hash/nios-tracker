@@ -1887,10 +1887,12 @@ async def debug_idcard(ref: str, dob: str, user=Depends(verify_token)):
 # ─────────────────────────────────────────────────────────────────────────────
 def _allowed_kinds(session):
     s = (session or "").lower()
-    if any(k in s for k in ("april", "october", "public")):
-        return [("id_card", "ID Card")]
-    if "stream 2" in s:
+    if "stream 2" in s or "stream2" in s or "stream-2" in s:
         return [("id_card", "ID Card"), ("app_form", "Application Form")]
+    if "on demand" in s or "ondemand" in s or "on-demand" in s:
+        return [("id_card", "ID Card"), ("app_form", "Application Form"), ("hall_ticket", "Hall Ticket")]
+    if "april" in s or "october" in s or "public" in s:
+        return [("id_card", "ID Card")]
     return [("id_card", "ID Card"), ("app_form", "Application Form"), ("hall_ticket", "Hall Ticket")]
 
 DOC_PAGE_TPL = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">

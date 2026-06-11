@@ -44,11 +44,19 @@ def is_configured() -> bool:
 
 
 def group_of(session) -> str:
+    """Classify a session into ondemand / stream2 / public.
+    Priority order so extra text never confuses it:
+      - 'Stream 2'  (any extra text)        -> stream2
+      - 'On Demand' (e.g. 'On Demand June-Sept.') -> ondemand
+      - 'April' / 'October' (with or without a year, e.g. 'April 2027') -> public
+      - anything else -> ondemand (safe default)"""
     s = (session or "").lower()
-    if any(k in s for k in ("april", "october", "public")):
-        return "public"
-    if "stream 2" in s:
+    if "stream 2" in s or "stream2" in s or "stream-2" in s:
         return "stream2"
+    if "on demand" in s or "ondemand" in s or "on-demand" in s:
+        return "ondemand"
+    if "april" in s or "october" in s or "public" in s:
+        return "public"
     return "ondemand"
 
 
