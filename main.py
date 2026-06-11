@@ -845,15 +845,37 @@ def verify_token(creds: HTTPAuthorizationCredentials = Depends(bearer)):
 
 scheduler = BackgroundScheduler()
 
+def _last_run_time(group_type):
+    """Most recent completed run for this group (or a manual 'all' run)."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT run_at FROM run_logs WHERE group_type IN (?, 'all') AND status='completed' "
+        "ORDER BY id DESC LIMIT 1", (group_type,)).fetchone()
+    conn.close()
+    if row and row["run_at"]:
+        try:
+            return datetime.strptime(row["run_at"], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+    return None
+
 def reschedule_jobs():
-    """Set up the two interval jobs from DB settings."""
+    """Schedule both jobs. Next run = last_run + interval. If overdue, run shortly."""
     reg = int(get_setting("interval_regular", "6"))
     pub = int(get_setting("interval_public", "12"))
-    scheduler.add_job(lambda: run_status_check("regular"), trigger=IntervalTrigger(hours=reg),
-                      id="job_regular", replace_existing=True, next_run_time=None)
-    scheduler.add_job(lambda: run_status_check("public"), trigger=IntervalTrigger(hours=pub),
-                      id="job_public", replace_existing=True, next_run_time=None)
-    logger.info(f"Jobs scheduled — regular:{reg}h public:{pub}h")
+    now = datetime.now()
+    for jid, grp, hours in [("job_regular", "regular", reg), ("job_public", "public", pub)]:
+        last = _last_run_time(grp)
+        if last:
+            nxt = last + timedelta(hours=hours)
+            if nxt <= now:
+                nxt = now + timedelta(seconds=20)      # overdue -> run shortly
+        else:
+            nxt = now + timedelta(hours=hours)          # no history -> wait one interval
+        scheduler.add_job(lambda g=grp: run_status_check(g),
+                          trigger=IntervalTrigger(hours=hours),
+                          id=jid, replace_existing=True, next_run_time=nxt)
+        logger.info(f"{jid}: every {hours}h | last_run={last} | next_run={nxt}")
 
 @app.on_event("startup")
 async def startup():

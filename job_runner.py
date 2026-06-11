@@ -49,6 +49,20 @@ def run_status_check(group_type="all"):
     try:
         all_students = read_students_from_excel(EXCEL_PATH)
 
+        # Clean any pre-existing duplicate rows (same reference under multiple keys):
+        # keep the confirmed / most-recently-checked one.
+        dups = c.execute("SELECT reference_no FROM student_status WHERE reference_no!='' "
+                         "GROUP BY reference_no HAVING COUNT(*)>1").fetchall()
+        for d in dups:
+            ref = d["reference_no"]
+            best = c.execute("SELECT row_key FROM student_status WHERE reference_no=? "
+                             "ORDER BY is_confirmed DESC, last_checked DESC LIMIT 1", (ref,)).fetchone()
+            if best:
+                c.execute("DELETE FROM student_status WHERE reference_no=? AND row_key!=?",
+                          (ref, best["row_key"]))
+        if dups:
+            conn.commit()
+            logger.info(f"Cleaned duplicates for {len(dups)} references")
         # Filter by group; confirmed students are re-checked in the 'public'
         # (slower) job so NIOS detail changes are still caught — not skipped forever.
         to_check = []
@@ -115,6 +129,12 @@ def run_status_check(group_type="all"):
                 (row_key, new_ref, res.get("email", ""), res.get("dob", ""),
                  res.get("student_name", ""), res.get("mobile", ""), res.get("class_level", ""),
                  res.get("session", ""), new_status, res.get("remark", ""), is_conf, now, now))
+
+            # Remove any orphaned duplicate row that shares this reference under a
+            # different (old) key — happens when an email-only student later gets a reference.
+            if new_ref:
+                c.execute("DELETE FROM student_status WHERE reference_no=? AND row_key!=?",
+                          (new_ref, row_key))
 
             excel_updates.append({
                 "row_key": row_key,

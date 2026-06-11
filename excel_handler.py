@@ -86,7 +86,9 @@ def read_students_from_excel(filepath):
             "mobile":       cell(row, mobile_col),
             "class_level":  cell(row, class_col),
             "session":      session_cell(row, session_col),
-            "row_key":      ref if ref else f"email:{email}",
+            # Stable key: prefer email (never changes). Reference can appear later
+            # for email-only students, so keying on email avoids duplicate rows.
+            "row_key":      f"email:{email.lower()}" if email else f"ref:{ref}",
         })
     wb.close()
     logger.info(f"Read {len(students)} students from Excel")
