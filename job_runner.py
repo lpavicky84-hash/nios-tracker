@@ -9,7 +9,7 @@ except Exception:
 from datetime import datetime
 from database import get_db
 from scraper import scrape_students
-from excel_handler import read_students_from_excel, write_status_to_excel
+from excel_handler import read_students_from_excel, write_status_to_excel, dedupe_students
 
 logger = logging.getLogger(__name__)
 EXCEL_PATH = os.environ.get("EXCEL_PATH", "students.xlsx")
@@ -65,6 +65,11 @@ def run_status_check(group_type="all"):
 
     try:
         all_students = read_students_from_excel(EXCEL_PATH)
+        # Drop duplicate rows from the uploaded Excel (same student twice) so the
+        # run only checks new/unique students, never the duplicates.
+        all_students, dup_count = dedupe_students(all_students)
+        if dup_count:
+            logger.info(f"Skipped {dup_count} duplicate row(s) from Excel")
 
         # Clean any pre-existing duplicate rows (same reference under multiple keys):
         # keep the confirmed / most-recently-checked one.

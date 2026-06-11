@@ -49,7 +49,7 @@ PORTAL_HTML = """<!DOCTYPE html>
     --sidebar:#1E293B; --sidebar-hover:#334155; --sidebar-text:#CBD5E1; --sidebar-muted:#64748B;
     --bg:#F1F5F9; --card:#FFFFFF; --border:#E2E8F0; --text:#0F172A;
     --muted:#64748B; --success:#16A34A; --danger:#DC2626; --warn:#EA580C;
-    --th-bg:#F8FAFC; --row-hover:#FAFBFF; --chip:#F1F5F9; --soft:#F8FAFC;
+    --th-bg:#F8FAFC; --row-hover:#FAFBFF; --chip:#F1F5F9; --soft:#F8FAFC; --dup-bg:#FFF7ED;
     --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
     --shadow-lg:0 10px 25px rgba(0,0,0,.08);
   }
@@ -58,7 +58,7 @@ PORTAL_HTML = """<!DOCTYPE html>
     --sidebar:#0B1220; --sidebar-hover:#1E293B; --sidebar-text:#CBD5E1; --sidebar-muted:#64748B;
     --bg:#0F172A; --card:#1E293B; --border:#334155; --text:#E2E8F0;
     --muted:#94A3B8; --success:#22C55E; --danger:#F87171; --warn:#FB923C;
-    --th-bg:#172033; --row-hover:#243043; --chip:#334155; --soft:#172033;
+    --th-bg:#172033; --row-hover:#243043; --chip:#334155; --soft:#172033; --dup-bg:#3a2a18;
     --shadow:0 1px 3px rgba(0,0,0,.4); --shadow-lg:0 10px 25px rgba(0,0,0,.5);
   }
   *{margin:0;padding:0;box-sizing:border-box}
@@ -239,18 +239,37 @@ PORTAL_HTML = """<!DOCTYPE html>
 
   .pg-bar{display:flex;align-items:center;justify-content:space-between;margin-top:18px;flex-wrap:wrap;gap:12px}
   .pg-controls{display:flex;gap:6px;align-items:center}
-  .pg-controls button{padding:8px 13px;border:1px solid var(--border);background:#fff;
+  .pg-controls button{padding:8px 13px;border:1px solid var(--border);background:var(--card);color:var(--text);
     border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;transition:.15s}
   .pg-controls button:hover:not(:disabled){background:var(--primary-light);border-color:var(--primary)}
   .pg-controls button.active{background:var(--primary);color:#fff;border-color:var(--primary)}
   .pg-controls button:disabled{opacity:.4;cursor:not-allowed}
   .perpage{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
-  .perpage select{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px}
+  .perpage select{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--card);color:var(--text)}
 
   .drop{border:2.5px dashed var(--border);border-radius:14px;padding:48px;text-align:center;
     transition:.2s;cursor:pointer;background:#FAFBFF}
   .drop:hover,.drop.drag{border-color:var(--primary);background:var(--primary-light)}
-  .drop .ic{font-size:42px;margin-bottom:12px}
+  .drop .ic{margin-bottom:12px;color:var(--primary)}
+  .drop .ic svg{width:42px;height:42px}
+
+  .up-stats{display:flex;gap:14px;flex-wrap:wrap}
+  .up-stat{flex:1;min-width:150px;background:var(--soft);border:1px solid var(--border);
+    border-radius:12px;padding:14px 16px}
+  .up-stat.dup{border-left:4px solid var(--warn)}
+  .up-stat.new{border-left:4px solid var(--success)}
+  .us-lbl{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}
+  .us-val{font-size:26px;font-weight:800;line-height:1}
+  .up-stat.dup .us-val{color:var(--warn)}
+  .up-stat.new .us-val{color:var(--success)}
+  .prev-head{font-size:13px;font-weight:700;margin-bottom:8px;color:var(--text)}
+  .prev-box{max-height:380px;overflow:auto;border:1px solid var(--border);border-radius:12px}
+  .prev-box table{width:100%}
+  .prev-box thead th{position:sticky;top:0;z-index:1}
+  .dup-tag{display:inline-block;background:#FEF3C7;color:#B45309;font-size:11px;font-weight:700;
+    padding:2px 9px;border-radius:10px}
+  .new-tag{display:inline-block;background:#DCFCE7;color:#15803D;font-size:11px;font-weight:700;
+    padding:2px 9px;border-radius:10px}
 
   .legend-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
   .legend-item{padding:14px 16px;border-radius:11px}
@@ -454,6 +473,7 @@ PORTAL_HTML = """<!DOCTYPE html>
               <th>Reference No</th><th>Student</th><th>Old Status</th><th>New Status</th><th>Changed At</th>
             </tr></thead><tbody id="h-body"></tbody></table>
           </div>
+          <div class="pg-bar" id="h-pg"></div>
         </div>
       </section>
 
@@ -474,12 +494,14 @@ PORTAL_HTML = """<!DOCTYPE html>
           <p style="color:var(--muted);font-size:13px;margin-bottom:18px">
             Excel upload karo (.xlsx). Columns: Student Name, Mobile, Class, Reference Number, Email, DOB, Admission Session.</p>
           <div class="drop" id="drop" onclick="document.getElementById('file-input').click()">
-            <div class="ic">📁</div>
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
             <div style="font-weight:600;font-size:15px">Click or drag Excel file here</div>
             <div style="color:var(--muted);font-size:13px;margin-top:5px">.xlsx files only</div>
           </div>
           <input type="file" id="file-input" accept=".xlsx,.xls" style="display:none" onchange="handleFile(this.files[0])">
           <div id="upload-status" style="margin-top:16px"></div>
+          <div id="upload-summary" style="margin-top:16px"></div>
+          <div id="upload-preview" style="margin-top:16px"></div>
           <div style="margin-top:18px;display:flex;gap:12px">
             <button class="btn btn-outline btn-sm" onclick="downloadExcel()">Download Updated Excel</button>
           </div>
@@ -952,14 +974,33 @@ function renderPg(id,page,total,fnName){
 }
 function setPerPage(v,fnName){perPage=parseInt(v);window[fnName](1);}
 
-async function loadHistory(){
-  try{const h=await api("/api/history");
-    document.getElementById("h-body").innerHTML=h.length?h.map(x=>'<tr>'+
+let histPerPage=10;
+async function loadHistory(page){
+  page=page||1;
+  try{
+    const d=await api("/api/history?page="+page+"&per_page="+histPerPage);
+    const items=d.items||[];
+    document.getElementById("h-body").innerHTML=items.length?items.map(x=>'<tr>'+
       '<td><span class="ref-tag">'+(x.reference_no||"—")+'</span></td><td>'+(x.student_name||"—")+'</td>'+
       '<td>'+badge(x.old_status)+'</td><td>'+badge(x.new_status)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+x.changed_at+'</td></tr>').join("")
       :'<tr><td colspan="5" class="empty">No changes recorded yet</td></tr>';
+    renderHistPg(d.page,d.pages,d.total);
   }catch(e){showToast(""+e.message);}
+}
+function renderHistPg(page,total,totalRows){
+  const el=document.getElementById("h-pg");if(!el)return;
+  if(!total||total<=0){el.innerHTML="";return;}
+  let ctrl='<div class="pg-controls">';
+  ctrl+='<button onclick="loadHistory('+(page-1)+')" '+(page<=1?"disabled":"")+'>‹ Prev</button>';
+  const start=Math.max(1,page-2),end=Math.min(total,page+2);
+  for(let i=start;i<=end;i++)ctrl+='<button class="'+(i===page?'active':'')+'" onclick="loadHistory('+i+')">'+i+'</button>';
+  ctrl+='<button onclick="loadHistory('+(page+1)+')" '+(page>=total?"disabled":"")+'>Next ›</button></div>';
+  const sel='<div class="perpage">'+(totalRows!=null?'<span>'+totalRows+' changes</span> · ':'')+
+    'Per page: <select onchange="histPerPage=parseInt(this.value);loadHistory(1)">'+
+    [10,20,30,50,100].map(n=>'<option value="'+n+'" '+(n===histPerPage?"selected":"")+'>'+n+'</option>').join("")+
+    '</select></div>';
+  el.innerHTML=ctrl+sel;
 }
 async function loadRunLogs(){
   try{const l=await api("/api/run-logs");renderRuns(l,"rl-body");}catch(e){showToast(""+e.message);}
@@ -972,7 +1013,10 @@ drop.addEventListener("drop",e=>{if(e.dataTransfer.files[0])handleFile(e.dataTra
 async function handleFile(file){
   if(!file)return;
   const st=document.getElementById("upload-status");
-  st.innerHTML='<div style="color:var(--muted)">Uploading...</div>';
+  const sm=document.getElementById("upload-summary");
+  const pv=document.getElementById("upload-preview");
+  sm.innerHTML="";pv.innerHTML="";
+  st.innerHTML='<div style="color:var(--muted)">Uploading…</div>';
   const fd=new FormData();fd.append("file",file);
   try{
     const r=await fetch(API+"/api/upload-excel",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN},body:fd});
@@ -980,8 +1024,39 @@ async function handleFile(file){
     if(!r.ok)throw new Error(d.detail||"Upload failed");
     st.innerHTML='<div style="color:var(--success);font-weight:600">'+d.message+'</div>'+
       '<div style="margin-top:12px"><button class="btn btn-success btn-sm" onclick="runNow()">Run Check Now</button></div>';
-    showToast("Excel uploaded!");
+    if(d.parse_error){
+      sm.innerHTML='<div style="color:var(--danger);font-size:13px">Preview error: '+d.parse_error+'</div>';
+    }else{
+      renderUploadSummary(d);
+      renderUploadPreview(d.preview||[]);
+    }
+    showToast("Excel uploaded — "+(d.unique||0)+" new students");
   }catch(e){st.innerHTML='<div style="color:var(--danger)">'+e.message+'</div>';}
+}
+function renderUploadSummary(d){
+  const sm=document.getElementById("upload-summary");
+  sm.innerHTML='<div class="up-stats">'+
+    '<div class="up-stat"><div class="us-lbl">Total in list</div><div class="us-val">'+(d.total||0)+'</div></div>'+
+    '<div class="up-stat dup"><div class="us-lbl">Duplicates</div><div class="us-val">'+(d.duplicates||0)+'</div></div>'+
+    '<div class="up-stat new"><div class="us-lbl">New students (will run)</div><div class="us-val">'+(d.unique||0)+'</div></div>'+
+    '</div>'+
+    (d.duplicates>0?'<div style="font-size:12px;color:var(--warn);margin-top:8px">'+
+      d.duplicates+' duplicate row(s) auto-skipped — run sirf '+d.unique+' new students pe chalega.</div>':'');
+}
+function renderUploadPreview(rows){
+  const pv=document.getElementById("upload-preview");
+  if(!rows.length){pv.innerHTML="";return;}
+  const head='<tr><th>#</th><th>Name</th><th>Reference</th><th>Email</th><th>Class</th><th>Session</th><th>Status</th></tr>';
+  const body=rows.map((s,i)=>'<tr'+(s.dup?' style="background:var(--dup-bg)"':'')+'>'+
+    '<td style="color:var(--muted)">'+(i+1)+'</td>'+
+    '<td>'+(s.student_name||"—")+'</td>'+
+    '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
+    '<td style="font-size:12px">'+(s.email||"—")+'</td>'+
+    '<td>'+(s.class_level||"—")+'</td>'+
+    '<td style="font-size:12px">'+(s.session||"—")+'</td>'+
+    '<td>'+(s.dup?'<span class="dup-tag">Duplicate</span>':'<span class="new-tag">New</span>')+'</td></tr>').join("");
+  pv.innerHTML='<div class="prev-head">Preview — '+rows.length+' rows (scroll to see all)</div>'+
+    '<div class="prev-box"><table>'+head+body+'</table></div>';
 }
 async function downloadExcel(){
   const r=await fetch(API+"/api/download-excel",{headers:{"Authorization":"Bearer "+TOKEN}});
@@ -1222,11 +1297,18 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
             "sessions": [s["session"] for s in sessions]}
 
 @app.get("/api/history")
-async def get_history(limit: int=200, user=Depends(verify_token)):
+async def get_history(page: int = 1, per_page: int = 10, user=Depends(verify_token)):
     conn = get_db()
-    h = conn.execute("SELECT * FROM status_history ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM status_history").fetchone()[0]
+    per_page = max(1, min(per_page, 200))
+    page = max(1, page)
+    offset = (page - 1) * per_page
+    rows = conn.execute("SELECT * FROM status_history ORDER BY id DESC LIMIT ? OFFSET ?",
+                        (per_page, offset)).fetchall()
     conn.close()
-    return [dict(x) for x in h]
+    pages = max(1, (total + per_page - 1) // per_page)
+    return {"items": [dict(x) for x in rows], "total": total,
+            "page": page, "pages": pages, "per_page": per_page}
 
 @app.get("/api/run-logs")
 async def get_run_logs(limit: int=50, user=Depends(verify_token)):
@@ -1297,7 +1379,40 @@ async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token))
     async with aiofiles.open(EXCEL_PATH, "wb") as f:
         content = await file.read()
         await f.write(content)
-    return {"message": f"Excel uploaded ({len(content)} bytes)", "filename": file.filename}
+
+    # Parse the uploaded sheet to report counts + a preview. Duplicates (same
+    # student appearing twice) are flagged; the run will check only unique ones.
+    resp = {"message": f"Excel uploaded ({len(content)} bytes)", "filename": file.filename,
+            "total": 0, "duplicates": 0, "unique": 0, "preview": []}
+    try:
+        from excel_handler import read_students_from_excel
+        students = read_students_from_excel(EXCEL_PATH)
+        seen = set()
+        preview = []
+        dups = 0
+        for s in students:
+            k = s.get("row_key")
+            is_dup = k in seen
+            if is_dup:
+                dups += 1
+            else:
+                seen.add(k)
+            preview.append({
+                "student_name": s.get("student_name", ""),
+                "reference_no": s.get("reference_no", ""),
+                "email": s.get("email", ""),
+                "class_level": s.get("class_level", ""),
+                "session": s.get("session", ""),
+                "dob": s.get("dob", ""),
+                "mobile": s.get("mobile", ""),
+                "dup": is_dup,
+            })
+        total = len(students)
+        resp.update({"total": total, "duplicates": dups, "unique": total - dups,
+                     "preview": preview[:2000]})
+    except Exception as e:
+        resp["parse_error"] = str(e)[:200]
+    return resp
 
 @app.get("/api/download-excel")
 async def download_excel(user=Depends(verify_token)):

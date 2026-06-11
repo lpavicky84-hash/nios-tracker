@@ -94,6 +94,21 @@ def read_students_from_excel(filepath):
     logger.info(f"Read {len(students)} students from Excel")
     return students
 
+def dedupe_students(students):
+    """Remove duplicate rows (same row_key). Keeps the first occurrence.
+    Returns (unique_list, duplicate_count)."""
+    seen = set()
+    unique = []
+    dups = 0
+    for s in students:
+        k = s.get("row_key")
+        if k in seen:
+            dups += 1
+            continue
+        seen.add(k)
+        unique.append(s)
+    return unique, dups
+
 def write_status_to_excel(filepath, updates):
     """updates: list of dicts with row_key/reference_no/email matching + status fields."""
     wb = openpyxl.load_workbook(filepath)
