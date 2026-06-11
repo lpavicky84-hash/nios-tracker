@@ -249,7 +249,10 @@ def inline_resources(html, session):
         elif not src.startswith("http"):
             # couldn't inline a relative URL -> at least point it at NIOS (not the portal)
             img["src"] = full
-    # Inline external stylesheets (so the page's print layout/sizes apply on screen)
+    # Inline external stylesheets (so the page's own sizing applies). Preserve the
+    # media attribute: NIOS app-form sizes the photo via style.css (media=screen)
+    # and ships a separate print.css (media=print). Dropping media made print.css
+    # leak onto the screen view and distort the layout.
     for link in soup.find_all("link"):
         rel = link.get("rel") or []
         if "stylesheet" not in [r.lower() for r in rel]:
@@ -261,6 +264,9 @@ def inline_resources(html, session):
         data, _ = _fetch_bytes(full, session)
         if data:
             style = soup.new_tag("style")
+            media = link.get("media")
+            if media:
+                style["media"] = media
             style.string = data.decode("utf-8", "ignore")
             link.replace_with(style)
     return str(soup)
