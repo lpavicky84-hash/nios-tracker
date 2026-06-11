@@ -175,17 +175,22 @@ def fetch_status(session, ref_no, email, csrf, token):
         result["raw_text"] = str(e)[:200]
     return result
 
-def scrape_students(students, should_cancel=None, progress_cb=None):
+def scrape_students(students, should_cancel=None, progress_cb=None, on_result=None):
     """students: list of dicts with reference_no/email. Returns results list.
     should_cancel: optional callable -> True to stop early (cooperative cancel).
-    progress_cb: optional callable(done, total) called after each student."""
+    progress_cb: optional callable(done, total) called after each student.
+    on_result: optional callable(result_dict) called right after each student is
+               fetched, so the caller can persist it live (incremental updates)."""
     logger.info(f"Scraping {len(students)} students...")
     results = []
     total = len(students)
     if not CAPSOLVER_API_KEY:
         for s in students:
-            results.append({**s, "status": "Fetch Error", "raw_text": "No captcha key",
-                            "success": False, "remark": "", "discovered_ref": ""})
+            r = {**s, "status": "Fetch Error", "raw_text": "No captcha key",
+                 "success": False, "remark": "", "discovered_ref": ""}
+            results.append(r)
+            if on_result:
+                on_result(r)
         return results
     try:
         session = requests.Session()
@@ -199,15 +204,21 @@ def scrape_students(students, should_cancel=None, progress_cb=None):
             logger.info(f"[{i+1}/{total}] {ref or email}")
             token = solve_recaptcha_v3()
             if not token:
-                results.append({**s, "status": "Fetch Error", "raw_text": "Captcha failed",
-                                "success": False, "remark": "", "discovered_ref": ""})
+                r = {**s, "status": "Fetch Error", "raw_text": "Captcha failed",
+                     "success": False, "remark": "", "discovered_ref": ""}
+                results.append(r)
+                if on_result:
+                    on_result(r)
                 if progress_cb:
                     progress_cb(i + 1, total)
                 continue
             if i > 0 and i % 15 == 0:
                 csrf = get_csrf(session)
             res = fetch_status(session, ref, email, csrf, token)
-            results.append({**s, **res})
+            merged = {**s, **res}
+            results.append(merged)
+            if on_result:
+                on_result(merged)
             if progress_cb:
                 progress_cb(i + 1, total)
             time.sleep(2)   # polite gap between students

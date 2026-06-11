@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 SECRET_KEY  = os.environ.get("SECRET_KEY",  "nios-tracker-secret-2025-mvs")
 PORTAL_USER = os.environ.get("PORTAL_USER", "admin")
 PORTAL_PASS = os.environ.get("PORTAL_PASS", "MVS2025")
-EXCEL_PATH  = os.environ.get("EXCEL_PATH",  "students.xlsx")
+EXCEL_PATH  = os.environ.get("EXCEL_PATH",  os.path.join(os.environ.get("DATA_DIR", "."), "students.xlsx"))
 ALGORITHM   = "HS256"
 TOKEN_EXPIRE_HOURS = 12
 
@@ -270,6 +270,11 @@ PORTAL_HTML = """<!DOCTYPE html>
     padding:2px 9px;border-radius:10px}
   .new-tag{display:inline-block;background:#DCFCE7;color:#15803D;font-size:11px;font-weight:700;
     padding:2px 9px;border-radius:10px}
+  .up-prog{background:var(--soft);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .up-prog-top{display:flex;justify-content:space-between;font-weight:700;font-size:13px;margin-bottom:8px}
+  .up-track{height:8px;background:var(--chip);border-radius:5px;overflow:hidden}
+  .up-fill{height:100%;width:0%;background:linear-gradient(90deg,#6366F1,#8B5CF6);border-radius:5px;transition:width .2s}
+  .up-eta{font-size:12px;color:var(--muted);margin-top:7px}
 
   .legend-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
   .legend-item{padding:14px 16px;border-radius:11px}
@@ -656,12 +661,22 @@ async function pollProgress(){
       const pct=d.percent||0;
       document.getElementById("pb-pct").textContent=pct+"%";
       document.getElementById("pb-fill").style.width=pct+"%";
-      document.getElementById("pb-sub").textContent=(d.current||0)+" / "+(d.total||0)+" students checked";
+      document.getElementById("pb-sub").innerHTML=
+        (d.current||0)+" / "+(d.total||0)+" checked &nbsp;·&nbsp; "+
+        "<b style=\"color:var(--success)\">"+(d.changed||0)+"</b> changed &nbsp;·&nbsp; "+
+        (d.same||0)+" same &nbsp;·&nbsp; <b>"+(d.remaining||0)+"</b> remaining";
       const g=d.group_type==="public"?"Public (April / October)":(d.group_type==="regular"?"On Demand + Stream 2":"all");
       document.getElementById("pb-label").textContent="Checking "+g+" students…";
+      // live filtering: refresh whatever view the counsellor is on, as it happens
+      if(secActive("dashboard"))loadDashboard();
+      else if(secActive("confirmed"))loadConfirmed(1);
+      else if(secActive("required"))loadRequired(1);
+      else if(secActive("students"))loadStudents(1);
     }else{
       box.style.display="none";
-      if(wasRunning){wasRunning=false;if(secActive("dashboard"))loadDashboard();if(secActive("runlogs"))loadRunLogs();}
+      if(wasRunning){wasRunning=false;
+        if(secActive("dashboard"))loadDashboard();
+        if(secActive("runlogs"))loadRunLogs();}
     }
   }catch(e){}
 }
@@ -726,7 +741,6 @@ async function loadDashboard(){
     renderSessionCounts(d.session_counts||[]);
     renderRuns(d.recent_runs,"recent-runs");
     renderBell(d.notifications||[]);
-    loadNextRuns();
   }catch(e){showToast("Error: "+e.message);}
 }
 function renderSessionCounts(arr){
@@ -1010,38 +1024,56 @@ const drop=document.getElementById("drop");
 ["dragover","dragenter"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("drag");}));
 ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("drag");}));
 drop.addEventListener("drop",e=>{if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
-async function handleFile(file){
+function handleFile(file){
   if(!file)return;
   const st=document.getElementById("upload-status");
   const sm=document.getElementById("upload-summary");
   const pv=document.getElementById("upload-preview");
   sm.innerHTML="";pv.innerHTML="";
-  st.innerHTML='<div style="color:var(--muted)">Uploading…</div>';
+  st.innerHTML='<div class="up-prog"><div class="up-prog-top"><span>Uploading…</span>'+
+    '<span id="up-pct">0%</span></div><div class="up-track"><div class="up-fill" id="up-fill"></div></div>'+
+    '<div class="up-eta" id="up-eta"></div></div>';
   const fd=new FormData();fd.append("file",file);
-  try{
-    const r=await fetch(API+"/api/upload-excel",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN},body:fd});
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.detail||"Upload failed");
-    st.innerHTML='<div style="color:var(--success);font-weight:600">'+d.message+'</div>'+
+  const xhr=new XMLHttpRequest();
+  const startT=Date.now();
+  xhr.open("POST",API+"/api/upload-excel");
+  xhr.setRequestHeader("Authorization","Bearer "+TOKEN);
+  xhr.upload.onprogress=function(e){
+    if(!e.lengthComputable)return;
+    const pct=Math.round(e.loaded*100/e.total);
+    const pe=document.getElementById("up-pct"),pf=document.getElementById("up-fill"),pet=document.getElementById("up-eta");
+    if(pe)pe.textContent=pct+"%";
+    if(pf)pf.style.width=pct+"%";
+    const elapsed=(Date.now()-startT)/1000;
+    const speed=e.loaded/Math.max(elapsed,0.001);
+    const eta=speed>0?(e.total-e.loaded)/speed:0;
+    if(pet)pet.textContent=pct<100?("~"+fmtEta(eta)+" remaining · "+fmtBytes(e.loaded)+" / "+fmtBytes(e.total)):"Processing file on server…";
+  };
+  xhr.onload=function(){
+    let d={};try{d=JSON.parse(xhr.responseText);}catch(e){}
+    if(xhr.status<200||xhr.status>=300){st.innerHTML='<div style="color:var(--danger)">'+(d.detail||"Upload failed")+'</div>';return;}
+    st.innerHTML='<div style="color:var(--success);font-weight:600">'+(d.message||"Uploaded")+'</div>'+
       '<div style="margin-top:12px"><button class="btn btn-success btn-sm" onclick="runNow()">Run Check Now</button></div>';
-    if(d.parse_error){
-      sm.innerHTML='<div style="color:var(--danger);font-size:13px">Preview error: '+d.parse_error+'</div>';
-    }else{
-      renderUploadSummary(d);
-      renderUploadPreview(d.preview||[]);
-    }
+    if(d.parse_error){sm.innerHTML='<div style="color:var(--danger);font-size:13px">Preview error: '+d.parse_error+'</div>';}
+    else{renderUploadSummary(d);renderUploadPreview(d.preview||[]);}
     showToast("Excel uploaded — "+(d.unique||0)+" new students");
-  }catch(e){st.innerHTML='<div style="color:var(--danger)">'+e.message+'</div>';}
+  };
+  xhr.onerror=function(){st.innerHTML='<div style="color:var(--danger)">Upload error — try again</div>';};
+  xhr.send(fd);
 }
+function fmtBytes(b){if(b<1024)return b+" B";if(b<1048576)return (b/1024).toFixed(1)+" KB";return (b/1048576).toFixed(1)+" MB";}
+function fmtEta(s){s=Math.ceil(s);if(s<1)return "0s";if(s<60)return s+"s";const m=Math.floor(s/60),ss=s%60;return m+"m "+ss+"s";}
 function renderUploadSummary(d){
   const sm=document.getElementById("upload-summary");
   sm.innerHTML='<div class="up-stats">'+
     '<div class="up-stat"><div class="us-lbl">Total in list</div><div class="us-val">'+(d.total||0)+'</div></div>'+
-    '<div class="up-stat dup"><div class="us-lbl">Duplicates</div><div class="us-val">'+(d.duplicates||0)+'</div></div>'+
-    '<div class="up-stat new"><div class="us-lbl">New students (will run)</div><div class="us-val">'+(d.unique||0)+'</div></div>'+
+    '<div class="up-stat dup"><div class="us-lbl">Already in system</div><div class="us-val">'+(d.duplicates||0)+'</div></div>'+
+    '<div class="up-stat new"><div class="us-lbl">New students</div><div class="us-val">'+(d.unique||0)+'</div></div>'+
     '</div>'+
-    (d.duplicates>0?'<div style="font-size:12px;color:var(--warn);margin-top:8px">'+
-      d.duplicates+' duplicate row(s) auto-skipped — run sirf '+d.unique+' new students pe chalega.</div>':'');
+    (d.duplicates>0?'<div style="font-size:12px;color:var(--muted);margin-top:8px">'+
+      d.duplicates+' student(s) already tracked (matched by reference / email / name+phone) — '+
+      'inko dobara add nahi kiya jayega, sirf status update hoga. '+(d.unique||0)+' new student(s) add honge.</div>':
+      '<div style="font-size:12px;color:var(--success);margin-top:8px">Sabhi '+(d.unique||0)+' students new hain.</div>');
 }
 function renderUploadPreview(rows){
   const pv=document.getElementById("upload-preview");
@@ -1341,7 +1373,8 @@ async def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
 async def run_progress(user=Depends(verify_token)):
     """Live progress of the currently running check (for the progress bar)."""
     conn = get_db()
-    row = conn.execute("SELECT id, group_type, run_at, progress_current, progress_total "
+    row = conn.execute("SELECT id, group_type, run_at, progress_current, progress_total, "
+                       "progress_changed, progress_same "
                        "FROM run_logs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
     conn.close()
     if not row:
@@ -1350,7 +1383,9 @@ async def run_progress(user=Depends(verify_token)):
     tot = row["progress_total"] or 0
     pct = int(cur * 100 / tot) if tot else 0
     return {"running": True, "id": row["id"], "group_type": row["group_type"],
-            "run_at": row["run_at"], "current": cur, "total": tot, "percent": pct}
+            "run_at": row["run_at"], "current": cur, "total": tot, "percent": pct,
+            "changed": row["progress_changed"] or 0, "same": row["progress_same"] or 0,
+            "remaining": max(0, tot - cur)}
 
 GROUP_LABELS = {"regular": "On Demand + Stream 2", "public": "Public (April / October)"}
 
@@ -1380,23 +1415,50 @@ async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token))
         content = await file.read()
         await f.write(content)
 
-    # Parse the uploaded sheet to report counts + a preview. Duplicates (same
-    # student appearing twice) are flagged; the run will check only unique ones.
+    # Parse the uploaded sheet to report counts + a preview. A student is a
+    # "duplicate" if it already exists in the system (matched by reference OR
+    # email OR name+mobile) OR appears more than once within this file. Only the
+    # genuinely NEW students are counted as new.
     resp = {"message": f"Excel uploaded ({len(content)} bytes)", "filename": file.filename,
             "total": 0, "duplicates": 0, "unique": 0, "preview": []}
     try:
         from excel_handler import read_students_from_excel
+
+        def _norm(v):
+            return str(v or "").strip().lower()
+
+        # Build sets of keys already in the system
+        conn = get_db()
+        existing_ref, existing_email, existing_nm = set(), set(), set()
+        for r in conn.execute("SELECT reference_no, email, student_name, mobile FROM student_status").fetchall():
+            if r["reference_no"]:
+                existing_ref.add(_norm(r["reference_no"]))
+            if r["email"]:
+                existing_email.add(_norm(r["email"]))
+            if r["student_name"] and r["mobile"]:
+                existing_nm.add(_norm(r["student_name"]) + "|" + _norm(r["mobile"]))
+        conn.close()
+
         students = read_students_from_excel(EXCEL_PATH)
-        seen = set()
+        seen_ref, seen_email, seen_nm = set(), set(), set()
         preview = []
         dups = 0
         for s in students:
-            k = s.get("row_key")
-            is_dup = k in seen
+            ref = _norm(s.get("reference_no"))
+            email = _norm(s.get("email"))
+            nm = (_norm(s.get("student_name")) + "|" + _norm(s.get("mobile"))) \
+                if s.get("student_name") and s.get("mobile") else ""
+            # duplicate if seen earlier in file OR already present in the DB
+            is_dup = (
+                (ref and (ref in seen_ref or ref in existing_ref)) or
+                (email and (email in seen_email or email in existing_email)) or
+                (nm and (nm in seen_nm or nm in existing_nm))
+            )
+            if ref: seen_ref.add(ref)
+            if email: seen_email.add(email)
+            if nm: seen_nm.add(nm)
             if is_dup:
                 dups += 1
-            else:
-                seen.add(k)
             preview.append({
                 "student_name": s.get("student_name", ""),
                 "reference_no": s.get("reference_no", ""),

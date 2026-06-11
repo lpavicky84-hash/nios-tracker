@@ -1,7 +1,15 @@
+import os
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
-DB_PATH = "nios_tracker.db"
+# Persist data on a mounted volume when DATA_DIR is set (Railway volume).
+# Falls back to the current folder for local runs.
+DATA_DIR = os.environ.get("DATA_DIR", ".")
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+except Exception:
+    DATA_DIR = "."
+DB_PATH = os.path.join(DATA_DIR, "nios_tracker.db")
 
 # India Standard Time (UTC+5:30) — Railway runs in UTC
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -32,11 +40,13 @@ def init_db():
             status TEXT DEFAULT 'running',
             progress_current INTEGER DEFAULT 0,
             progress_total INTEGER DEFAULT 0,
+            progress_changed INTEGER DEFAULT 0,
+            progress_same INTEGER DEFAULT 0,
             notes TEXT
         )
     """)
     # Safe migration for older DBs missing the progress columns
-    for col in ("progress_current", "progress_total"):
+    for col in ("progress_current", "progress_total", "progress_changed", "progress_same"):
         try:
             c.execute(f"ALTER TABLE run_logs ADD COLUMN {col} INTEGER DEFAULT 0")
         except Exception:

@@ -12,7 +12,7 @@ from scraper import scrape_students
 from excel_handler import read_students_from_excel, write_status_to_excel, dedupe_students
 
 logger = logging.getLogger(__name__)
-EXCEL_PATH = os.environ.get("EXCEL_PATH", "students.xlsx")
+EXCEL_PATH = os.environ.get("EXCEL_PATH", os.path.join(os.environ.get("DATA_DIR", "."), "students.xlsx"))
 
 # Which sessions belong to "public exam" group (April/October + year)
 def is_public_session(session):
@@ -111,44 +111,37 @@ def run_status_check(group_type="all"):
             return
 
         # Record how many students this run will check (for the live progress bar)
-        conn.execute("UPDATE run_logs SET progress_total=?, progress_current=0 WHERE id=?",
+        conn.execute("UPDATE run_logs SET progress_total=?, progress_current=0, "
+                     "progress_changed=0, progress_same=0 WHERE id=?",
                      (len(to_check), run_id))
         conn.commit()
 
-        def _progress(done, total):
-            try:
-                pc = get_db()
-                pc.execute("UPDATE run_logs SET progress_current=?, progress_total=? WHERE id=?",
-                           (done, total, run_id))
-                pc.commit()
-                pc.close()
-            except Exception:
-                pass
+        stats = {"checked": 0, "changed": 0, "same": 0, "failed": 0}
 
-        results = scrape_students(to_check, should_cancel=_is_cancelled, progress_cb=_progress)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        for res in results:
-            checked += 1
+        def process_one(res):
+            """Persist ONE student's result immediately so the dashboard/filters
+            update live as the run progresses (not all at the end)."""
+            stats["checked"] += 1
             if not res.get("success"):
-                failed += 1
-
+                stats["failed"] += 1
             row_key = res["row_key"]
             new_status = res["status"]
             new_ref = res.get("discovered_ref") or res.get("reference_no") or ""
             is_conf = 1 if new_status == "Admission Confirmed" else 0
+            now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             old = c.execute("SELECT current_status FROM student_status WHERE row_key=?",
                             (row_key,)).fetchone()
             old_status = old["current_status"] if old else None
             status_changed = (old_status != new_status)
-
             if status_changed:
-                changed += 1
+                stats["changed"] += 1
                 c.execute("""INSERT INTO status_history
                     (reference_no, student_name, old_status, new_status, changed_at, run_id)
                     VALUES (?,?,?,?,?,?)""",
-                    (new_ref, res.get("student_name", ""), old_status, new_status, now, run_id))
+                    (new_ref, res.get("student_name", ""), old_status, new_status, now_s, run_id))
+            else:
+                stats["same"] += 1
 
             c.execute("""INSERT INTO student_status
                 (row_key, reference_no, email, dob, student_name, mobile, class_level,
@@ -165,10 +158,8 @@ def run_status_check(group_type="all"):
                     check_count = check_count + 1""",
                 (row_key, new_ref, res.get("email", ""), res.get("dob", ""),
                  res.get("student_name", ""), res.get("mobile", ""), res.get("class_level", ""),
-                 res.get("session", ""), new_status, res.get("remark", ""), is_conf, now, now))
+                 res.get("session", ""), new_status, res.get("remark", ""), is_conf, now_s, now_s))
 
-            # Remove any orphaned duplicate row that shares this reference under a
-            # different (old) key — happens when an email-only student later gets a reference.
             if new_ref:
                 c.execute("DELETE FROM student_status WHERE reference_no=? AND row_key!=?",
                           (new_ref, row_key))
@@ -179,11 +170,17 @@ def run_status_check(group_type="all"):
                 "email": res.get("email", ""),
                 "status_label": new_status,
                 "remark": res.get("remark", ""),
-                "last_checked": now,
+                "last_checked": now_s,
                 "changed": status_changed,
             })
+            # Live progress (current / changed / same) — commit so the dashboard sees it
+            c.execute("UPDATE run_logs SET progress_current=?, progress_changed=?, progress_same=? WHERE id=?",
+                      (stats["checked"], stats["changed"], stats["same"], run_id))
+            conn.commit()
 
-        conn.commit()
+        scrape_students(to_check, should_cancel=_is_cancelled, on_result=process_one)
+        checked, changed, failed = stats["checked"], stats["changed"], stats["failed"]
+
         write_status_to_excel(EXCEL_PATH, excel_updates)
         # If this run was cancelled mid-way, keep it 'cancelled' (save partial counts).
         cur = c.execute("SELECT status FROM run_logs WHERE id=?", (run_id,)).fetchone()
