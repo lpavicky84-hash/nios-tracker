@@ -10,6 +10,10 @@ from datetime import datetime
 from database import get_db, get_setting
 from scraper import scrape_students
 from excel_handler import read_students_from_excel, write_status_to_excel, dedupe_students
+try:
+    import mvs_sync
+except Exception:
+    mvs_sync = None
 
 logger = logging.getLogger(__name__)
 EXCEL_PATH = os.environ.get("EXCEL_PATH", os.path.join(os.environ.get("DATA_DIR", "."), "students.xlsx"))
@@ -61,6 +65,11 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
             c.execute("UPDATE run_logs SET progress_current=?, progress_same=? WHERE id=?",
                       (stats["checked"], stats["same"], run_id))
         conn.commit()
+        try:
+            if mvs_sync and mvs_sync.enabled():
+                mvs_sync.push_student(s, "SYC", conn)
+        except Exception as _me:
+            logger.warning(f"MVS push (SYC) error: {_me}")
         # WhatsApp hall ticket — once per student, only when a SYC campaign is configured
         try:
             if wa_on:
@@ -100,7 +109,8 @@ def run_status_check(group_type="all"):
     logger.info("=" * 50)
     logger.info(f"Run started [{group_type}] at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    if not os.path.exists(EXCEL_PATH):
+    _use_mvs = bool(mvs_sync and mvs_sync.enabled())
+    if not _use_mvs and not os.path.exists(EXCEL_PATH):
         logger.error(f"Excel not found: {EXCEL_PATH}")
         return
 
@@ -133,7 +143,10 @@ def run_status_check(group_type="all"):
     excel_updates = []
 
     try:
-        all_students = read_students_from_excel(EXCEL_PATH)
+        if _use_mvs:
+            all_students = mvs_sync.fetch_students_for_tracker()
+        else:
+            all_students = read_students_from_excel(EXCEL_PATH)
         # Drop duplicate rows from the uploaded Excel (same student twice) so the
         # run only checks new/unique students, never the duplicates.
         all_students, dup_count = dedupe_students(all_students)
@@ -276,6 +289,12 @@ def run_status_check(group_type="all"):
             except Exception as we:
                 logger.warning(f"WhatsApp trigger error: {we}")
 
+            try:
+                if mvs_sync and mvs_sync.enabled():
+                    mvs_sync.push_student({**res, "reference_no": new_ref}, new_status, conn)
+            except Exception as _me:
+                logger.warning(f"MVS push error: {_me}")
+
             excel_updates.append({
                 "row_key": row_key,
                 "reference_no": new_ref,
@@ -294,7 +313,8 @@ def run_status_check(group_type="all"):
             scrape_students(to_check, should_cancel=_is_cancelled, on_result=process_one)
         checked, changed, failed = stats["checked"], stats["changed"], stats["failed"]
 
-        write_status_to_excel(EXCEL_PATH, excel_updates)
+        if not _use_mvs:
+            write_status_to_excel(EXCEL_PATH, excel_updates)
         # If this run was cancelled mid-way, keep it 'cancelled' (save partial counts).
         cur = c.execute("SELECT status FROM run_logs WHERE id=?", (run_id,)).fetchone()
         if cur and cur["status"] == "cancelled":
