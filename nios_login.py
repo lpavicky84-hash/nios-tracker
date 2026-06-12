@@ -65,14 +65,17 @@ def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None):
         return ""
 
 def format_dob(dob):
-    """Return DOB as DD-MM-YYYY (NIOS login format)."""
+    """Return DOB as DD-MM-YYYY (NIOS login format). Robust to any time component
+    and common date formats."""
     if isinstance(dob, (datetime, date)):
         return dob.strftime("%d-%m-%Y")
     s = str(dob or "").strip()
     if not s:
         return ""
+    # Drop any time portion: "08-08-2007 00:00:00" / "2007-08-08T00:00" -> date only
+    s = s.split(" ")[0].split("T")[0].strip()
     for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d",
-                "%Y-%m-%d %H:%M:%S", "%d-%m-%y", "%m/%d/%Y"):
+                "%d-%m-%y", "%m/%d/%Y", "%d.%m.%Y", "%d %m %Y"):
         try:
             return datetime.strptime(s, fmt).strftime("%d-%m-%Y")
         except ValueError:
@@ -382,7 +385,7 @@ def fetch_document(reference_no, dob, kind, enrollment_no=""):
         return None, "invalid document kind", None
     session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no)
     if session is None:
-        return None, "login failed (check reference/enrollment/DOB)", None
+        return None, f"login failed — DOB used was '{format_dob(dob)}'. Verify it matches NIOS records.", None
     ident = reference_no or enrollment_no or "doc"
     target = urljoin(BASE, path)
     try:
