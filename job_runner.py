@@ -296,9 +296,9 @@ def run_status_check(group_type="all", source_only=None):
             if status_changed:
                 stats["changed"] += 1
                 c.execute("""INSERT INTO status_history
-                    (reference_no, student_name, old_status, new_status, changed_at, run_id)
-                    VALUES (?,?,?,?,?,?)""",
-                    (new_ref, res.get("student_name", ""), old_status, new_status, now_s, run_id))
+                    (reference_no, student_name, old_status, new_status, changed_at, run_id, source)
+                    VALUES (?,?,?,?,?,?,?)""",
+                    (new_ref, res.get("student_name", ""), old_status, new_status, now_s, run_id, final_source))
             else:
                 stats["same"] += 1
 

@@ -1979,9 +1979,14 @@ async def export_students(view: str="normal", search: str="", status_filter: str
 async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_dt: str = "",
                      status: str = "", source: str = "", user=Depends(verify_token)):
     conn = get_db()
-    # Resolve each history row's data type from the student it belongs to (by reference).
-    src_expr = ("(SELECT COALESCE(ss.source,'mvs_tracker') FROM student_status ss "
-                "WHERE ss.reference_no = status_history.reference_no LIMIT 1)")
+    # Prefer the source STORED on the history row (set at write time). Fall back to a
+    # reference-no lookup for old rows, then default. This keeps History in sync with
+    # the Active/Confirmed pages.
+    src_expr = ("COALESCE(NULLIF(status_history.source,''), "
+                "(SELECT ss.source FROM student_status ss "
+                "WHERE ss.reference_no != '' AND ss.reference_no = status_history.reference_no "
+                "AND ss.source IS NOT NULL LIMIT 1), 'mvs_tracker')")
+    cols = "id, reference_no, student_name, old_status, new_status, changed_at, run_id"
     wc, params = [], []
     if from_dt:
         wc.append("changed_at >= ?"); params.append(from_dt)
@@ -1997,7 +2002,7 @@ async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_d
     page = max(1, page)
     offset = (page - 1) * per_page
     rows = conn.execute(
-        f"SELECT *, {src_expr} AS source FROM status_history {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+        f"SELECT {cols}, {src_expr} AS source FROM status_history {where} ORDER BY id DESC LIMIT ? OFFSET ?",
         params + [per_page, offset]).fetchall()
     conn.close()
     pages = max(1, (total + per_page - 1) // per_page)
@@ -2030,8 +2035,11 @@ async def export_history(from_dt: str = "", to_dt: str = "", status: str = "",
     from openpyxl.utils import get_column_letter
 
     conn = get_db()
-    src_expr = ("(SELECT COALESCE(ss.source,'mvs_tracker') FROM student_status ss "
-                "WHERE ss.reference_no = status_history.reference_no LIMIT 1)")
+    src_expr = ("COALESCE(NULLIF(status_history.source,''), "
+                "(SELECT ss.source FROM student_status ss "
+                "WHERE ss.reference_no != '' AND ss.reference_no = status_history.reference_no "
+                "AND ss.source IS NOT NULL LIMIT 1), 'mvs_tracker')")
+    cols = "id, reference_no, student_name, old_status, new_status, changed_at, run_id"
     wc, params = [], []
     if from_dt:
         wc.append("changed_at >= ?"); params.append(from_dt)
@@ -2042,7 +2050,7 @@ async def export_history(from_dt: str = "", to_dt: str = "", status: str = "",
     if source:
         wc.append(f"{src_expr} = ?"); params.append(source)
     where = ("WHERE " + " AND ".join(wc)) if wc else ""
-    rows = conn.execute(f"SELECT *, {src_expr} AS source FROM status_history {where} ORDER BY id DESC", params).fetchall()
+    rows = conn.execute(f"SELECT {cols}, {src_expr} AS source FROM status_history {where} ORDER BY id DESC", params).fetchall()
     conn.close()
 
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Change History"

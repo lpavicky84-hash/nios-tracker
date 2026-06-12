@@ -64,7 +64,8 @@ def init_db():
             old_status TEXT,
             new_status TEXT,
             changed_at TEXT NOT NULL,
-            run_id INTEGER
+            run_id INTEGER,
+            source TEXT
         )
     """)
 
@@ -124,6 +125,27 @@ def init_db():
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_public', '12')")
     # WhatsApp auto-send disabled until configured + turned on from the portal
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('wa_enabled', '0')")
+
+    # Safe migration: status_history.source (older DBs). Store source per history row
+    # so the History page never has to guess via a fragile reference-no lookup.
+    try:
+        c.execute("ALTER TABLE status_history ADD COLUMN source TEXT")
+    except Exception:
+        pass
+    # Backfill existing history rows from student_status (by reference_no, then by name).
+    try:
+        c.execute("""UPDATE status_history SET source = (
+                       SELECT ss.source FROM student_status ss
+                       WHERE ss.reference_no != '' AND ss.reference_no = status_history.reference_no
+                         AND ss.source IS NOT NULL LIMIT 1)
+                     WHERE (source IS NULL OR source='') AND reference_no != ''""")
+        c.execute("""UPDATE status_history SET source = (
+                       SELECT ss.source FROM student_status ss
+                       WHERE ss.student_name != '' AND ss.student_name = status_history.student_name
+                         AND ss.source IS NOT NULL LIMIT 1)
+                     WHERE (source IS NULL OR source='')""")
+    except Exception:
+        pass
 
     conn.commit()
     conn.close()
