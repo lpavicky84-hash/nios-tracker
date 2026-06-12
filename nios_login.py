@@ -393,6 +393,12 @@ def fetch_document(reference_no, dob, kind, enrollment_no=""):
     # Already a PDF? serve directly
     if "pdf" in ct or r.content[:4] == b"%PDF":
         return r.content, "application/pdf", f"{kind}_{ident}.pdf"
+    # If NIOS bounced us back to the login page (session not valid / wrong DOB),
+    # don't serve that page as the document — report a clear error instead.
+    low = r.text.lower()
+    if ("login to your account" in low or 'loginform[' in low
+            or ("username / email" in low and "reset password" in low)):
+        return None, "session expired or details mismatch — please check DOB and try again", None
     # Print-ready HTML -> render a real PDF (best: print layout + embedded images)
     if "html" in ct:
         try:

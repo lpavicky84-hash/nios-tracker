@@ -50,7 +50,7 @@ def read_students_from_excel(filepath):
     mobile_col  = _find_col(hc, ["mobile no", "mobile", "phone no", "phone"])
     class_col   = _find_col(hc, ["class"])
     email_col   = _find_col(hc, ["email"])
-    dob_col     = _find_col(hc, ["date of birth", "dob", "birth"])
+    dob_col     = _find_col(hc, ["date of birth", "dob", "d o b", "birth"])
     session_col = _find_col(hc, ["admission session", "session"])
     enroll_col  = _find_col(hc, ["enrollment number", "enrolment number", "enrollment no",
                                  "enrolment no", "enrol no", "enroll no", "enrol", "enrolment", "enrollment"])
