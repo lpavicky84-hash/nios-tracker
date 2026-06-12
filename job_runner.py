@@ -10,9 +10,20 @@ from datetime import datetime
 from database import get_db, get_setting
 from scraper import scrape_students
 from excel_handler import read_students_from_excel, write_status_to_excel, dedupe_students
+try:
+    import mvs_sync
+except Exception:
+    mvs_sync = None
 
 logger = logging.getLogger(__name__)
 EXCEL_PATH = os.environ.get("EXCEL_PATH", os.path.join(os.environ.get("DATA_DIR", "."), "students.xlsx"))
+
+def _mvs_on():
+    """True when the live MVS portal bridge is configured (MVS_MODE + URL + KEY)."""
+    try:
+        return bool(mvs_sync) and mvs_sync.enabled()
+    except Exception:
+        return False
 
 # Which sessions belong to "public exam" group (April/October + year).
 # Stream 2 / On Demand always count as REGULAR even if other words appear.
@@ -101,6 +112,14 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
         except Exception as we:
             logger.warning(f"SYC WhatsApp error: {we}")
 
+        # ── MVS portal: push SYC status + hall-ticket link back ──
+        try:
+            if _mvs_on() and s.get("student_id"):
+                conn.commit()
+                mvs_sync.push_student(s, "SYC", conn)
+        except Exception as pe:
+            logger.warning(f"MVS SYC push error: {pe}")
+
 
 def run_status_check(group_type="all"):
     """
@@ -111,8 +130,9 @@ def run_status_check(group_type="all"):
     logger.info("=" * 50)
     logger.info(f"Run started [{group_type}] at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    if not os.path.exists(EXCEL_PATH):
-        logger.error(f"Excel not found: {EXCEL_PATH}")
+    mvs_on = _mvs_on()
+    if not mvs_on and not os.path.exists(EXCEL_PATH):
+        logger.error(f"No data source: Excel not found ({EXCEL_PATH}) and MVS mode off")
         return
 
     conn = get_db()
@@ -144,15 +164,39 @@ def run_status_check(group_type="all"):
     excel_updates = []
 
     try:
-        all_students = read_students_from_excel(EXCEL_PATH)
-        # Drop duplicate rows from the uploaded Excel (same student twice) so the
-        # run only checks new/unique students, never the duplicates.
+        all_students = []
+        # ── MVS portal: auto-fetch live students (no Excel upload needed) ──
+        if mvs_on:
+            try:
+                mvs_students = mvs_sync.fetch_students_for_tracker(include_done=True)
+                for s in mvs_students:
+                    s["source"] = "mvs_portal"
+                all_students += mvs_students
+                logger.info(f"MVS: auto-fetched {len(mvs_students)} students")
+            except Exception as e:
+                logger.warning(f"MVS fetch failed: {e}")
+        # ── Excel upload (MVS Tracker data) — still works alongside MVS ──
+        if os.path.exists(EXCEL_PATH):
+            try:
+                all_students += read_students_from_excel(EXCEL_PATH)
+            except Exception as e:
+                logger.warning(f"Excel read failed: {e}")
+        # Drop duplicate rows (same row_key). MVS rows are added first, so if a
+        # student is in BOTH sources the MVS (portal) copy is kept -> priority.
         all_students, dup_count = dedupe_students(all_students)
         if dup_count:
-            logger.info(f"Skipped {dup_count} duplicate row(s) from Excel")
-        # Map each student's row_key to the data source detected from the sheet
-        # (mvs_portal = MVS student-portal export, mvs_tracker = manual upload).
+            logger.info(f"Skipped {dup_count} duplicate row(s)")
+        # Map each student's row_key to the data source (mvs_portal = MVS portal/
+        # detected, mvs_tracker = manual upload).
         src_by_key = {s["row_key"]: s.get("source", "mvs_tracker") for s in all_students}
+        # Manual override (set in the Upload section) wins over auto-detection.
+        override = get_setting("source_override", "")
+        if override in ("mvs_portal", "mvs_tracker"):
+            src_by_key = {k: override for k in src_by_key}
+            logger.info(f"Source override active: all -> {override}")
+        # MVS student-id map (for pushing status + doc links back to the portal).
+        sid_by_key = {s["row_key"]: s.get("student_id", "")
+                      for s in all_students if s.get("student_id")}
 
         # Clean any pre-existing duplicate rows (same reference under multiple keys):
         # keep the confirmed / most-recently-checked one.
@@ -309,6 +353,17 @@ def run_status_check(group_type="all"):
                         logger.info(f"WhatsApp {'sent' if ok else 'FAILED'} -> {phone}: {info}")
             except Exception as we:
                 logger.warning(f"WhatsApp trigger error: {we}")
+
+            # ── MVS portal: push status + doc links back (live dashboard update) ──
+            try:
+                if mvs_on and sid_by_key.get(row_key):
+                    conn.commit()   # ensure student row + links are persisted first
+                    mvs_sync.push_student({**res,
+                        "student_id": sid_by_key[row_key], "row_key": row_key,
+                        "discovered_ref": new_ref, "session": res.get("session", "")},
+                        new_status, conn)
+            except Exception as pe:
+                logger.warning(f"MVS push error {row_key}: {pe}")
 
             excel_updates.append({
                 "row_key": row_key,
