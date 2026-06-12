@@ -1696,16 +1696,17 @@ async def dashboard(user=Depends(verify_token)):
 
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to=""):
-    """Shared WHERE builder so the table and its Excel export stay perfectly in sync."""
+    """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
+    NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
     if view == "confirmed":
         wc.append("is_confirmed = 1")
     elif view == "required":
         wc.append("current_status = 'Document Required'")
-    else:  # normal = active students, exclude confirmed and SYC
-        wc.append("is_confirmed = 0")
-        wc.append("current_status != 'SYC'")
-        wc.append("(session NOT LIKE '%syc%' OR session IS NULL)")
+    else:  # normal = active students, exclude confirmed and SYC (NULL-safe)
+        wc.append("COALESCE(is_confirmed,0) = 0")
+        wc.append("COALESCE(current_status,'') != 'SYC'")
+        wc.append("(session IS NULL OR session NOT LIKE '%syc%')")
     if search:
         wc.append("(reference_no LIKE ? OR student_name LIKE ? OR email LIKE ?)")
         params += [f"%{search}%", f"%{search}%", f"%{search}%"]
@@ -1715,10 +1716,13 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("session = ?"); params.append(session_filter)
     if class_filter:                       # "10" matches 10/10TH, "12" matches 12/12TH
         wc.append("class_level LIKE ?"); params.append(f"{class_filter}%")
+    # Date filter on when the status last changed; fall back to last_checked so a
+    # student with an empty last_changed is never dropped from a date range.
+    _dt = "COALESCE(NULLIF(last_changed,''), last_checked)"
     if date_from:
-        wc.append("last_changed >= ?"); params.append(f"{date_from} 00:00:00")
+        wc.append(f"{_dt} >= ?"); params.append(f"{date_from} 00:00:00")
     if date_to:
-        wc.append("last_changed <= ?"); params.append(f"{date_to} 23:59:59")
+        wc.append(f"{_dt} <= ?"); params.append(f"{date_to} 23:59:59")
     return (("WHERE " + " AND ".join(wc)) if wc else ""), params
 
 @app.get("/api/students")
