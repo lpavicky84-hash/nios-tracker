@@ -443,6 +443,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">To
               <input type="datetime-local" id="s-to"></label>
             <button class="btn btn-primary btn-sm" onclick="loadStudents(1)">Apply</button>
+          </div>
           <div id="s-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
@@ -484,6 +485,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">To
               <input type="datetime-local" id="c-to"></label>
             <button class="btn btn-primary btn-sm" onclick="loadConfirmed(1)">Apply</button>
+          </div>
           <div id="c-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
