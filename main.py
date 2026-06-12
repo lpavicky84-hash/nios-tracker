@@ -426,12 +426,23 @@ PORTAL_HTML = """<!DOCTYPE html>
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
-            <input type="date" id="s-from" onchange="loadStudents(1)" title="Status changed from" style="flex:0 0 auto;min-width:auto">
-            <input type="date" id="s-to" onchange="loadStudents(1)" title="Status changed to" style="flex:0 0 auto;min-width:auto">
+            <select id="s-datepreset" onchange="onDatePreset('s',()=>loadStudents(1))">
+              <option value="">All dates</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="7d">Last 7 days</option>
+              <option value="custom">Custom range…</option>
+            </select>
             <button class="btn btn-outline btn-sm" onclick="exportStudents('normal')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
           </div>
+          <div class="filter-bar" id="s-daterow" style="display:none">
+            <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
+              <input type="date" id="s-from"></label>
+            <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">To
+              <input type="date" id="s-to"></label>
+            <button class="btn btn-primary btn-sm" onclick="loadStudents(1)">Apply</button>
           <div id="s-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
@@ -456,12 +467,23 @@ PORTAL_HTML = """<!DOCTYPE html>
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
-            <input type="date" id="c-from" onchange="loadConfirmed(1)" title="Confirmed from" style="flex:0 0 auto;min-width:auto">
-            <input type="date" id="c-to" onchange="loadConfirmed(1)" title="Confirmed to" style="flex:0 0 auto;min-width:auto">
+            <select id="c-datepreset" onchange="onDatePreset('c',()=>loadConfirmed(1))">
+              <option value="">All dates</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="7d">Last 7 days</option>
+              <option value="custom">Custom range…</option>
+            </select>
             <button class="btn btn-outline btn-sm" onclick="exportStudents('confirmed')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
           </div>
+          <div class="filter-bar" id="c-daterow" style="display:none">
+            <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
+              <input type="date" id="c-from"></label>
+            <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">To
+              <input type="date" id="c-to"></label>
+            <button class="btn btn-primary btn-sm" onclick="loadConfirmed(1)">Apply</button>
           <div id="c-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
@@ -1070,11 +1092,12 @@ function fillSessions(arr){
 
 async function loadStudents(page){
   page=page||1;
+  const dr=dateRange("s");
   const q=new URLSearchParams({page:page,per_page:perPage,view:"normal",
     search:document.getElementById("s-search").value,
     status_filter:document.getElementById("s-status").value,
     session_filter:document.getElementById("s-session").value,
-    class_filter:fval("s-class"),date_from:fval("s-from"),date_to:fval("s-to")});
+    class_filter:fval("s-class"),date_from:dr.from,date_to:dr.to});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -1093,11 +1116,12 @@ async function loadStudents(page){
 
 async function loadConfirmed(page){
   page=page||1;
+  const dr=dateRange("c");
   const q=new URLSearchParams({page:page,per_page:perPage,view:"confirmed",
     search:document.getElementById("c-search").value,
     status_filter:(document.getElementById("c-status")?document.getElementById("c-status").value:""),
     session_filter:document.getElementById("c-session").value,
-    class_filter:fval("c-class"),date_from:fval("c-from"),date_to:fval("c-to")});
+    class_filter:fval("c-class"),date_from:dr.from,date_to:dr.to});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -1373,11 +1397,28 @@ async function downloadSample(type){
   }catch(e){showToast("Error: "+e.message);}
 }
 function fval(id){const e=document.getElementById(id);return e?e.value:"";}
+function dateRange(prefix){
+  const preset=fval(prefix+"-datepreset");
+  const now=new Date();
+  const ymd=d=>{const p=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());};
+  let from="",to="";
+  if(preset==="today"){from=ymd(now);to=ymd(now);}
+  else if(preset==="yesterday"){const y=new Date(now);y.setDate(y.getDate()-1);from=ymd(y);to=ymd(y);}
+  else if(preset==="7d"){const s=new Date(now);s.setDate(s.getDate()-6);from=ymd(s);to=ymd(now);}
+  else if(preset==="custom"){from=fval(prefix+"-from");to=fval(prefix+"-to");}
+  return {from,to};
+}
+function onDatePreset(prefix,reload){
+  const custom=fval(prefix+"-datepreset")==="custom";
+  const row=document.getElementById(prefix+"-daterow");
+  if(row)row.style.display=custom?"flex":"none";
+  if(!custom&&reload)reload();
+}
 async function exportStudents(view){
   let search="",status="",session="",cls="",from="",to="";
-  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");from=fval("c-from");to=fval("c-to");}
+  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");const dr=dateRange("c");from=dr.from;to=dr.to;}
   else if(view==="required"){search=fval("r-search");status=fval("r-status");session=fval("r-session");}
-  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");from=fval("s-from");to=fval("s-to");}
+  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");const dr=dateRange("s");from=dr.from;to=dr.to;}
   const q=new URLSearchParams({view:view,search:search,status_filter:status,session_filter:session,
     class_filter:cls,date_from:from,date_to:to});
   try{
