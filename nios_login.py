@@ -72,10 +72,13 @@ def format_dob(dob):
     s = str(dob or "").strip()
     if not s:
         return ""
-    # Drop any time portion: "08-08-2007 00:00:00" / "2007-08-08T00:00" -> date only
-    s = s.split(" ")[0].split("T")[0].strip()
+    # Strip ONLY a trailing time component (e.g. " 00:00:00", "T00:00:00.000Z"),
+    # while preserving month-name dates like "8 August 2007".
+    s = re.sub(r"[ T]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?$", "", s).strip()
     for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d",
-                "%d-%m-%y", "%m/%d/%Y", "%d.%m.%Y", "%d %m %Y"):
+                "%d-%m-%y", "%m/%d/%Y", "%d.%m.%Y", "%Y.%m.%d",
+                "%d %m %Y", "%Y %m %d", "%d %B %Y", "%d %b %Y",
+                "%B %d %Y", "%b %d %Y"):
         try:
             return datetime.strptime(s, fmt).strftime("%d-%m-%Y")
         except ValueError:
