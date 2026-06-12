@@ -20,10 +20,6 @@ import aiofiles
 
 from database import init_db, get_db, get_setting, set_setting
 from job_runner import run_status_check
-try:
-    import mvs_sync
-except Exception:
-    mvs_sync = None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -1644,33 +1640,6 @@ async def serve_portal():
 @app.get("/health")
 async def health():
     return {"status": "ok", "captcha_key_set": bool(os.environ.get("CAPTCHA_API_KEY", ""))}
-
-@app.get("/mvs-test")
-async def mvs_test(key: str = ""):
-    """Browser test for the MVS connection (READ-ONLY — kuch likhta nahi).
-    Open: https://<your-tracker-url>/mvs-test?key=YOUR_TRACKER_KEY"""
-    if not mvs_sync:
-        return {"ok": False, "error": "mvs_sync.py not found in tracker repo"}
-    if not getattr(mvs_sync, "MVS_TRACKER_KEY", "") or key != mvs_sync.MVS_TRACKER_KEY:
-        return {"ok": False, "error": "Wrong or missing ?key=  (use your TRACKER_KEY value)"}
-    try:
-        by_session, total = {}, 0
-        for sess in mvs_sync.SESSIONS:
-            rows = mvs_sync.fetch_students_for_tracker(sess)
-            total += len(rows)
-            by_session[sess] = {
-                "count": len(rows),
-                "sample": [
-                    {"name": r["student_name"], "ref": r["reference_no"],
-                     "enrol": r["enrollment_no"], "dob": r["dob"], "mobile": r["mobile"]}
-                    for r in rows[:2]
-                ],
-            }
-        return {"ok": True, "mvs_mode_on": mvs_sync.enabled(),
-                "total_students": total, "by_session": by_session}
-    except Exception as e:
-        return {"ok": False, "error": str(e),
-                "hint": "Check MVS_API_URL (/exec), MVS_TRACKER_KEY, and that Apps Script New Version is deployed."}
 
 @app.post("/api/login")
 async def login(body: dict):
