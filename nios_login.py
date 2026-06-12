@@ -72,6 +72,16 @@ def format_dob(dob):
     s = str(dob or "").strip()
     if not s:
         return ""
+    # JavaScript Date.toString(), e.g. the MVS student portal sends:
+    #   "Wed Aug 08 2007 12:30:00 GMT+0530 (India Standard Time)"
+    # The local date part ("Aug 08 2007") is the correct DOB — extract it.
+    m = re.match(r"^[A-Za-z]{3}\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})\b", s)
+    if m:
+        try:
+            return datetime.strptime(f"{m.group(1)} {m.group(2)} {m.group(3)}",
+                                     "%b %d %Y").strftime("%d-%m-%Y")
+        except ValueError:
+            pass
     # Strip ONLY a trailing time component (e.g. " 00:00:00", "T00:00:00.000Z"),
     # while preserving month-name dates like "8 August 2007".
     s = re.sub(r"[ T]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?$", "", s).strip()
