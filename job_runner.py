@@ -154,11 +154,13 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
             logger.warning(f"MVS SYC push error: {pe}")
 
 
-def run_status_check(group_type="all", source_only=None):
+def run_status_check(group_type="all", source_only=None, scope=None):
     """
     group_type: 'all' | 'regular' | 'public'
-    source_only: None (both) | 'mvs_portal' | 'mvs_tracker' — restrict the run to
-                 ONE data source so MVS Portal data can run on its own interval.
+    source_only: None (both) | 'mvs_portal' | 'mvs_tracker'.
+    scope: None  -> full run: MVS Portal (live) + Excel + every existing DB student.
+           'upload' -> run ONLY the students in the just-uploaded Excel sheet (no DB,
+                       no MVS fetch) so an upload re-checks just those new students.
     Skips students already 'Admission Confirmed'.
     Processes in batches with delays (handled inside scraper).
     """
@@ -180,7 +182,9 @@ def run_status_check(group_type="all", source_only=None):
         logger.info(f"Auto-cancelled {len(prev)} previous running run(s)")
     run_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_group = group_type
-    if source_only == "mvs_portal":
+    if scope == "upload":
+        log_group = "Uploaded sheet"
+    elif source_only == "mvs_portal":
         log_group = "MVS Portal"
     elif source_only == "mvs_tracker":
         log_group = "MVS Tracker"
@@ -204,35 +208,47 @@ def run_status_check(group_type="all", source_only=None):
 
     try:
         all_students = []
-        # ── MVS portal: auto-fetch live students (no Excel upload needed) ──
-        if mvs_on:
-            try:
-                mvs_students = mvs_sync.fetch_students_for_tracker(include_done=True)
-                for s in mvs_students:
-                    s["source"] = "mvs_portal"
-                all_students += mvs_students
-                logger.info(f"MVS: auto-fetched {len(mvs_students)} students")
-            except Exception as e:
-                logger.warning(f"MVS fetch failed: {e}")
-        # ── Excel upload (MVS Tracker data) — still works alongside MVS ──
-        if os.path.exists(EXCEL_PATH):
-            try:
-                all_students += read_students_from_excel(EXCEL_PATH)
-            except Exception as e:
-                logger.warning(f"Excel read failed: {e}")
-        # Cross-source duplicates = same student present in BOTH live sources
-        # (MVS Portal + MVS Tracker). Count these BEFORE folding in the DB so the
-        # "duplicates merged" number stays meaningful (DB overlaps don't inflate it).
-        all_students, dup_count = dedupe_students(all_students)
-        if dup_count:
-            logger.info(f"Cross-source duplicates merged: {dup_count}")
-        # ── Existing students in the DB (re-check everyone, even without Excel) ──
-        # Added LAST so fresh MVS / Excel rows win on dedupe; the DB only fills in
-        # students who aren't in the live sources this run. This dedupe is silent.
-        db_students = _load_db_students(c)
-        all_students += db_students
-        all_students, _ = dedupe_students(all_students)
-        logger.info(f"Total students to consider (live + DB): {len(all_students)}")
+        if scope == "upload":
+            # UPLOAD RUN: only the students in the just-uploaded sheet. No MVS fetch,
+            # no DB — so pressing "Run Check Now" after an upload checks ONLY those
+            # newly uploaded students (always treated as MVS Tracker data).
+            if os.path.exists(EXCEL_PATH):
+                try:
+                    all_students += read_students_from_excel(EXCEL_PATH)
+                except Exception as e:
+                    logger.warning(f"Excel read failed: {e}")
+            all_students, dup_count = dedupe_students(all_students)
+            logger.info(f"Upload run: {len(all_students)} student(s) from the uploaded sheet")
+        else:
+            # ── MVS portal: auto-fetch live students (no Excel upload needed) ──
+            if mvs_on:
+                try:
+                    mvs_students = mvs_sync.fetch_students_for_tracker(include_done=True)
+                    for s in mvs_students:
+                        s["source"] = "mvs_portal"
+                    all_students += mvs_students
+                    logger.info(f"MVS: auto-fetched {len(mvs_students)} students")
+                except Exception as e:
+                    logger.warning(f"MVS fetch failed: {e}")
+            # ── Excel upload (MVS Tracker data) — still works alongside MVS ──
+            if os.path.exists(EXCEL_PATH):
+                try:
+                    all_students += read_students_from_excel(EXCEL_PATH)
+                except Exception as e:
+                    logger.warning(f"Excel read failed: {e}")
+            # Cross-source duplicates = same student present in BOTH live sources
+            # (MVS Portal + MVS Tracker). Count these BEFORE folding in the DB so the
+            # "duplicates merged" number stays meaningful (DB overlaps don't inflate it).
+            all_students, dup_count = dedupe_students(all_students)
+            if dup_count:
+                logger.info(f"Cross-source duplicates merged: {dup_count}")
+            # ── Existing students in the DB (re-check everyone, even without Excel) ──
+            # Added LAST so fresh MVS / Excel rows win on dedupe; the DB only fills in
+            # students who aren't in the live sources this run. This dedupe is silent.
+            db_students = _load_db_students(c)
+            all_students += db_students
+            all_students, _ = dedupe_students(all_students)
+            logger.info(f"Total students to consider (live + DB): {len(all_students)}")
         # Map each student's row_key to the data source (mvs_portal = MVS portal/
         # detected, mvs_tracker = manual upload).
         src_by_key = {s["row_key"]: s.get("source", "mvs_tracker") for s in all_students}

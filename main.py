@@ -360,8 +360,19 @@ PORTAL_HTML = """<!DOCTYPE html>
     <div class="topbar">
       <h1 id="page-title">Dashboard</h1>
       <div class="right">
-        <button class="btn btn-success btn-sm" id="run-now-btn" onclick="runNow()">
-          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Now</button>
+        <div class="run-menu-wrap" style="position:relative">
+          <button class="btn btn-success btn-sm" id="run-now-btn" onclick="toggleRunMenu(event)">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Now
+            <span style="margin-left:4px;font-size:10px">&#9660;</span></button>
+          <div id="run-menu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.18);min-width:230px;z-index:900;overflow:hidden">
+            <button class="run-menu-item" onclick="runChoice('all')" style="display:block;width:100%;text-align:left;padding:11px 14px;border:none;background:none;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--text)">
+              &#9654; Run All <span style="font-weight:400;color:var(--muted);font-size:12px">(Tracker + Portal)</span></button>
+            <button class="run-menu-item" onclick="runChoice('tracker')" style="display:block;width:100%;text-align:left;padding:11px 14px;border:none;border-top:1px solid var(--border);background:none;cursor:pointer;font-size:13.5px;font-weight:600;color:#075985">
+              &#128196; Run MVS Tracker only</button>
+            <button class="run-menu-item" onclick="runChoice('portal')" style="display:block;width:100%;text-align:left;padding:11px 14px;border:none;border-top:1px solid var(--border);background:none;cursor:pointer;font-size:13.5px;font-weight:600;color:#5B21B6">
+              &#128279; Run MVS Portal only</button>
+          </div>
+        </div>
         <div class="bell-btn" onclick="refreshPage(this)" title="Refresh this page" style="cursor:pointer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </div>
@@ -388,12 +399,16 @@ PORTAL_HTML = """<!DOCTYPE html>
           <div class="pb-track"><div class="pb-fill" id="pb-fill" style="width:0%"></div></div>
           <div class="pb-sub" id="pb-sub">0 / 0 done</div>
           <div id="pb-srcwrap" style="margin-top:10px;display:none">
-            <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:3px">
-              <span>🟣 MVS Portal</span><span id="pb-mvs-txt">0 / 0</span></div>
-            <div class="pb-track" style="height:8px"><div class="pb-fill" id="pb-mvs-fill" style="width:0%;background:#7C3AED"></div></div>
-            <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin:8px 0 3px">
-              <span>📄 MVS Tracker</span><span id="pb-trk-txt">0 / 0</span></div>
-            <div class="pb-track" style="height:8px"><div class="pb-fill" id="pb-trk-fill" style="width:0%;background:#0EA5E9"></div></div>
+            <div id="pb-mvs-row">
+              <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:3px">
+                <span>🟣 MVS Portal</span><span id="pb-mvs-txt">0 / 0</span></div>
+              <div class="pb-track" style="height:8px"><div class="pb-fill" id="pb-mvs-fill" style="width:0%;background:#7C3AED"></div></div>
+            </div>
+            <div id="pb-trk-row">
+              <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin:8px 0 3px">
+                <span>📄 MVS Tracker</span><span id="pb-trk-txt">0 / 0</span></div>
+              <div class="pb-track" style="height:8px"><div class="pb-fill" id="pb-trk-fill" style="width:0%;background:#0EA5E9"></div></div>
+            </div>
           </div>
         </div>
 
@@ -809,7 +824,7 @@ PORTAL_HTML = """<!DOCTYPE html>
     </div>
   </div>
 </div>
-<style>.edit-inp{width:100%;margin-top:4px;padding:9px 11px;border:2px solid var(--border);border-radius:9px;font-size:14px;font-weight:400}</style>
+<style>.edit-inp{width:100%;margin-top:4px;padding:9px 11px;border:2px solid var(--border);border-radius:9px;font-size:14px;font-weight:400}.run-menu-item:hover{background:var(--soft)}</style>
 
 <script>
 const API = window.location.origin;
@@ -883,6 +898,14 @@ function secActive(id){const e=document.getElementById("sec-"+id);return e&&e.cl
 let progInt=null,wasRunning=false;
 function startProgressPoll(){if(progInt)return;pollProgress();progInt=setInterval(pollProgress,2500);}
 function stopProgressPoll(){if(progInt){clearInterval(progInt);progInt=null;}}
+function setSrcRow(which,o){
+  const row=document.getElementById("pb-"+which+"-row");
+  if(row)row.style.display=(o.total>0)?"block":"none";
+  const txt=document.getElementById("pb-"+which+"-txt");
+  if(txt)txt.textContent=o.done+" / "+o.total+" ("+o.percent+"%)";
+  const fill=document.getElementById("pb-"+which+"-fill");
+  if(fill)fill.style.width=o.percent+"%";
+}
 async function pollProgress(){
   try{
     const d=await api("/api/progress");
@@ -896,16 +919,13 @@ async function pollProgress(){
         (d.current||0)+" / "+(d.total||0)+" checked &nbsp;·&nbsp; "+
         "<b style='color:var(--success)'>"+(d.changed||0)+"</b> changed &nbsp;·&nbsp; "+
         (d.same||0)+" same &nbsp;·&nbsp; <b>"+(d.remaining||0)+"</b> remaining";
-      // Separate progress for MVS Portal vs MVS Tracker
+      // Separate progress for MVS Portal vs MVS Tracker (only show a bar if that
+      // source actually has students in THIS run — so a Tracker-only run shows just Tracker)
       const mv=d.mvs||{done:0,total:0,percent:0}, tk=d.trk||{done:0,total:0,percent:0};
       const sw=document.getElementById("pb-srcwrap");
       if(sw){
-        const show=(mv.total>0||tk.total>0);
-        sw.style.display=show?"block":"none";
-        document.getElementById("pb-mvs-txt").textContent=mv.done+" / "+mv.total+" ("+mv.percent+"%)";
-        document.getElementById("pb-mvs-fill").style.width=mv.percent+"%";
-        document.getElementById("pb-trk-txt").textContent=tk.done+" / "+tk.total+" ("+tk.percent+"%)";
-        document.getElementById("pb-trk-fill").style.width=tk.percent+"%";
+        sw.style.display=(mv.total>0||tk.total>0)?"block":"none";
+        setSrcRow("mvs",mv);setSrcRow("trk",tk);
       }
       const g=d.group_type==="public"?"Public (April / October)":(d.group_type==="regular"?"On Demand + Stream 2":"all");
       document.getElementById("pb-label").textContent="Checking "+g+" students…";
@@ -1301,10 +1321,10 @@ function sycRow(s,i){
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="vertical-align:-2px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></td></tr>';
 }
 async function deleteSyc(rowKey,name){
-  if(!confirm("Delete SYC student "+name+"?\\n\\nThis removes ONLY this SYC student. No other data is affected."))return;
+  if(!confirm("Remove SYC student "+name+"?\\n\\nThis moves the student to Trash. You can restore it from Settings → Deleted Students if removed by mistake."))return;
   try{
     await api("/api/syc-delete?row_key="+encodeURIComponent(rowKey),"POST");
-    showToast("Deleted "+name);
+    showToast("Moved "+name+" to Trash");
     loadSyc(1);
     try{loadDashboard();}catch(e){}
   }catch(e){showToast(""+e.message);}
@@ -1575,7 +1595,8 @@ function handleFile(file){
     let d={};try{d=JSON.parse(xhr.responseText);}catch(e){}
     if(xhr.status<200||xhr.status>=300){st.innerHTML='<div style="color:var(--danger)">'+(d.detail||"Upload failed")+'</div>';return;}
     st.innerHTML='<div style="color:var(--success);font-weight:600">'+(d.message||"Uploaded")+'</div>'+
-      '<div style="margin-top:12px"><button class="btn btn-success btn-sm" onclick="runNow()">Run Check Now</button></div>';
+      '<div style="margin-top:12px"><button class="btn btn-success btn-sm" onclick="runUploaded(this)">Run Check Now (uploaded only)</button>'+
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:7px">This checks <b>only the '+(d.total||0)+' student(s) in this sheet</b>. To run all data (MVS Tracker + MVS Portal), use <b>Run Now</b> on the Dashboard.</div></div>';
     if(d.parse_error){sm.innerHTML='<div style="color:var(--danger);font-size:13px">Preview error: '+d.parse_error+'</div>';}
     else{renderUploadSummary(d);renderUploadPreview(d.preview||[]);}
     showToast("Excel uploaded — "+(d.unique||0)+" new students");
@@ -1675,21 +1696,49 @@ async function exportStudents(view){
     showToast("Excel downloaded");
   }catch(e){showToast("Error: "+e.message);}
 }
-async function runNow(){
+function toggleRunMenu(e){
+  if(e)e.stopPropagation();
+  const m=document.getElementById("run-menu");
+  if(!m)return;
+  m.style.display=(m.style.display==="none"||!m.style.display)?"block":"none";
+}
+document.addEventListener("click",function(e){
+  const w=e.target.closest&&e.target.closest(".run-menu-wrap");
+  if(!w){const m=document.getElementById("run-menu");if(m)m.style.display="none";}
+});
+const RUN_EP={all:"/api/run-now",tracker:"/api/run-now-tracker",portal:"/api/run-now-portal"};
+const RUN_LBL={all:"all students",tracker:"MVS Tracker students",portal:"MVS Portal students"};
+async function runChoice(kind){
+  const m=document.getElementById("run-menu");if(m)m.style.display="none";
   const btn=document.getElementById("run-now-btn");
   if(btn&&btn.dataset.busy==="1")return;
   if(btn){btn.dataset.busy="1";btn.style.opacity="0.6";btn.style.pointerEvents="none";}
   try{
-    const r=await api("/api/run-now","POST");
+    const r=await api(RUN_EP[kind]||RUN_EP.all,"POST");
     showToast(r.message+" — running in the background");
     const box=document.getElementById("run-progress");
     if(box){box.style.display="block";document.getElementById("pb-pct").textContent="0%";
       document.getElementById("pb-fill").style.width="0%";
       document.getElementById("pb-sub").textContent="Starting…";
-      document.getElementById("pb-label").textContent="Checking students…";}
+      document.getElementById("pb-label").textContent="Checking "+(RUN_LBL[kind]||"students")+"…";}
     startProgressPoll();
   }catch(e){showToast("Error: "+e.message);}
   finally{ setTimeout(()=>{if(btn){btn.dataset.busy="";btn.style.opacity="";btn.style.pointerEvents="";}},4000); }
+}
+async function runNow(){return runChoice('all');}   // back-compat
+async function runUploaded(btn){
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    const r=await api("/api/run-now-upload","POST");
+    showToast(r.message+" — running in the background");
+    const box=document.getElementById("run-progress");
+    if(box){box.style.display="block";document.getElementById("pb-pct").textContent="0%";
+      document.getElementById("pb-fill").style.width="0%";
+      document.getElementById("pb-sub").textContent="Starting…";
+      document.getElementById("pb-label").textContent="Checking uploaded students…";}
+    startProgressPoll();
+  }catch(e){showToast("Error: "+e.message);}
+  finally{ setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},4000); }
 }
 
 function setIvField(which,mins){
@@ -2265,7 +2314,26 @@ async def get_run_logs(limit: int=50, user=Depends(verify_token)):
 @app.post("/api/run-now")
 async def run_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
     background_tasks.add_task(run_status_check, "all")
-    return {"message": "Run triggered for all students!"}
+    return {"message": "Run triggered for ALL students (Tracker + Portal)!"}
+
+@app.post("/api/run-now-tracker")
+async def run_now_tracker(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Manual run: ONLY MVS Tracker data (all non-confirmed)."""
+    background_tasks.add_task(run_status_check, "all", "mvs_tracker")
+    return {"message": "Run triggered for MVS Tracker students!"}
+
+@app.post("/api/run-now-portal")
+async def run_now_portal(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Manual run: ONLY MVS Portal data (all non-confirmed)."""
+    background_tasks.add_task(run_status_check, "all", "mvs_portal")
+    return {"message": "Run triggered for MVS Portal students!"}
+
+@app.post("/api/run-now-upload")
+async def run_now_upload(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Run ONLY the students in the just-uploaded Excel sheet (MVS Tracker), not the
+    whole database or MVS Portal. Used by the 'Run Check Now' button after upload."""
+    background_tasks.add_task(run_status_check, "all", None, "upload")
+    return {"message": "Checking only the uploaded students!"}
 
 @app.post("/api/cancel-run")
 async def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
@@ -2511,7 +2579,7 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
 async def get_syc(page: int = 1, per_page: int = 20, search: str = "", user=Depends(verify_token)):
     """List SYC students (session contains SYC). No status check is done for these."""
     conn = get_db()
-    where = "WHERE (session LIKE '%syc%' OR current_status='SYC')"
+    where = "WHERE COALESCE(deleted,0)=0 AND (session LIKE '%syc%' OR current_status='SYC')"
     params = []
     if search:
         where += " AND (student_name LIKE ? OR enrollment_no LIKE ? OR mobile LIKE ? OR reference_no LIKE ?)"
@@ -2547,11 +2615,12 @@ async def syc_delete(row_key: str, user=Depends(verify_token)):
     if not is_syc:
         conn.close()
         raise HTTPException(status_code=400, detail="Not a SYC student — refused")
-    conn.execute("DELETE FROM student_status WHERE row_key=?", (row_key,))
-    conn.execute("DELETE FROM short_links WHERE row_key=?", (row_key,))
+    # Soft-delete (same as other students) so it can be restored from Settings → Trash.
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("UPDATE student_status SET deleted=1, deleted_at=? WHERE row_key=?", (now_s, row_key))
     conn.commit()
     conn.close()
-    return {"ok": True}
+    return {"ok": True, "soft": True}
 
 @app.post("/api/student-delete")
 async def student_delete(row_key: str, user=Depends(verify_token)):
