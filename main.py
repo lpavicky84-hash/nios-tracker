@@ -363,14 +363,17 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="run-menu-wrap" style="position:relative">
           <button class="btn btn-success btn-sm" id="run-now-btn" onclick="toggleRunMenu(event)">
             <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Now
-            <span style="margin-left:4px;font-size:10px">&#9660;</span></button>
-          <div id="run-menu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.18);min-width:230px;z-index:900;overflow:hidden">
-            <button class="run-menu-item" onclick="runChoice('all')" style="display:block;width:100%;text-align:left;padding:11px 14px;border:none;background:none;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--text)">
-              &#9654; Run All <span style="font-weight:400;color:var(--muted);font-size:12px">(Tracker + Portal)</span></button>
-            <button class="run-menu-item" onclick="runChoice('tracker')" style="display:block;width:100%;text-align:left;padding:11px 14px;border:none;border-top:1px solid var(--border);background:none;cursor:pointer;font-size:13.5px;font-weight:600;color:#075985">
-              &#128196; Run MVS Tracker only</button>
-            <button class="run-menu-item" onclick="runChoice('portal')" style="display:block;width:100%;text-align:left;padding:11px 14px;border:none;border-top:1px solid var(--border);background:none;cursor:pointer;font-size:13.5px;font-weight:600;color:#5B21B6">
-              &#128279; Run MVS Portal only</button>
+            <svg id="run-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="margin-left:5px;transition:transform .15s"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <div id="run-menu" style="display:none;position:absolute;right:0;top:calc(100% + 8px);background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.16);min-width:248px;z-index:900;overflow:hidden;padding:5px">
+            <button class="run-menu-item" onclick="runChoice('all')">
+              <span class="rmi-main">Run all data</span>
+              <span class="rmi-sub">MVS Tracker + MVS Portal</span></button>
+            <button class="run-menu-item" onclick="runChoice('tracker')">
+              <span class="rmi-dot" style="background:#0EA5E9"></span>
+              <span class="rmi-main">MVS Tracker only</span></button>
+            <button class="run-menu-item" onclick="runChoice('portal')">
+              <span class="rmi-dot" style="background:#7C3AED"></span>
+              <span class="rmi-main">MVS Portal only</span></button>
           </div>
         </div>
         <div class="bell-btn" onclick="refreshPage(this)" title="Refresh this page" style="cursor:pointer">
@@ -401,12 +404,12 @@ PORTAL_HTML = """<!DOCTYPE html>
           <div id="pb-srcwrap" style="margin-top:10px;display:none">
             <div id="pb-mvs-row">
               <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:3px">
-                <span>🟣 MVS Portal</span><span id="pb-mvs-txt">0 / 0</span></div>
+                <span style="display:inline-flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:#7C3AED"></span>MVS Portal</span><span id="pb-mvs-txt">0 / 0</span></div>
               <div class="pb-track" style="height:8px"><div class="pb-fill" id="pb-mvs-fill" style="width:0%;background:#7C3AED"></div></div>
             </div>
             <div id="pb-trk-row">
               <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin:8px 0 3px">
-                <span>📄 MVS Tracker</span><span id="pb-trk-txt">0 / 0</span></div>
+                <span style="display:inline-flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:#0EA5E9"></span>MVS Tracker</span><span id="pb-trk-txt">0 / 0</span></div>
               <div class="pb-track" style="height:8px"><div class="pb-fill" id="pb-trk-fill" style="width:0%;background:#0EA5E9"></div></div>
             </div>
           </div>
@@ -824,7 +827,13 @@ PORTAL_HTML = """<!DOCTYPE html>
     </div>
   </div>
 </div>
-<style>.edit-inp{width:100%;margin-top:4px;padding:9px 11px;border:2px solid var(--border);border-radius:9px;font-size:14px;font-weight:400}.run-menu-item:hover{background:var(--soft)}</style>
+<style>.edit-inp{width:100%;margin-top:4px;padding:9px 11px;border:2px solid var(--border);border-radius:9px;font-size:14px;font-weight:400}
+.run-menu-item{display:flex;align-items:center;flex-wrap:wrap;width:100%;text-align:left;padding:10px 12px;border:none;background:none;cursor:pointer;border-radius:8px;transition:background .12s}
+.run-menu-item:hover{background:var(--soft)}
+.run-menu-item .rmi-main{font-size:13.5px;font-weight:600;color:var(--text)}
+.run-menu-item .rmi-sub{flex-basis:100%;font-size:11.5px;font-weight:400;color:var(--muted);margin-top:1px}
+.run-menu-item .rmi-dot{width:9px;height:9px;border-radius:50%;margin-right:9px;flex-shrink:0}
+#run-now-btn.open #run-caret{transform:rotate(180deg)}</style>
 
 <script>
 const API = window.location.origin;
@@ -1700,17 +1709,21 @@ function toggleRunMenu(e){
   if(e)e.stopPropagation();
   const m=document.getElementById("run-menu");
   if(!m)return;
-  m.style.display=(m.style.display==="none"||!m.style.display)?"block":"none";
+  const open=(m.style.display==="none"||!m.style.display);
+  m.style.display=open?"block":"none";
+  const b=document.getElementById("run-now-btn");
+  if(b)b.classList.toggle("open",open);
 }
 document.addEventListener("click",function(e){
   const w=e.target.closest&&e.target.closest(".run-menu-wrap");
-  if(!w){const m=document.getElementById("run-menu");if(m)m.style.display="none";}
+  if(!w){const m=document.getElementById("run-menu");if(m)m.style.display="none";
+    const b=document.getElementById("run-now-btn");if(b)b.classList.remove("open");}
 });
 const RUN_EP={all:"/api/run-now",tracker:"/api/run-now-tracker",portal:"/api/run-now-portal"};
 const RUN_LBL={all:"all students",tracker:"MVS Tracker students",portal:"MVS Portal students"};
 async function runChoice(kind){
   const m=document.getElementById("run-menu");if(m)m.style.display="none";
-  const btn=document.getElementById("run-now-btn");
+  const btn=document.getElementById("run-now-btn");if(btn)btn.classList.remove("open");
   if(btn&&btn.dataset.busy==="1")return;
   if(btn){btn.dataset.busy="1";btn.style.opacity="0.6";btn.style.pointerEvents="none";}
   try{
