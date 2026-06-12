@@ -141,24 +141,16 @@ def write_status_to_excel(filepath, updates):
     ref_col   = _find_col(hc, ["reference number", "reference no", "ref no", "refno", "reference"])
     email_col = _find_col(hc, ["email"])
 
-    # Ensure output columns
-    status_col = _ensure(ws, "Admission Status")
-    remark_col = _ensure(ws, "Remarks")
-    idc_col    = _ensure(ws, "Download ID Card")
-    app_col    = _ensure(ws, "Download Application Form")
-    hall_col   = _ensure(ws, "Hall Ticket")
-    chk_col    = _ensure(ws, "Last Checked")
-
-    # Re-read headers
-    hr = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
-    hc = [_clean(v) for v in hr]
-    status_col = _find_col(hc, ["admission status"])
-    remark_col = _find_col(hc, ["remarks", "remark"])
-    idc_col    = _find_col(hc, ["download id card"])
-    app_col    = _find_col(hc, ["download application form", "download registration summary",
-                                "registration summary", "application form"])
-    hall_col   = _find_col(hc, ["hall ticket"])
-    chk_col    = _find_col(hc, ["last checked"])
+    # Output columns — reuse the existing column whether the sheet uses the old
+    # Excel names (Admission Status, Reference Number, ...) or the MVS student-portal
+    # camelCase names (niosAdmissionStatus, referenceNo, examSession, ...).
+    status_col = _ensure(ws, "Admission Status", ["nios admission status", "admission status", "status"])
+    remark_col = _ensure(ws, "Remarks", ["remark"])
+    idc_col    = _ensure(ws, "Download ID Card", ["download id card", "id card", "idcard", "icard"])
+    app_col    = _ensure(ws, "Download Application Form", ["download application form", "application form",
+                                                           "registration summary", "appform"])
+    hall_col   = _ensure(ws, "Hall Ticket", ["hall ticket", "halltkt", "hallticket"])
+    chk_col    = _ensure(ws, "Last Checked", ["last checked"])
     ref_col    = _find_col(hc, ["reference number", "reference no", "ref no", "refno", "reference"])
     email_col  = _find_col(hc, ["email"])
 
@@ -220,12 +212,20 @@ def write_status_to_excel(filepath, updates):
     wb.close()
     logger.info(f"Excel updated: {filepath}")
 
-def _ensure(ws, name):
-    nl = name.lower()
-    for i in range(1, ws.max_column + 1):
-        h = ws.cell(1, i).value
-        if h and str(h).strip().lower() == nl:
-            return i
+def _ensure(ws, name, aliases=None):
+    """Return the column for `name`. First tries to find an existing column that
+    matches the name OR any alias (ignoring case/spaces, so 'Admission Status' and
+    'niosAdmissionStatus' are treated the same). Only creates a new column if none
+    of the aliases are found — so MVS portal sheets aren't given duplicate columns."""
+    cands = [name] + list(aliases or [])
+    headers = [_clean(ws.cell(1, i).value).replace(" ", "") for i in range(1, ws.max_column + 1)]
+    for cand in cands:
+        cc = _clean(cand).replace(" ", "")
+        if not cc:
+            continue
+        for i, h in enumerate(headers):
+            if h and (cc in h or h in cc):
+                return i + 1
     nc = ws.max_column + 1
     cell = ws.cell(1, nc)
     cell.value = name
