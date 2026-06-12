@@ -10,7 +10,7 @@ import base64
 import logging
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
@@ -65,60 +65,22 @@ def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None):
         return ""
 
 def format_dob(dob):
-    """Return DOB as DD-MM-YYYY for NIOS login, accepting almost ANY input format:
-    date objects, '13-10-2003', '2003/10/13', '13.10.2003', '13 Oct 2003',
-    ISO datetimes, Excel serial numbers, 2-digit years, etc. Never raises."""
-    try:
-        if isinstance(dob, (datetime, date)):
-            return dob.strftime("%d-%m-%Y")
-        s = str(dob or "").strip()
-        if not s:
-            return ""
-
-        # 1) Excel serial date (e.g. "38000" / "38000.0")
-        if re.fullmatch(r"\d{4,6}(\.0+)?", s):
-            try:
-                n = int(float(s))
-                if 20000 < n < 60000:                       # ~1954..2064
-                    return (date(1899, 12, 30) + timedelta(days=n)).strftime("%d-%m-%Y")
-            except Exception:
-                pass
-
-        # 2) Normalise: drop any time part, unify separators to '-'
-        core = s.split("T")[0].split(" ")[0] if (("T" in s) or (":" in s)) else s
-        norm = re.sub(r"[./_,\s]+", "-", core)
-        norm = re.sub(r"-+", "-", norm).strip("-")
-
-        for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d-%m-%y", "%y-%m-%d",
-                    "%m-%d-%Y", "%m-%d-%y",
-                    "%d-%b-%Y", "%d-%B-%Y", "%d-%b-%y", "%d-%B-%y",
-                    "%Y-%b-%d", "%Y-%B-%d"):
-            try:
-                d = datetime.strptime(norm, fmt)
-                if 1900 <= d.year <= datetime.now().year:
-                    return d.strftime("%d-%m-%Y")
-            except ValueError:
-                continue
-
-        # 3) Last resort: pull three number groups and guess order
-        nums = re.findall(r"\d+", s)
-        if len(nums) >= 3:
-            a, b, c = nums[0], nums[1], nums[2]
-            try:
-                if len(a) == 4:                              # YYYY first -> Y M D
-                    y, m, d = int(a), int(b), int(c)
-                else:                                        # D M Y
-                    d, m, y = int(a), int(b), int(c)
-                    if y < 100:
-                        y += 2000 if y <= (datetime.now().year % 100) else 1900
-                if 1 <= d <= 31 and 1 <= m <= 12 and 1900 <= y <= datetime.now().year:
-                    return "%02d-%02d-%04d" % (d, m, y)
-            except Exception:
-                pass
-
-        return s   # give up gracefully — send as-is
-    except Exception:
-        return str(dob or "").strip()
+    """Return DOB as DD-MM-YYYY (NIOS login format). Robust to any time component
+    and common date formats."""
+    if isinstance(dob, (datetime, date)):
+        return dob.strftime("%d-%m-%Y")
+    s = str(dob or "").strip()
+    if not s:
+        return ""
+    # Drop any time portion: "08-08-2007 00:00:00" / "2007-08-08T00:00" -> date only
+    s = s.split(" ")[0].split("T")[0].strip()
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d",
+                "%d-%m-%y", "%m/%d/%Y", "%d.%m.%Y", "%d %m %Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%d-%m-%Y")
+        except ValueError:
+            continue
+    return s   # assume already DD-MM-YYYY
 
 def get_login_csrf(session):
     r = session.get(LOGIN_URL, headers=HEADERS, timeout=20)
@@ -423,7 +385,7 @@ def fetch_document(reference_no, dob, kind, enrollment_no=""):
         return None, "invalid document kind", None
     session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no)
     if session is None:
-        return None, "login failed (check reference/enrollment/DOB)", None
+        return None, f"login failed — DOB used was '{format_dob(dob)}'. Verify it matches NIOS records.", None
     ident = reference_no or enrollment_no or "doc"
     target = urljoin(BASE, path)
     try:
@@ -434,6 +396,13 @@ def fetch_document(reference_no, dob, kind, enrollment_no=""):
     # Already a PDF? serve directly
     if "pdf" in ct or r.content[:4] == b"%PDF":
         return r.content, "application/pdf", f"{kind}_{ident}.pdf"
+    # If NIOS bounced us back to the login page (session not valid / wrong DOB),
+    # don't serve that page as the document — report a clear error instead.
+    low = r.text.lower()
+    if ("login to your account" in low or 'loginform[' in low
+            or ("username / email" in low and "reset password" in low)):
+        return None, (f"NIOS rejected the login — DOB used was '{format_dob(dob)}'. "
+                      f"Please verify this DOB matches NIOS records, then Run Now."), None
     # Print-ready HTML -> render a real PDF (best: print layout + embedded images)
     if "html" in ct:
         try:
