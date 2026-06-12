@@ -479,7 +479,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           <div id="syc-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
-              <th>#</th><th>Enrollment No</th><th>Student Name</th><th>Mobile</th><th>DOB</th><th>Hall Ticket</th>
+              <th>#</th><th>Enrollment No</th><th>Student Name</th><th>Mobile</th><th>DOB</th><th>Hall Ticket</th><th>Remove</th>
             </tr></thead><tbody id="syc-body"></tbody></table>
           </div>
           <div class="pg-bar" id="syc-pg"></div>
@@ -853,6 +853,7 @@ async function loadDashboard(){
       statCard("Total Students",d.total_students,SI.users,"#4F46E5")+
       statCard("Changes Today",c.changes_today||0,SI.activity,"#0891B2")+
       statCard("Admission Confirmed",c.confirmed||0,SI.check,"#16A34A")+
+      statCard("SYC Students",c.syc||0,SI.users,"#7C3AED")+
       statCard("Verified",c.verified||0,SI.shield,"#65A30D")+
       statCard("Document Required",c.document_required||0,SI.file,"#EA580C")+
       statCard("In Verification",c.doc_verification||0,SI.loader,"#D97706");
@@ -1107,11 +1108,24 @@ async function loadSyc(page){
   }catch(e){showToast(""+e.message);}
 }
 function sycRow(s,i){
+  var nm=(s.student_name||'').replace(/"/g,'&quot;');
   return '<tr><td>'+i+'</td><td>'+(s.enrollment_no||'—')+'</td><td>'+(s.student_name||'')+'</td>'+
     '<td>'+(s.mobile||'')+'</td><td>'+(s.dob||'')+'</td><td>'+
     '<button class="btn-dl" onclick="downloadSycHall(&quot;'+s.row_key+'&quot;,this)">'+DL_ICON+' Download Hall Ticket</button>'+
     '<div class="syc-prog" style="display:none;height:7px;background:#E2E8F0;border-radius:4px;margin-top:7px;overflow:hidden;max-width:220px"><div class="syc-bar" style="height:100%;width:0;background:#4F46E5;transition:width .35s"></div></div>'+
-    '<div class="syc-msg" style="font-size:11px;color:var(--muted);margin-top:3px"></div></td></tr>';
+    '<div class="syc-msg" style="font-size:11px;color:var(--muted);margin-top:3px"></div></td>'+
+    '<td><button title="Delete this SYC student" onclick="deleteSyc(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" '+
+    'style="background:rgba(239,68,68,.12);color:#DC2626;border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:6px 9px;cursor:pointer;font-weight:600">'+
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="vertical-align:-2px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></td></tr>';
+}
+async function deleteSyc(rowKey,name){
+  if(!confirm("Delete SYC student "+name+"?\\n\\nThis removes ONLY this SYC student. No other data is affected."))return;
+  try{
+    await api("/api/syc-delete?row_key="+encodeURIComponent(rowKey),"POST");
+    showToast("Deleted "+name);
+    loadSyc(1);
+    try{loadDashboard();}catch(e){}
+  }catch(e){showToast(""+e.message);}
 }
 async function downloadSycHall(rowKey,btn){
   if(btn.dataset.busy==="1")return;
@@ -1309,7 +1323,7 @@ function renderUploadPreview(rows){
   const body=rows.map((s,i)=>'<tr'+(s.dup?' style="background:var(--dup-bg)"':'')+'>'+
     '<td style="color:var(--muted)">'+(i+1)+'</td>'+
     '<td>'+(s.student_name||"—")+'</td>'+
-    '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
+    '<td><span class="ref-tag">'+(s.reference_no||s.enrollment_no||"—")+'</span></td>'+
     '<td style="font-size:12px">'+(s.email||"—")+'</td>'+
     '<td>'+(s.class_level||"—")+'</td>'+
     '<td style="font-size:12px">'+(s.session||"—")+'</td>'+
@@ -1569,6 +1583,9 @@ async def dashboard(user=Depends(verify_token)):
     verified_cnt  = count_status("Verified")
     docreq_cnt    = count_status("Document Required")
     docverif_cnt  = count_status("Documents Verification In Progress")
+    syc_cnt = conn.execute(
+        "SELECT COUNT(*) FROM student_status WHERE (session LIKE '%syc%' OR current_status='SYC')"
+    ).fetchone()[0]
 
     # Changes today
     today = datetime.now().strftime("%Y-%m-%d")
@@ -1595,7 +1612,7 @@ async def dashboard(user=Depends(verify_token)):
         "counts": {
             "confirmed": confirmed_cnt, "verified": verified_cnt,
             "document_required": docreq_cnt, "doc_verification": docverif_cnt,
-            "changes_today": changes_today,
+            "changes_today": changes_today, "syc": syc_cnt,
         },
         "notifications": [dict(n) for n in notifs],
         "session_counts": [dict(s) for s in sess_counts],
@@ -1614,8 +1631,10 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
         wc.append("is_confirmed = 1")
     elif view == "required":
         wc.append("current_status = 'Document Required'")
-    else:  # normal = active students, exclude confirmed
+    else:  # normal = active students, exclude confirmed and SYC
         wc.append("is_confirmed = 0")
+        wc.append("current_status != 'SYC'")
+        wc.append("(session NOT LIKE '%syc%' OR session IS NULL)")
 
     if search:
         wc.append("(reference_no LIKE ? OR student_name LIKE ? OR email LIKE ?)")
@@ -1830,39 +1849,45 @@ async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token))
 
         # Build sets of keys already in the system
         conn = get_db()
-        existing_ref, existing_email, existing_nm = set(), set(), set()
-        for r in conn.execute("SELECT reference_no, email, student_name, mobile FROM student_status").fetchall():
+        existing_ref, existing_email, existing_nm, existing_enroll = set(), set(), set(), set()
+        for r in conn.execute("SELECT reference_no, email, student_name, mobile, enrollment_no FROM student_status").fetchall():
             if r["reference_no"]:
                 existing_ref.add(_norm(r["reference_no"]))
             if r["email"]:
                 existing_email.add(_norm(r["email"]))
+            if r["enrollment_no"]:
+                existing_enroll.add(_norm(r["enrollment_no"]))
             if r["student_name"] and r["mobile"]:
                 existing_nm.add(_norm(r["student_name"]) + "|" + _norm(r["mobile"]))
         conn.close()
 
         students = read_students_from_excel(EXCEL_PATH)
-        seen_ref, seen_email, seen_nm = set(), set(), set()
+        seen_ref, seen_email, seen_nm, seen_enroll = set(), set(), set(), set()
         preview = []
         dups = 0
         for s in students:
             ref = _norm(s.get("reference_no"))
             email = _norm(s.get("email"))
+            enroll = _norm(s.get("enrollment_no"))
             nm = (_norm(s.get("student_name")) + "|" + _norm(s.get("mobile"))) \
                 if s.get("student_name") and s.get("mobile") else ""
             # duplicate if seen earlier in file OR already present in the DB
             is_dup = (
                 (ref and (ref in seen_ref or ref in existing_ref)) or
                 (email and (email in seen_email or email in existing_email)) or
+                (enroll and (enroll in seen_enroll or enroll in existing_enroll)) or
                 (nm and (nm in seen_nm or nm in existing_nm))
             )
             if ref: seen_ref.add(ref)
             if email: seen_email.add(email)
+            if enroll: seen_enroll.add(enroll)
             if nm: seen_nm.add(nm)
             if is_dup:
                 dups += 1
             preview.append({
                 "student_name": s.get("student_name", ""),
                 "reference_no": s.get("reference_no", ""),
+                "enrollment_no": s.get("enrollment_no", ""),
                 "email": s.get("email", ""),
                 "class_level": s.get("class_level", ""),
                 "session": s.get("session", ""),
@@ -1951,6 +1976,26 @@ async def syc_doc(row_key: str, kind: str = "hall_ticket", user=Depends(verify_t
     if err:
         raise HTTPException(status_code=404, detail=err)
     return _serve_doc(*res)
+
+@app.post("/api/syc-delete")
+async def syc_delete(row_key: str, user=Depends(verify_token)):
+    """Delete a SINGLE SYC student only. Guarded so it can never touch a
+    non-SYC (On Demand / Stream 2 / Public) student."""
+    conn = get_db()
+    row = conn.execute("SELECT session, current_status FROM student_status WHERE row_key=?",
+                       (row_key,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Student not found")
+    is_syc = ("syc" in (row["session"] or "").lower()) or (row["current_status"] == "SYC")
+    if not is_syc:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Not a SYC student — refused")
+    conn.execute("DELETE FROM student_status WHERE row_key=?", (row_key,))
+    conn.execute("DELETE FROM short_links WHERE row_key=?", (row_key,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
     """Inspect a document page's structure (Phase 2 debug)."""
     try:
         from nios_login import debug_doc

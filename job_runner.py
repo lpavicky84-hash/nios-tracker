@@ -31,9 +31,10 @@ def is_syc_session(session):
 def session_group(session):
     return "public" if is_public_session(session) else "regular"
 
-def _process_syc(conn, c, syc_list, run_id):
+def _process_syc(conn, c, syc_list, run_id, stats=None):
     """Register SYC students (NO NIOS status check). Store enrollment_no, mark status
-    'SYC', and send the hall-ticket WhatsApp once — only if a SYC campaign is set up."""
+    'SYC', and send the hall-ticket WhatsApp once — only if a SYC campaign is set up.
+    Updates the live progress bar as each student is registered."""
     now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     wa_on = get_setting("wa_enabled", "0") == "1"
     for s in syc_list:
@@ -54,6 +55,11 @@ def _process_syc(conn, c, syc_list, run_id):
             (row_key, s.get("reference_no", ""), s.get("enrollment_no", ""), s.get("email", ""),
              s.get("dob", ""), s.get("student_name", ""), s.get("mobile", ""), s.get("class_level", ""),
              s.get("session", ""), "SYC", "", 0, now_s, now_s))
+        if stats is not None:
+            stats["checked"] += 1
+            stats["same"] += 1
+            c.execute("UPDATE run_logs SET progress_current=?, progress_same=? WHERE id=?",
+                      (stats["checked"], stats["same"], run_id))
         conn.commit()
         # WhatsApp hall ticket — once per student, only when a SYC campaign is configured
         try:
@@ -174,23 +180,24 @@ def run_status_check(group_type="all"):
             # group_type == "all": check everyone
             to_check.append(s)
 
-        # Register SYC students now (no scraping) so they appear in the SYC category.
-        if syc_list:
-            _process_syc(conn, c, syc_list, run_id)
+        logger.info(f"{len(to_check)} to check (group={group_type}); SYC to register: {len(syc_list)}")
 
-        logger.info(f"{len(to_check)} students to check (group={group_type}); SYC registered: {len(syc_list)}")
-
-        if not to_check:
+        total = len(to_check) + len(syc_list)
+        if total == 0:
             _finish(conn, run_id, 0, 0, 0, "Nothing to check")
             return
 
-        # Record how many students this run will check (for the live progress bar)
+        # Live progress bar counts BOTH SYC registration and status checks
         conn.execute("UPDATE run_logs SET progress_total=?, progress_current=0, "
                      "progress_changed=0, progress_same=0 WHERE id=?",
-                     (len(to_check), run_id))
+                     (total, run_id))
         conn.commit()
 
         stats = {"checked": 0, "changed": 0, "same": 0, "failed": 0}
+
+        # Register SYC students first (fast; no NIOS status check) with live progress.
+        if syc_list:
+            _process_syc(conn, c, syc_list, run_id, stats)
 
         def process_one(res):
             """Persist ONE student's result immediately so the dashboard/filters
@@ -283,7 +290,8 @@ def run_status_check(group_type="all"):
                       (stats["checked"], stats["changed"], stats["same"], run_id))
             conn.commit()
 
-        scrape_students(to_check, should_cancel=_is_cancelled, on_result=process_one)
+        if to_check:
+            scrape_students(to_check, should_cancel=_is_cancelled, on_result=process_one)
         checked, changed, failed = stats["checked"], stats["changed"], stats["failed"]
 
         write_status_to_excel(EXCEL_PATH, excel_updates)
