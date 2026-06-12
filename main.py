@@ -387,6 +387,14 @@ PORTAL_HTML = """<!DOCTYPE html>
           </div>
           <div class="pb-track"><div class="pb-fill" id="pb-fill" style="width:0%"></div></div>
           <div class="pb-sub" id="pb-sub">0 / 0 done</div>
+          <div id="pb-srcwrap" style="margin-top:10px;display:none">
+            <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:3px">
+              <span>🟣 MVS Portal</span><span id="pb-mvs-txt">0 / 0</span></div>
+            <div class="pb-track" style="height:8px"><div class="pb-fill" id="pb-mvs-fill" style="width:0%;background:#7C3AED"></div></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin:8px 0 3px">
+              <span>📄 MVS Tracker</span><span id="pb-trk-txt">0 / 0</span></div>
+            <div class="pb-track" style="height:8px"><div class="pb-fill" id="pb-trk-fill" style="width:0%;background:#0EA5E9"></div></div>
+          </div>
         </div>
 
         <div id="next-runs" class="timer-row"></div>
@@ -403,9 +411,14 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="card">
           <div class="card-head">
             <h3>Recent Runs</h3>
-            <button class="btn-refresh" onclick="loadDashboard()" title="Refresh">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-              Refresh</button>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="recent-runs-limit" onchange="loadDashboard()" style="padding:6px 10px;border:2px solid var(--border);border-radius:8px;font-size:13px">
+                <option value="10">10</option><option value="20">20</option><option value="30">30</option>
+                <option value="50">50</option><option value="100">100</option></select>
+              <button class="btn-refresh" onclick="loadDashboard()" title="Refresh">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                Refresh</button>
+            </div>
           </div>
           <div style="overflow-x:auto"><table>
             <thead><tr><th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th></tr></thead>
@@ -590,7 +603,12 @@ PORTAL_HTML = """<!DOCTYPE html>
 
       <section id="sec-runlogs" class="page-section">
         <div class="card">
-          <h3>Run Logs</h3>
+          <div class="card-head">
+            <h3>Run Logs</h3>
+            <select id="rl-limit" onchange="loadRunLogs()" style="padding:6px 10px;border:2px solid var(--border);border-radius:8px;font-size:13px">
+              <option value="10">10</option><option value="20">20</option><option value="30">30</option>
+              <option value="50" selected>50</option><option value="100">100</option></select>
+          </div>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th>
@@ -658,14 +676,6 @@ PORTAL_HTML = """<!DOCTYPE html>
               style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
             <select id="iv-public-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
               <option value="hours">hours</option><option value="minutes">minutes</option></select>
-          </div>
-          <div id="iv-mvs-row" style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
-            <span style="width:280px;font-weight:600">🟣 MVS Portal data (own interval)</span>
-            <input type="number" id="iv-mvs" min="1" max="4320" value="60"
-              style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-            <select id="iv-mvs-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-              <option value="minutes">minutes</option><option value="hours">hours</option></select>
-            <button class="btn btn-sm" style="background:#7C3AED;color:#fff" onclick="runNowMvs()">▶ Run MVS Portal now</button>
           </div>
           <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">Minimum 15 minutes. Tip: shorter intervals use more CapSolver credits.</div>
@@ -840,6 +850,17 @@ async function pollProgress(){
         (d.current||0)+" / "+(d.total||0)+" checked &nbsp;·&nbsp; "+
         "<b style='color:var(--success)'>"+(d.changed||0)+"</b> changed &nbsp;·&nbsp; "+
         (d.same||0)+" same &nbsp;·&nbsp; <b>"+(d.remaining||0)+"</b> remaining";
+      // Separate progress for MVS Portal vs MVS Tracker
+      const mv=d.mvs||{done:0,total:0,percent:0}, tk=d.trk||{done:0,total:0,percent:0};
+      const sw=document.getElementById("pb-srcwrap");
+      if(sw){
+        const show=(mv.total>0||tk.total>0);
+        sw.style.display=show?"block":"none";
+        document.getElementById("pb-mvs-txt").textContent=mv.done+" / "+mv.total+" ("+mv.percent+"%)";
+        document.getElementById("pb-mvs-fill").style.width=mv.percent+"%";
+        document.getElementById("pb-trk-txt").textContent=tk.done+" / "+tk.total+" ("+tk.percent+"%)";
+        document.getElementById("pb-trk-fill").style.width=tk.percent+"%";
+      }
       const g=d.group_type==="public"?"Public (April / October)":(d.group_type==="regular"?"On Demand + Stream 2":"all");
       document.getElementById("pb-label").textContent="Checking "+g+" students…";
       // live filtering: refresh whatever view the counsellor is on, as it happens
@@ -929,7 +950,10 @@ async function loadDashboard(){
       statCard("In Verification",c.doc_verification||0,SI.loader,"#D97706");
     renderDistribution(d.status_distribution,d.total_students);
     renderSessionCounts(d.session_counts||[]);
-    renderRuns(d.recent_runs,"recent-runs");
+    const rrSel=document.getElementById("recent-runs-limit");
+    const rrLim=rrSel?parseInt(rrSel.value):10;
+    try{const rr=await api("/api/run-logs?limit="+rrLim);renderRuns(rr,"recent-runs");}
+    catch(e){renderRuns(d.recent_runs,"recent-runs");}
     renderBell(d.notifications||[],d.dup_notifications||[]);
   }catch(e){showToast("Error: "+e.message);}
 }
@@ -1382,7 +1406,9 @@ function renderHistPg(page,total,totalRows){
   el.innerHTML=ctrl+sel;
 }
 async function loadRunLogs(){
-  try{const l=await api("/api/run-logs");renderRuns(l,"rl-body");}catch(e){showToast(""+e.message);}
+  const sel=document.getElementById("rl-limit");
+  const lim=sel?parseInt(sel.value):50;
+  try{const l=await api("/api/run-logs?limit="+lim);renderRuns(l,"rl-body");}catch(e){showToast(""+e.message);}
 }
 
 const drop=document.getElementById("drop");
@@ -1549,22 +1575,15 @@ function ivToMin(which){
 async function loadIntervals(){
   try{const r=await api("/api/intervals");
     setIvField("regular",r.regular_min);
-    setIvField("public",r.public_min);
-    setIvField("mvs",r.mvs_min);
-    const row=document.getElementById("iv-mvs-row");
-    if(row)row.style.display=r.mvs_on?"flex":"none";}catch(e){}
+    setIvField("public",r.public_min);}catch(e){}
 }
 async function saveIntervals(){
-  const rm=ivToMin("regular"),pm=ivToMin("public"),mm=ivToMin("mvs");
-  if(rm<15||pm<15||mm<15){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
-  try{const r=await api("/api/intervals","POST",{regular_min:rm,public_min:pm,mvs_min:mm});
+  const rm=ivToMin("regular"),pm=ivToMin("public");
+  if(rm<15||pm<15){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
+  try{const r=await api("/api/intervals","POST",{regular_min:rm,public_min:pm});
     document.getElementById("iv-status").innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
     showToast("Intervals saved!");}
   catch(e){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
-}
-async function runNowMvs(){
-  try{const r=await api("/api/run-now-mvs","POST");showToast(r.message+" — running in background");}
-  catch(e){showToast(""+e.message);}
 }
 
 async function loadWa(){
@@ -1728,23 +1747,18 @@ def _mvs_enabled():
         return False
 
 def reschedule_jobs():
-    """Schedule jobs. Tracker (Excel) data runs on the session intervals (regular/
-    public); MVS Portal data runs on its OWN interval. Next run = last + interval."""
+    """Two interval jobs. BOTH data sources (MVS Portal + MVS Tracker) run together
+    on the same interval; the split is by session group only:
+        regular -> On Demand + Stream 2,  public -> April / October.
+    Next run = last + interval."""
     reg = _interval_minutes("regular", 6)
     pub = _interval_minutes("public", 12)
-    mvs = _interval_minutes("mvs", 1)   # default 60 min
     now = datetime.now()
-    # (job_id, group_type, source_only, minutes)
-    specs = [("job_regular", "regular", "mvs_tracker", reg),
-             ("job_public",  "public",  "mvs_tracker", pub)]
-    if _mvs_enabled():
-        specs.append(("job_mvs", "all", "mvs_portal", mvs))
-    else:
-        try:
-            scheduler.remove_job("job_mvs")
-        except Exception:
-            pass
-    for jid, grp, src, mins in specs:
+    try:
+        scheduler.remove_job("job_mvs")     # drop the old separate MVS Portal job
+    except Exception:
+        pass
+    for jid, grp, mins in [("job_regular", "regular", reg), ("job_public", "public", pub)]:
         last = _last_run_time(grp)
         if last:
             nxt = last + timedelta(minutes=mins)
@@ -1752,10 +1766,10 @@ def reschedule_jobs():
                 nxt = now + timedelta(seconds=20)      # overdue -> run shortly
         else:
             nxt = now + timedelta(minutes=mins)         # no history -> wait one interval
-        scheduler.add_job(lambda g=grp, s=src: run_status_check(g, s),
+        scheduler.add_job(lambda g=grp: run_status_check(g),
                           trigger=IntervalTrigger(minutes=mins),
                           id=jid, replace_existing=True, next_run_time=nxt)
-        logger.info(f"{jid}: every {mins}min src={src} | last_run={last} | next_run={nxt}")
+        logger.info(f"{jid}: every {mins}min | last_run={last} | next_run={nxt}")
 
 @app.on_event("startup")
 async def startup():
@@ -2083,14 +2097,6 @@ async def run_now(background_tasks: BackgroundTasks, user=Depends(verify_token))
     background_tasks.add_task(run_status_check, "all")
     return {"message": "Run triggered for all students!"}
 
-@app.post("/api/run-now-mvs")
-async def run_now_mvs(background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    """Manually run ONLY the MVS Portal data (its own check)."""
-    if not _mvs_enabled():
-        raise HTTPException(status_code=400, detail="MVS mode is off (set MVS_MODE + URL + KEY)")
-    background_tasks.add_task(run_status_check, "all", "mvs_portal")
-    return {"message": "Run triggered for MVS Portal students!"}
-
 @app.post("/api/cancel-run")
 async def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
     conn = get_db()
@@ -2111,7 +2117,8 @@ async def run_progress(user=Depends(verify_token)):
     """Live progress of the currently running check (for the progress bar)."""
     conn = get_db()
     row = conn.execute("SELECT id, group_type, run_at, progress_current, progress_total, "
-                       "progress_changed, progress_same "
+                       "progress_changed, progress_same, progress_total_mvs, progress_done_mvs, "
+                       "progress_total_trk, progress_done_trk "
                        "FROM run_logs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
     conn.close()
     if not row:
@@ -2119,10 +2126,16 @@ async def run_progress(user=Depends(verify_token)):
     cur = row["progress_current"] or 0
     tot = row["progress_total"] or 0
     pct = int(cur * 100 / tot) if tot else 0
+    tm = row["progress_total_mvs"] or 0
+    dm = row["progress_done_mvs"] or 0
+    tt = row["progress_total_trk"] or 0
+    dt = row["progress_done_trk"] or 0
     return {"running": True, "id": row["id"], "group_type": row["group_type"],
             "run_at": row["run_at"], "current": cur, "total": tot, "percent": pct,
             "changed": row["progress_changed"] or 0, "same": row["progress_same"] or 0,
-            "remaining": max(0, tot - cur)}
+            "remaining": max(0, tot - cur),
+            "mvs": {"done": dm, "total": tm, "percent": int(dm*100/tm) if tm else 0},
+            "trk": {"done": dt, "total": tt, "percent": int(dt*100/tt) if tt else 0}}
 
 GROUP_LABELS = {"regular": "On Demand + Stream 2", "public": "Public (April / October)"}
 
@@ -2266,21 +2279,17 @@ async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
 @app.get("/api/intervals")
 async def get_intervals(user=Depends(verify_token)):
     return {"regular_min": _interval_minutes("regular", 6),
-            "public_min": _interval_minutes("public", 12),
-            "mvs_min": _interval_minutes("mvs", 1),
-            "mvs_on": _mvs_enabled()}
+            "public_min": _interval_minutes("public", 12)}
 
 @app.post("/api/intervals")
 async def set_intervals(body: dict, user=Depends(verify_token)):
     reg = int(body.get("regular_min", 360))
     pub = int(body.get("public_min", 720))
-    mvs = int(body.get("mvs_min", 60))
-    for v in (reg, pub, mvs):
+    for v in (reg, pub):
         if not (15 <= v <= 4320):
             raise HTTPException(status_code=400, detail="Interval must be between 15 minutes and 72 hours")
     set_setting("interval_regular_min", reg)
     set_setting("interval_public_min", pub)
-    set_setting("interval_mvs_min", mvs)
     reschedule_jobs()
     def _fmt(m):
         if m % 60 == 0:
@@ -2288,8 +2297,8 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
         if m < 60:
             return f"{m}m"
         return f"{m//60}h {m%60}m"
-    return {"message": f"Tracker: {_fmt(reg)}/{_fmt(pub)}, MVS Portal: every {_fmt(mvs)}",
-            "regular_min": reg, "public_min": pub, "mvs_min": mvs}
+    return {"message": f"On Demand + Stream 2: every {_fmt(reg)}, Public: every {_fmt(pub)}",
+            "regular_min": reg, "public_min": pub}
 
 @app.get("/api/source-override")
 async def get_source_override(user=Depends(verify_token)):

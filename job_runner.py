@@ -42,6 +42,32 @@ def is_syc_session(session):
 def session_group(session):
     return "public" if is_public_session(session) else "regular"
 
+def _load_db_students(c):
+    """Re-check source of truth: every student already in the DB. This makes runs
+    work even when students.xlsx was wiped (Railway redeploy) and lets us re-check
+    everyone who isn't confirmed without needing the Excel each time."""
+    out = []
+    try:
+        rows = c.execute(
+            "SELECT row_key, reference_no, enrollment_no, email, dob, student_name, "
+            "mobile, class_level, session, source FROM student_status").fetchall()
+    except Exception:
+        return out
+    for r in rows:
+        out.append({
+            "row_key":       r["row_key"],
+            "reference_no":  r["reference_no"] or "",
+            "enrollment_no": (r["enrollment_no"] if "enrollment_no" in r.keys() else "") or "",
+            "email":         r["email"] or "",
+            "dob":           r["dob"] or "",
+            "student_name":  r["student_name"] or "",
+            "mobile":        r["mobile"] or "",
+            "class_level":   r["class_level"] or "",
+            "session":       r["session"] or "",
+            "source":        (r["source"] if "source" in r.keys() else "") or "mvs_tracker",
+        })
+    return out
+
 def _process_syc(conn, c, syc_list, run_id, stats=None):
     """Register SYC students (NO NIOS status check). Store enrollment_no, mark status
     'SYC', and send the hall-ticket WhatsApp once — only if a SYC campaign is set up.
@@ -80,7 +106,9 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
         if stats is not None:
             stats["checked"] += 1
             stats["same"] += 1
-            c.execute("UPDATE run_logs SET progress_current=?, progress_same=? WHERE id=?",
+            _col = "progress_done_mvs" if final_source == "mvs_portal" else "progress_done_trk"
+            c.execute(f"UPDATE run_logs SET progress_current=?, progress_same=?, "
+                      f"{_col}={_col}+1 WHERE id=?",
                       (stats["checked"], stats["same"], run_id))
         conn.commit()
         # WhatsApp hall ticket — once per student, only when a SYC campaign is configured
@@ -133,9 +161,8 @@ def run_status_check(group_type="all", source_only=None):
     logger.info(f"Run started [{group_type}/{source_only or 'both'}] at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     mvs_on = _mvs_on()
-    if not mvs_on and not os.path.exists(EXCEL_PATH):
-        logger.error(f"No data source: Excel not found ({EXCEL_PATH}) and MVS mode off")
-        return
+    # NOTE: the DB itself is now a data source (we re-check existing students), so a
+    # run is valid even without students.xlsx and even when MVS mode is off.
 
     conn = get_db()
     c = conn.cursor()
@@ -188,11 +215,19 @@ def run_status_check(group_type="all", source_only=None):
                 all_students += read_students_from_excel(EXCEL_PATH)
             except Exception as e:
                 logger.warning(f"Excel read failed: {e}")
-        # Drop duplicate rows (same row_key). MVS rows are added first, so if a
-        # student is in BOTH sources the MVS (portal) copy is kept -> priority.
+        # Cross-source duplicates = same student present in BOTH live sources
+        # (MVS Portal + MVS Tracker). Count these BEFORE folding in the DB so the
+        # "duplicates merged" number stays meaningful (DB overlaps don't inflate it).
         all_students, dup_count = dedupe_students(all_students)
         if dup_count:
-            logger.info(f"Skipped {dup_count} duplicate row(s)")
+            logger.info(f"Cross-source duplicates merged: {dup_count}")
+        # ── Existing students in the DB (re-check everyone, even without Excel) ──
+        # Added LAST so fresh MVS / Excel rows win on dedupe; the DB only fills in
+        # students who aren't in the live sources this run. This dedupe is silent.
+        db_students = _load_db_students(c)
+        all_students += db_students
+        all_students, _ = dedupe_students(all_students)
+        logger.info(f"Total students to consider (live + DB): {len(all_students)}")
         # Map each student's row_key to the data source (mvs_portal = MVS portal/
         # detected, mvs_tracker = manual upload).
         src_by_key = {s["row_key"]: s.get("source", "mvs_tracker") for s in all_students}
@@ -219,46 +254,55 @@ def run_status_check(group_type="all", source_only=None):
         if dups:
             conn.commit()
             logger.info(f"Cleaned duplicates for {len(dups)} references")
-        # Filter by group; confirmed students are re-checked in the 'public'
-        # (slower) job so NIOS detail changes are still caught — not skipped forever.
+        # Build the check list.
+        #  • Confirmed (Admission Confirmed) students are NEVER re-checked.
+        #  • Everyone else (Verified / Docs-in-progress / Required / Unknown) IS re-checked.
+        #  • group_type only decides WHICH session group runs on this interval:
+        #       regular  -> On Demand + Stream 2
+        #       public   -> April / October
+        #       all      -> everyone non-confirmed (manual Run Now)
+        #  Both data sources (MVS Portal + MVS Tracker) run together.
         to_check = []
         syc_list = []
         for s in all_students:
-            # Restrict to one data source when requested (MVS Portal own interval).
             if source_only and src_by_key.get(s["row_key"], "mvs_tracker") != source_only:
                 continue
-            # SYC students are never status-checked. They're only registered (and
-            # their hall ticket made available) on a MANUAL run (group_type == 'all').
             if is_syc_session(s["session"]):
                 if group_type == "all":
                     syc_list.append(s)
                 continue
             row = c.execute("SELECT is_confirmed FROM student_status WHERE row_key=?",
                             (s["row_key"],)).fetchone()
-            confirmed = bool(row and row["is_confirmed"] == 1)
+            if row and row["is_confirmed"] == 1:
+                continue                              # confirmed -> never re-check
             grp = session_group(s["session"])
-            if group_type == "regular":
-                if confirmed:
-                    continue                      # confirmed -> handled by public job
-                if grp != "regular":
-                    continue
-            elif group_type == "public":
-                if not confirmed and grp != "public":
-                    continue                      # public job: public-session active + ALL confirmed
-            # group_type == "all": check everyone
+            if group_type == "regular" and grp != "regular":
+                continue
+            if group_type == "public" and grp != "public":
+                continue
             to_check.append(s)
 
-        logger.info(f"{len(to_check)} to check (group={group_type}); SYC to register: {len(syc_list)}")
+        # Per-source totals (for the separate MVS Portal / MVS Tracker progress bars).
+        def _src(s):
+            return src_by_key.get(s["row_key"], "mvs_tracker")
+        work = to_check + syc_list
+        tot_mvs = sum(1 for s in work if _src(s) == "mvs_portal")
+        tot_trk = len(work) - tot_mvs
 
-        total = len(to_check) + len(syc_list)
+        logger.info(f"{len(to_check)} to check (group={group_type}); SYC: {len(syc_list)} "
+                    f"| MVS Portal:{tot_mvs} MVS Tracker:{tot_trk}")
+
+        total = len(work)
         if total == 0:
             _finish(conn, run_id, 0, 0, 0, "Nothing to check")
             return
 
-        # Live progress bar counts BOTH SYC registration and status checks
+        # Live progress: overall + per-source counters.
         conn.execute("UPDATE run_logs SET progress_total=?, progress_current=0, "
-                     "progress_changed=0, progress_same=0 WHERE id=?",
-                     (total, run_id))
+                     "progress_changed=0, progress_same=0, "
+                     "progress_total_mvs=?, progress_done_mvs=0, "
+                     "progress_total_trk=?, progress_done_trk=0 WHERE id=?",
+                     (total, tot_mvs, tot_trk, run_id))
         conn.commit()
 
         stats = {"checked": 0, "changed": 0, "same": 0, "failed": 0}
@@ -385,7 +429,10 @@ def run_status_check(group_type="all", source_only=None):
                 "changed": status_changed,
             })
             # Live progress (current / changed / same) — commit so the dashboard sees it
-            c.execute("UPDATE run_logs SET progress_current=?, progress_changed=?, progress_same=? WHERE id=?",
+            _s = src_by_key.get(row_key, "mvs_tracker")
+            _col = "progress_done_mvs" if _s == "mvs_portal" else "progress_done_trk"
+            c.execute(f"UPDATE run_logs SET progress_current=?, progress_changed=?, "
+                      f"progress_same=?, {_col}={_col}+1 WHERE id=?",
                       (stats["checked"], stats["changed"], stats["same"], run_id))
             conn.commit()
 
