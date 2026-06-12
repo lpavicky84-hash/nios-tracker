@@ -11,6 +11,10 @@ from database import get_db, get_setting
 from scraper import scrape_students
 from excel_handler import read_students_from_excel, write_status_to_excel, dedupe_students
 try:
+    from nios_login import verify_login
+except Exception:
+    verify_login = None
+try:
     import mvs_sync
 except Exception:
     mvs_sync = None
@@ -50,7 +54,8 @@ def _load_db_students(c):
     try:
         rows = c.execute(
             "SELECT row_key, reference_no, enrollment_no, email, dob, student_name, "
-            "mobile, class_level, session, source FROM student_status").fetchall()
+            "mobile, class_level, session, source FROM student_status "
+            "WHERE COALESCE(deleted,0)=0").fetchall()
     except Exception:
         return out
     for r in rows:
@@ -378,9 +383,35 @@ def run_status_check(group_type="all", source_only=None):
                 c.execute("DELETE FROM student_status WHERE reference_no=? AND row_key!=?",
                           (new_ref, row_key))
 
+            # ── On confirm: VERIFY the NIOS login works BEFORE sharing any document ──
+            # If the uploaded Reference/Enrollment No or DOB is wrong, the login at
+            # https://sdmis.nios.ac.in/auth/other-login fails. We must NOT send a link
+            # in that case (the student would open it to a login error and panic).
+            # Mark the student failed + store a clear remark so it can be edited & re-run.
+            login_blocked = False
+            if new_status == "Admission Confirmed" and verify_login is not None:
+                vrow = c.execute("SELECT whatsapp_sent, login_failed FROM student_status WHERE row_key=?",
+                                 (row_key,)).fetchone()
+                already_sent = bool(vrow and vrow["whatsapp_sent"] == 1)
+                if not already_sent:
+                    conn.commit()   # release lock before the network login
+                    ok_login, lmsg = verify_login(new_ref, res.get("dob", ""),
+                                                  res.get("enrollment_no", ""))
+                    if ok_login:
+                        c.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?",
+                                  (row_key,))
+                    else:
+                        login_blocked = True
+                        stats["failed"] += 1
+                        c.execute("UPDATE student_status SET login_failed=1, login_remark=? WHERE row_key=?",
+                                  (lmsg[:240], row_key))
+                        logger.warning(f"Login verify FAILED {row_key}: {lmsg}")
+                    conn.commit()
+
             # ── WhatsApp: auto-send documents ONCE when admission is confirmed ──
             try:
-                if new_status == "Admission Confirmed" and get_setting("wa_enabled", "0") == "1":
+                if (new_status == "Admission Confirmed" and not login_blocked
+                        and get_setting("wa_enabled", "0") == "1"):
                     conn.commit()   # release write lock so short-link creation can write
                     wrow = c.execute("SELECT whatsapp_sent FROM student_status WHERE row_key=?",
                                      (row_key,)).fetchone()
@@ -408,9 +439,9 @@ def run_status_check(group_type="all", source_only=None):
             except Exception as we:
                 logger.warning(f"WhatsApp trigger error: {we}")
 
-            # ── MVS portal: push status + doc links back (live dashboard update) ──
+            # ── MVS portal: push status + doc links back (only if login isn't broken) ──
             try:
-                if mvs_on and sid_by_key.get(row_key):
+                if mvs_on and not login_blocked and sid_by_key.get(row_key):
                     conn.commit()   # ensure student row + links are persisted first
                     mvs_sync.push_student({**res,
                         "student_id": sid_by_key[row_key], "row_key": row_key,
@@ -475,3 +506,87 @@ def _finish(conn, run_id, ch, cg, fl, status):
     conn.execute("UPDATE run_logs SET total_checked=?, total_changed=?, total_failed=?, status=? WHERE id=?",
                  (ch, cg, fl, status, run_id))
     conn.commit()
+
+def recheck_one(row_key):
+    """Re-run ONE student after the counsellor edits their details. Uses the student's
+    CURRENT DB values (the edited ones) — does NOT re-read Excel/MVS, so the fix sticks.
+    Re-checks NIOS status, re-verifies the NIOS login, and (if confirmed + login OK)
+    sends the WhatsApp documents. Returns a summary dict for the UI."""
+    conn = get_db(); c = conn.cursor()
+    r = c.execute("SELECT * FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+    if not r:
+        conn.close()
+        return {"ok": False, "error": "Student not found"}
+    enr = (r["enrollment_no"] if "enrollment_no" in r.keys() else "") or ""
+    student = {
+        "row_key": row_key,
+        "reference_no": r["reference_no"] or "",
+        "enrollment_no": enr,
+        "email": r["email"] or "",
+        "dob": r["dob"] or "",
+        "student_name": r["student_name"] or "",
+        "mobile": r["mobile"] or "",
+        "class_level": r["class_level"] or "",
+        "session": r["session"] or "",
+    }
+    final_source = (r["source"] if "source" in r.keys() else "") or "mvs_tracker"
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    out = {"ok": True, "status": "", "login_failed": False, "login_remark": "", "whatsapp_sent": False}
+
+    def _cb(res):
+        new_status = res["status"]
+        new_ref = res.get("discovered_ref") or res.get("reference_no") or student["reference_no"]
+        is_conf = 1 if new_status == "Admission Confirmed" else 0
+        old = c.execute("SELECT current_status FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+        old_status = old["current_status"] if old else None
+        if old_status != new_status:
+            c.execute("""INSERT INTO status_history
+                (reference_no, student_name, old_status, new_status, changed_at, run_id, source)
+                VALUES (?,?,?,?,?,?,?)""",
+                (new_ref, student["student_name"], old_status, new_status, now_s, None, final_source))
+        c.execute("""UPDATE student_status SET reference_no=?, current_status=?, remark=?,
+                     is_confirmed=?, last_checked=?, check_count=check_count+1 WHERE row_key=?""",
+                  (new_ref, new_status, res.get("remark", ""), is_conf, now_s, row_key))
+        conn.commit()
+        out["status"] = new_status
+        # Verify NIOS login before any document share
+        login_blocked = False
+        if new_status == "Admission Confirmed" and verify_login is not None:
+            ok_login, lmsg = verify_login(new_ref, student["dob"], student["enrollment_no"])
+            if ok_login:
+                c.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
+            else:
+                login_blocked = True
+                out["login_failed"] = True
+                out["login_remark"] = lmsg
+                c.execute("UPDATE student_status SET login_failed=1, login_remark=? WHERE row_key=?",
+                          (lmsg[:240], row_key))
+            conn.commit()
+        # WhatsApp (force a fresh send for the fixed student)
+        if new_status == "Admission Confirmed" and not login_blocked and get_setting("wa_enabled", "0") == "1":
+            phone = student["mobile"]
+            if phone:
+                try:
+                    import whatsapp
+                    ok, info = whatsapp.send_for_student({
+                        "row_key": row_key, "student_name": student["student_name"],
+                        "mobile": phone, "session": student["session"],
+                        "reference_no": new_ref, "dob": student["dob"]})
+                    if ok:
+                        c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
+                                  (str(info)[:180], row_key))
+                        out["whatsapp_sent"] = True
+                    else:
+                        c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                                  (str(info)[:180], row_key))
+                    conn.commit()
+                except Exception as we:
+                    logger.warning(f"recheck WhatsApp error {row_key}: {we}")
+
+    try:
+        scrape_students([student], on_result=_cb)
+    except Exception as e:
+        conn.close()
+        return {"ok": False, "error": str(e)[:200]}
+    conn.close()
+    return out

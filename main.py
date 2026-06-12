@@ -421,7 +421,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             </div>
           </div>
           <div style="overflow-x:auto"><table>
-            <thead><tr><th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th></tr></thead>
+            <thead><tr><th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th><th>Action</th></tr></thead>
             <tbody id="recent-runs"></tbody>
           </table></div>
         </div>
@@ -605,13 +605,16 @@ PORTAL_HTML = """<!DOCTYPE html>
         <div class="card">
           <div class="card-head">
             <h3>Run Logs</h3>
-            <select id="rl-limit" onchange="loadRunLogs()" style="padding:6px 10px;border:2px solid var(--border);border-radius:8px;font-size:13px">
-              <option value="10">10</option><option value="20">20</option><option value="30">30</option>
-              <option value="50" selected>50</option><option value="100">100</option></select>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="rl-limit" onchange="loadRunLogs()" style="padding:6px 10px;border:2px solid var(--border);border-radius:8px;font-size:13px">
+                <option value="10">10</option><option value="20">20</option><option value="30">30</option>
+                <option value="50" selected>50</option><option value="100">100</option></select>
+              <button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c" onclick="clearRunLogs()">Clear All</button>
+            </div>
           </div>
           <div style="overflow-x:auto">
             <table><thead><tr>
-              <th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th>
+              <th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th><th>Action</th>
             </tr></thead><tbody id="rl-body"></tbody></table>
           </div>
         </div>
@@ -680,6 +683,18 @@ PORTAL_HTML = """<!DOCTYPE html>
           <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">Minimum 15 minutes. Tip: shorter intervals use more CapSolver credits.</div>
           <div id="iv-status" style="margin-top:12px;font-size:13px"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h3>&#128465; Deleted Students (Trash)</h3>
+            <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="loadTrash()">Refresh</button>
+          </div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+            Students removed from the portal land here. <b>Restore</b> brings them back; <b>Delete permanently</b> cannot be undone.</p>
+          <div style="overflow-x:auto"><table>
+            <thead><tr><th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Deleted At</th><th>Action</th></tr></thead>
+            <tbody id="trash-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+          </table></div>
         </div>
         <div class="card">
           <h3>&#128172; WhatsApp Auto-Send</h3>
@@ -764,6 +779,37 @@ PORTAL_HTML = """<!DOCTYPE html>
 </div>
 
 <div id="toast"></div>
+
+<div id="edit-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;padding:16px">
+  <div style="background:var(--card,#fff);border-radius:16px;max-width:480px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+    <div style="padding:18px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+      <h3 style="margin:0">&#9998; Edit Student</h3>
+      <button onclick="closeEdit()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted)">&times;</button>
+    </div>
+    <div style="padding:20px 22px">
+      <div id="edit-warn" style="display:none;font-size:12.5px;font-weight:600;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;margin-bottom:14px"></div>
+      <input type="hidden" id="edit-rowkey">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <label style="font-size:12px;font-weight:600;grid-column:1/3">Student Name<input id="edit-student_name" class="edit-inp"></label>
+        <label style="font-size:12px;font-weight:600">Reference No<input id="edit-reference_no" class="edit-inp"></label>
+        <label style="font-size:12px;font-weight:600">Enrollment No<input id="edit-enrollment_no" class="edit-inp"></label>
+        <label style="font-size:12px;font-weight:600">Date of Birth<input id="edit-dob" class="edit-inp" placeholder="DD-MM-YYYY"></label>
+        <label style="font-size:12px;font-weight:600">Mobile No<input id="edit-mobile" class="edit-inp"></label>
+        <label style="font-size:12px;font-weight:600;grid-column:1/3">Email<input id="edit-email" class="edit-inp"></label>
+        <label style="font-size:12px;font-weight:600">Class<input id="edit-class_level" class="edit-inp"></label>
+        <label style="font-size:12px;font-weight:600">Session<input id="edit-session" class="edit-inp"></label>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:10px">Tip: if NIOS login failed, fix the <b>Date of Birth</b> or <b>Reference/Enrollment No</b>, then "Save &amp; Run again" to re-check and send.</div>
+      <div id="edit-status" style="font-size:12.5px;font-weight:600;margin-top:10px"></div>
+    </div>
+    <div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn" style="background:var(--soft);color:var(--text)" onclick="closeEdit()">Cancel</button>
+      <button class="btn" style="background:#64748b;color:#fff" onclick="saveEdit(false)">Save</button>
+      <button class="btn btn-primary" onclick="saveEdit(true)">&#10227; Save &amp; Run again</button>
+    </div>
+  </div>
+</div>
+<style>.edit-inp{width:100%;margin-top:4px;padding:9px 11px;border:2px solid var(--border);border-radius:9px;font-size:14px;font-weight:400}</style>
 
 <script>
 const API = window.location.origin;
@@ -932,7 +978,7 @@ function nav(page){
   if(page==="required")loadRequired(1);
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
-  if(page==="settings"){loadIntervals();loadWa();}
+  if(page==="settings"){loadIntervals();loadWa();loadTrash();}
   if(page==="upload")loadUploadSource();
 }
 
@@ -997,7 +1043,7 @@ function renderDistribution(dist,total){
 }
 function renderRuns(runs,id){
   const el=document.getElementById(id);
-  if(!runs||!runs.length){el.innerHTML='<tr><td colspan="6" class="empty">No runs yet</td></tr>';return;}
+  if(!runs||!runs.length){el.innerHTML='<tr><td colspan="7" class="empty">No runs yet</td></tr>';return;}
   el.innerHTML=runs.map(r=>{
     var st;
     if(r.status==="running"){
@@ -1010,11 +1056,29 @@ function renderRuns(runs,id){
     }else{
       st='<span class="run-err">'+r.status+'</span>';
     }
+    var act=(r.status==="running")?'<span style="color:var(--muted);font-size:12px">—</span>':
+      '<button title="Delete this run log" onclick="deleteRunLog('+r.id+')" '+
+      'style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:600;cursor:pointer">&#128465;</button>';
     return '<tr><td>'+r.run_at+'</td><td><span class="ref-tag">'+(r.group_type||"all")+
       '</span></td><td>'+r.total_checked+'</td><td style="color:var(--primary);font-weight:700">'+r.total_changed+
       '</td><td style="color:'+(r.total_failed?'var(--danger)':'inherit')+'">'+r.total_failed+
-      '</td><td>'+st+'</td></tr>';
+      '</td><td>'+st+'</td><td>'+act+'</td></tr>';
   }).join("");
+}
+async function deleteRunLog(id){
+  if(!confirm("Delete this run log entry?"))return;
+  try{
+    await api("/api/run-log-delete?id="+id,"POST");
+    showToast("Run log deleted");
+    if(secActive("dashboard"))loadDashboard();
+    if(secActive("runlogs"))loadRunLogs();
+  }catch(e){showToast(""+e.message);}
+}
+async function clearRunLogs(){
+  if(!confirm("Delete ALL run logs (except any currently running)?"))return;
+  try{const r=await api("/api/run-logs-clear","POST");showToast("Cleared "+(r.deleted||0)+" run logs");
+    if(secActive("dashboard"))loadDashboard();if(secActive("runlogs"))loadRunLogs();}
+  catch(e){showToast(""+e.message);}
 }
 
 async function cancelRun(rid){
@@ -1176,7 +1240,7 @@ async function loadStudents(page){
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
-      '<td>'+badge(s.current_status)+'</td>'+
+      '<td>'+badge(s.current_status)+loginWarn(s)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+'</td>'+
       '<td>'+delBtn(s)+'</td></tr>').join("")
       :'<tr><td colspan="7" class="empty">No active students found</td></tr>';
@@ -1201,7 +1265,7 @@ async function loadConfirmed(page){
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
-      '<td>'+badge(s.current_status)+'</td><td style="font-size:12px">'+dlLinks(s)+waBtn(s)+'</td>'+
+      '<td>'+badge(s.current_status)+loginWarn(s)+'</td><td style="font-size:12px">'+dlLinks(s)+waBtn(s)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_changed||"—")+'</td>'+
       '<td>'+delBtn(s)+'</td></tr>').join("")
       :'<tr><td colspan="8" class="empty">No confirmed students yet</td></tr>';
@@ -1245,21 +1309,88 @@ async function deleteSyc(rowKey,name){
     try{loadDashboard();}catch(e){}
   }catch(e){showToast(""+e.message);}
 }
+function loginWarn(s){
+  if(!(s.login_failed==1||s.login_failed===true))return "";
+  var rm=(s.login_remark||"NIOS login failed — check Reference/Enrollment No & DOB").replace(/</g,"&lt;");
+  return '<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:7px;padding:4px 8px;white-space:normal;max-width:260px">'+
+    '&#9888; Not sent — '+rm+'</div>';
+}
 function delBtn(s){
   var nm=(s.student_name||"this student").replace(/[\\"']/g," ");
-  return '<button title="Remove this student (e.g. a test entry)" '+
+  var edit='<button title="Edit details (DOB / Reference No etc.) and re-run" '+
+    'style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;margin-right:6px" '+
+    'onclick="editStudent(&quot;'+s.row_key+'&quot;)">&#9998; Edit</button>';
+  var rem='<button title="Remove this student (moves to Trash — restore from Settings)" '+
     'style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap" '+
     'onclick="deleteStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)">&#128465; Remove</button>';
+  return '<div style="display:flex;flex-wrap:wrap;gap:4px">'+edit+rem+'</div>';
 }
 async function deleteStudent(rowKey,name){
-  if(!confirm("Remove "+name+"?\\n\\nThis permanently deletes this student from the tracker (use this for test entries). It does NOT affect NIOS or the MVS portal."))return;
+  if(!confirm("Remove "+name+"?\\n\\nThis hides the student from the portal and moves it to Trash. You can restore it from Settings → Deleted Students if removed by mistake."))return;
   try{
     await api("/api/student-delete?row_key="+encodeURIComponent(rowKey),"POST");
-    showToast("Removed "+name);
+    showToast("Moved "+name+" to Trash");
     try{loadStudents(1);}catch(e){}
     try{loadConfirmed(1);}catch(e){}
+    try{loadRequired(1);}catch(e){}
     try{loadDashboard();}catch(e){}
   }catch(e){showToast(""+e.message);}
+}
+const EDIT_FIELDS=["student_name","reference_no","enrollment_no","dob","mobile","email","class_level","session"];
+async function editStudent(rowKey){
+  try{
+    const s=await api("/api/student-get?row_key="+encodeURIComponent(rowKey));
+    document.getElementById("edit-rowkey").value=s.row_key;
+    EDIT_FIELDS.forEach(f=>{const el=document.getElementById("edit-"+f);if(el)el.value=s[f]||"";});
+    const w=document.getElementById("edit-warn");
+    if(s.login_failed==1||s.login_failed===true){
+      w.style.display="block";
+      w.innerHTML="&#9888; NIOS login failed — "+((s.login_remark||"check Reference/Enrollment No & DOB").replace(/</g,"&lt;"));
+    }else{w.style.display="none";}
+    document.getElementById("edit-status").textContent="";
+    document.getElementById("edit-overlay").style.display="flex";
+  }catch(e){showToast(""+e.message);}
+}
+function closeEdit(){document.getElementById("edit-overlay").style.display="none";}
+async function saveEdit(thenRun){
+  const rk=document.getElementById("edit-rowkey").value;
+  const body={row_key:rk};
+  EDIT_FIELDS.forEach(f=>{const el=document.getElementById("edit-"+f);if(el)body[f]=el.value;});
+  const st=document.getElementById("edit-status");
+  try{
+    st.style.color="var(--muted)";st.textContent="Saving…";
+    await api("/api/student-edit","POST",body);
+    if(thenRun){
+      st.textContent="Saved. Re-checking on NIOS (status + login)… this can take ~20–40 sec.";
+      await api("/api/student-recheck?row_key="+encodeURIComponent(rk),"POST");
+      pollAfterRecheck(rk,0);
+    }else{
+      st.style.color="var(--success)";st.textContent="Saved!";
+      setTimeout(closeEdit,700);
+      try{loadStudents(1);}catch(e){}try{loadConfirmed(1);}catch(e){}try{loadRequired(1);}catch(e){}
+    }
+  }catch(e){st.style.color="var(--danger)";st.textContent=e.message;}
+}
+async function pollAfterRecheck(rk,n){
+  if(n>20){document.getElementById("edit-status").textContent="Still running… you can close this; the row will update shortly.";return;}
+  try{
+    const s=await api("/api/student-get?row_key="+encodeURIComponent(rk));
+    const st=document.getElementById("edit-status");
+    if(s.login_failed==1||s.login_failed===true){
+      st.style.color="var(--danger)";
+      st.innerHTML="&#9888; Still failing — "+((s.login_remark||"").replace(/</g,"&lt;"))+" Fix the field and run again.";
+      const w=document.getElementById("edit-warn");w.style.display="block";w.innerHTML=st.innerHTML;
+      try{loadConfirmed(1);}catch(e){}try{loadDashboard();}catch(e){}
+      return;
+    }
+    if((s.current_status||"")&&n>=1){
+      st.style.color="var(--success)";
+      st.textContent="✓ Done — status: "+s.current_status+(s.current_status==="Admission Confirmed"?" · login OK, documents sent.":".");
+      try{loadStudents(1);}catch(e){}try{loadConfirmed(1);}catch(e){}try{loadRequired(1);}catch(e){}try{loadDashboard();}catch(e){}
+      return;
+    }
+  }catch(e){}
+  setTimeout(()=>pollAfterRecheck(rk,n+1),3000);
 }
 async function downloadSycHall(rowKey,btn){
   if(btn.dataset.busy==="1")return;
@@ -1577,6 +1708,36 @@ async function loadIntervals(){
     setIvField("regular",r.regular_min);
     setIvField("public",r.public_min);}catch(e){}
 }
+async function loadTrash(){
+  const b=document.getElementById("trash-body");if(!b)return;
+  try{
+    const rows=await api("/api/deleted-students");
+    if(!rows.length){b.innerHTML='<tr><td colspan="5" class="empty">Trash is empty</td></tr>';return;}
+    b.innerHTML=rows.map(s=>{
+      var nm=(s.student_name||"this student").replace(/[\\"']/g," ");
+      var ref=(s.reference_no||s.enrollment_no||"—");
+      return '<tr><td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td>'+
+        '<td><span class="ref-tag">'+ref+'</span></td>'+
+        '<td style="font-size:13px">'+(s.session||"—")+'</td>'+
+        '<td style="font-size:12px;color:var(--muted)">'+(s.deleted_at||"—")+'</td>'+
+        '<td><div style="display:flex;gap:6px;flex-wrap:wrap">'+
+        '<button onclick="restoreStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#dcfce7;color:#166534;border:1px solid #bbf7d0;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer">&#8617; Restore</button>'+
+        '<button onclick="purgeStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer">Delete permanently</button>'+
+        '</div></td></tr>';
+    }).join("");
+  }catch(e){b.innerHTML='<tr><td colspan="5" class="empty">'+e.message+'</td></tr>';}
+}
+async function restoreStudent(rk,name){
+  try{await api("/api/student-restore?row_key="+encodeURIComponent(rk),"POST");
+    showToast("Restored "+name);loadTrash();try{loadDashboard();}catch(e){}}
+  catch(e){showToast(""+e.message);}
+}
+async function purgeStudent(rk,name){
+  if(!confirm("Permanently delete "+name+"?\\n\\nThis CANNOT be undone."))return;
+  try{await api("/api/student-purge?row_key="+encodeURIComponent(rk),"POST");
+    showToast("Permanently deleted "+name);loadTrash();}
+  catch(e){showToast(""+e.message);}
+}
 async function saveIntervals(){
   const rm=ivToMin("regular"),pm=ivToMin("public");
   if(rm<15||pm<15){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
@@ -1799,19 +1960,20 @@ async def login(body: dict):
 @app.get("/api/dashboard")
 async def dashboard(user=Depends(verify_token)):
     conn = get_db()
-    total = conn.execute("SELECT COUNT(*) FROM student_status").fetchone()[0]
+    ND = "COALESCE(deleted,0)=0"          # not-deleted guard for every count
+    total = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND}").fetchone()[0]
     runs = conn.execute("SELECT * FROM run_logs ORDER BY id DESC LIMIT 10").fetchall()
-    dist = conn.execute("SELECT current_status, COUNT(*) as cnt FROM student_status GROUP BY current_status").fetchall()
+    dist = conn.execute(f"SELECT current_status, COUNT(*) as cnt FROM student_status WHERE {ND} GROUP BY current_status").fetchall()
 
     # Counts by status
     def count_status(s):
-        return conn.execute("SELECT COUNT(*) FROM student_status WHERE current_status=?", (s,)).fetchone()[0]
+        return conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status=?", (s,)).fetchone()[0]
     confirmed_cnt = count_status("Admission Confirmed")
     verified_cnt  = count_status("Verified")
     docreq_cnt    = count_status("Document Required")
     docverif_cnt  = count_status("Documents Verification In Progress")
     syc_cnt = conn.execute(
-        "SELECT COUNT(*) FROM student_status WHERE (session LIKE '%syc%' OR current_status='SYC')"
+        f"SELECT COUNT(*) FROM student_status WHERE {ND} AND (session LIKE '%syc%' OR current_status='SYC')"
     ).fetchone()[0]
 
     # Changes today
@@ -1821,19 +1983,25 @@ async def dashboard(user=Depends(verify_token)):
 
     # Notifications: document required students (name + ref)
     notifs = conn.execute(
-        "SELECT student_name, reference_no, remark FROM student_status WHERE current_status='Document Required' ORDER BY last_changed DESC LIMIT 50"
+        f"SELECT student_name, reference_no, remark FROM student_status WHERE {ND} AND current_status='Document Required' ORDER BY last_changed DESC LIMIT 50"
     ).fetchall()
 
     # Cross-source duplicates: same student present in BOTH MVS Portal & MVS Tracker
     # (kept once, as MVS Portal). Surfaced in the bell so the counsellor is aware.
     dup_notifs = conn.execute(
-        "SELECT student_name, reference_no, enrollment_no FROM student_status "
-        "WHERE COALESCE(cross_dup,0)=1 ORDER BY student_name LIMIT 50"
+        f"SELECT student_name, reference_no, enrollment_no FROM student_status "
+        f"WHERE {ND} AND COALESCE(cross_dup,0)=1 ORDER BY student_name LIMIT 50"
+    ).fetchall()
+
+    # Login-issue students: NIOS login failed -> documents NOT sent (need edit + re-run)
+    login_issues = conn.execute(
+        f"SELECT student_name, reference_no, enrollment_no, login_remark, row_key FROM student_status "
+        f"WHERE {ND} AND COALESCE(login_failed,0)=1 ORDER BY student_name LIMIT 100"
     ).fetchall()
 
     # Session-wise totals
     sess_counts = conn.execute(
-        "SELECT session, COUNT(*) as cnt FROM student_status WHERE session != '' GROUP BY session ORDER BY cnt DESC"
+        f"SELECT session, COUNT(*) as cnt FROM student_status WHERE {ND} AND session != '' GROUP BY session ORDER BY cnt DESC"
     ).fetchall()
 
     conn.close()
@@ -1850,6 +2018,7 @@ async def dashboard(user=Depends(verify_token)):
         },
         "notifications": [dict(n) for n in notifs],
         "dup_notifications": [dict(d) for d in dup_notifs],
+        "login_issues": [dict(li) for li in login_issues],
         "session_counts": [dict(s) for s in sess_counts],
     }
 
@@ -1891,6 +2060,7 @@ def _build_student_where(view, search, status_filter, session_filter,
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
+    wc.append("COALESCE(deleted,0) = 0")          # never show soft-deleted (in Trash)
     if view == "confirmed":
         wc.append("is_confirmed = 1")
     elif view == "required":
@@ -2385,8 +2555,9 @@ async def syc_delete(row_key: str, user=Depends(verify_token)):
 
 @app.post("/api/student-delete")
 async def student_delete(row_key: str, user=Depends(verify_token)):
-    """Delete ANY single student (used to remove test entries) — clears the
-    student row plus its history and short links."""
+    """SOFT-delete a student: hide it from the portal but keep it in Trash so it can
+    be restored from Settings if removed by mistake. Soft-deleted students are also
+    skipped by status runs."""
     conn = get_db()
     row = conn.execute("SELECT row_key, student_name FROM student_status WHERE row_key=?",
                        (row_key,)).fetchone()
@@ -2394,6 +2565,36 @@ async def student_delete(row_key: str, user=Depends(verify_token)):
         conn.close()
         raise HTTPException(status_code=404, detail="Student not found")
     name = row["student_name"] or ""
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("UPDATE student_status SET deleted=1, deleted_at=? WHERE row_key=?", (now_s, row_key))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "name": name, "soft": True}
+
+@app.get("/api/deleted-students")
+async def deleted_students(user=Depends(verify_token)):
+    """List soft-deleted students (the Trash) for the Settings restore panel."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT row_key, student_name, reference_no, enrollment_no, session, "
+        "current_status, deleted_at, COALESCE(source,'mvs_tracker') AS source "
+        "FROM student_status WHERE COALESCE(deleted,0)=1 ORDER BY deleted_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@app.post("/api/student-restore")
+async def student_restore(row_key: str, user=Depends(verify_token)):
+    """Restore a soft-deleted student back to the portal."""
+    conn = get_db()
+    conn.execute("UPDATE student_status SET deleted=0, deleted_at=NULL WHERE row_key=?", (row_key,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+@app.post("/api/student-purge")
+async def student_purge(row_key: str, user=Depends(verify_token)):
+    """Permanently delete a student from Trash (cannot be undone)."""
+    conn = get_db()
     conn.execute("DELETE FROM student_status WHERE row_key=?", (row_key,))
     conn.execute("DELETE FROM short_links WHERE row_key=?", (row_key,))
     try:
@@ -2402,7 +2603,90 @@ async def student_delete(row_key: str, user=Depends(verify_token)):
         pass
     conn.commit()
     conn.close()
-    return {"ok": True, "name": name}
+    return {"ok": True}
+
+@app.get("/api/student-get")
+async def student_get(row_key: str, user=Depends(verify_token)):
+    """Fetch ONE student's editable details (for the Edit modal)."""
+    conn = get_db()
+    r = conn.execute("SELECT row_key, student_name, mobile, email, dob, reference_no, "
+                     "enrollment_no, class_level, session, current_status, "
+                     "COALESCE(login_failed,0) AS login_failed, login_remark "
+                     "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+    conn.close()
+    if not r:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return dict(r)
+
+@app.post("/api/student-edit")
+async def student_edit(body: dict, user=Depends(verify_token)):
+    """Edit a student's uploaded details (DOB, Reference/Enrollment No, email, mobile,
+    name, session) WITHOUT re-uploading the sheet. Resets the login-failed flag and the
+    WhatsApp-sent flag so a re-run can verify the fix and send fresh."""
+    row_key = (body.get("row_key") or "").strip()
+    if not row_key:
+        raise HTTPException(status_code=400, detail="row_key required")
+    conn = get_db()
+    row = conn.execute("SELECT row_key FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Student not found")
+    allowed = ["student_name", "mobile", "email", "dob", "reference_no",
+               "enrollment_no", "class_level", "session"]
+    sets, params = [], []
+    for f in allowed:
+        if f in body:
+            sets.append(f"{f}=?"); params.append((body.get(f) or "").strip())
+    if not sets:
+        conn.close()
+        raise HTTPException(status_code=400, detail="No fields to update")
+    # Editing the data invalidates any previous login result / sent flag.
+    sets += ["login_failed=0", "login_remark=''", "whatsapp_sent=0"]
+    params.append(row_key)
+    conn.execute(f"UPDATE student_status SET {', '.join(sets)} WHERE row_key=?", params)
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+@app.post("/api/student-recheck")
+async def student_recheck(row_key: str, background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Re-run ONE student (after an edit). Runs in the background; the UI polls the
+    student row to see the new status / login result."""
+    from job_runner import recheck_one
+    conn = get_db()
+    row = conn.execute("SELECT row_key FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Student not found")
+    background_tasks.add_task(recheck_one, row_key)
+    return {"ok": True, "message": "Re-checking this student…"}
+
+@app.post("/api/run-log-delete")
+async def run_log_delete(id: int, user=Depends(verify_token)):
+    """Delete ONE run-log entry (e.g. a 'Nothing to check' or failed run). A run that is
+    still 'running' cannot be deleted — cancel it first."""
+    conn = get_db()
+    row = conn.execute("SELECT status FROM run_logs WHERE id=?", (id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Run not found")
+    if row["status"] == "running":
+        conn.close()
+        raise HTTPException(status_code=400, detail="Run is still running — cancel it first")
+    conn.execute("DELETE FROM run_logs WHERE id=?", (id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+@app.post("/api/run-logs-clear")
+async def run_logs_clear(user=Depends(verify_token)):
+    """Delete all run-log entries that are not currently running."""
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) FROM run_logs WHERE status!='running'").fetchone()[0]
+    conn.execute("DELETE FROM run_logs WHERE status!='running'")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "deleted": n}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WhatsApp (AiSensy) — settings, test, manual resend

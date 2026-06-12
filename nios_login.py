@@ -217,6 +217,22 @@ def get_logged_in_session(reference_no, dob, enrollment_no="", force=False):
     _session_cache[key] = (session, now + 300)
     return session
 
+def verify_login(reference_no, dob, enrollment_no=""):
+    """Try a FRESH NIOS login (https://sdmis.nios.ac.in/auth/other-login) to confirm
+    the Reference/Enrollment No + DOB are correct BEFORE we send any document links.
+    Returns (ok: bool, message: str). On failure the message explains the likely cause
+    so the counsellor can fix the field and re-run — instead of sending a link that
+    opens to a login error and panics the student."""
+    try:
+        sess = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no, force=True)
+        if sess is not None:
+            return True, ""
+        who = ("Enrollment No" if enrollment_no else "Reference No")
+        return False, (f"NIOS login failed — data mismatch. Check {who} & Date of Birth "
+                       f"(DOB used: '{format_dob(dob)}').")
+    except Exception as e:
+        return False, f"NIOS login error: {str(e)[:120]}"
+
 def _fetch_bytes(url, session):
     try:
         sess = session if "sdmis.nios.ac.in" in url else requests
