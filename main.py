@@ -569,6 +569,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             <button class="btn btn-outline btn-sm" onclick="exportHistory()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
+            <button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca" onclick="clearHistory()">&#128465; Clear All</button>
           </div>
           <div class="filter-bar" id="h-custom" style="display:none">
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
@@ -580,7 +581,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           <div id="h-count" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
-              <th>Reference No</th><th>Student</th><th>Old Status</th><th>New Status</th><th>Changed At</th>
+              <th>Reference No</th><th>Student</th><th>Old Status</th><th>New Status</th><th>Changed At</th><th>Action</th>
             </tr></thead><tbody id="h-body"></tbody></table>
           </div>
           <div class="pg-bar" id="h-pg"></div>
@@ -646,17 +647,20 @@ PORTAL_HTML = """<!DOCTYPE html>
             Set separate intervals for each group. Confirmed students are skipped automatically.</p>
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
             <span style="width:280px;font-weight:600">📗 Regular (On Demand + Stream 2)</span>
-            <input type="number" id="iv-regular" min="1" max="72" value="6"
+            <input type="number" id="iv-regular" min="1" max="4320" value="6"
               style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-            <span style="color:var(--muted)">hours</span>
+            <select id="iv-regular-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
+              <option value="hours">hours</option><option value="minutes">minutes</option></select>
           </div>
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
             <span style="width:280px;font-weight:600">📘 Public Exam (April / October + any year)</span>
-            <input type="number" id="iv-public" min="1" max="72" value="12"
+            <input type="number" id="iv-public" min="1" max="4320" value="12"
               style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-            <span style="color:var(--muted)">hours</span>
+            <select id="iv-public-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
+              <option value="hours">hours</option><option value="minutes">minutes</option></select>
           </div>
           <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">Minimum 15 minutes. Tip: shorter intervals use more CapSolver credits.</div>
           <div id="iv-status" style="margin-top:12px;font-size:13px"></div>
         </div>
         <div class="card">
@@ -1326,10 +1330,21 @@ async function loadHistory(page){
       '<td><span class="ref-tag">'+(x.reference_no||"—")+'</span></td>'+
       '<td>'+(x.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(x)+'</div></td>'+
       '<td>'+badge(x.old_status)+'</td><td>'+badge(x.new_status)+'</td>'+
-      '<td style="font-size:12px;color:var(--muted)">'+x.changed_at+'</td></tr>').join("")
-      :'<tr><td colspan="5" class="empty">No changes in this range</td></tr>';
+      '<td style="font-size:12px;color:var(--muted)">'+x.changed_at+'</td>'+
+      '<td><button title="Delete this history entry" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:600;cursor:pointer" onclick="deleteHistory('+x.id+')">&#128465;</button></td></tr>').join("")
+      :'<tr><td colspan="6" class="empty">No changes in this range</td></tr>';
     renderHistPg(d.page,d.pages,d.total);
   }catch(e){showToast(""+e.message);}
+}
+async function deleteHistory(id){
+  if(!confirm("Delete this history entry?"))return;
+  try{await api("/api/history-delete?id="+id,"POST");showToast("Deleted");loadHistory(1);}
+  catch(e){showToast(""+e.message);}
+}
+async function clearHistory(){
+  if(!confirm("Clear ALL status-change history?\\n\\nThis permanently deletes every history entry. Students are NOT affected."))return;
+  try{const r=await api("/api/history-clear","POST");showToast("Cleared "+(r.deleted||0)+" entries");loadHistory(1);}
+  catch(e){showToast(""+e.message);}
 }
 async function exportHistory(){
   const rg=histRange();
@@ -1512,15 +1527,26 @@ async function runNow(){
   finally{ setTimeout(()=>{if(btn){btn.dataset.busy="";btn.style.opacity="";btn.style.pointerEvents="";}},4000); }
 }
 
+function setIvField(which,mins){
+  const inp=document.getElementById("iv-"+which),unit=document.getElementById("iv-"+which+"-unit");
+  if(!inp||!unit)return;
+  if(mins>=60 && mins%60===0){inp.value=mins/60;unit.value="hours";}
+  else{inp.value=mins;unit.value="minutes";}
+}
+function ivToMin(which){
+  const v=parseInt(document.getElementById("iv-"+which).value)||0;
+  const unit=document.getElementById("iv-"+which+"-unit").value;
+  return unit==="hours"?v*60:v;
+}
 async function loadIntervals(){
   try{const r=await api("/api/intervals");
-    document.getElementById("iv-regular").value=r.regular;
-    document.getElementById("iv-public").value=r.public;}catch(e){}
+    setIvField("regular",r.regular_min);
+    setIvField("public",r.public_min);}catch(e){}
 }
 async function saveIntervals(){
-  const regular=parseInt(document.getElementById("iv-regular").value);
-  const pub=parseInt(document.getElementById("iv-public").value);
-  try{const r=await api("/api/intervals","POST",{regular:regular,public:pub});
+  const rm=ivToMin("regular"),pm=ivToMin("public");
+  if(rm<15||pm<15){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
+  try{const r=await api("/api/intervals","POST",{regular_min:rm,public_min:pm});
     document.getElementById("iv-status").innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
     showToast("Intervals saved!");}
   catch(e){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
@@ -1665,23 +1691,37 @@ def _last_run_time(group_type):
             return None
     return None
 
+def _interval_minutes(grp, default_h):
+    """Interval in MINUTES. Prefers the new *_min setting; falls back to the
+    legacy hour setting (×60) so older configs keep working."""
+    m = get_setting(f"interval_{grp}_min", "")
+    if m:
+        try:
+            return max(15, int(m))
+        except Exception:
+            pass
+    try:
+        return int(get_setting(f"interval_{grp}", str(default_h))) * 60
+    except Exception:
+        return default_h * 60
+
 def reschedule_jobs():
     """Schedule both jobs. Next run = last_run + interval. If overdue, run shortly."""
-    reg = int(get_setting("interval_regular", "6"))
-    pub = int(get_setting("interval_public", "12"))
+    reg = _interval_minutes("regular", 6)
+    pub = _interval_minutes("public", 12)
     now = datetime.now()
-    for jid, grp, hours in [("job_regular", "regular", reg), ("job_public", "public", pub)]:
+    for jid, grp, mins in [("job_regular", "regular", reg), ("job_public", "public", pub)]:
         last = _last_run_time(grp)
         if last:
-            nxt = last + timedelta(hours=hours)
+            nxt = last + timedelta(minutes=mins)
             if nxt <= now:
                 nxt = now + timedelta(seconds=20)      # overdue -> run shortly
         else:
-            nxt = now + timedelta(hours=hours)          # no history -> wait one interval
+            nxt = now + timedelta(minutes=mins)         # no history -> wait one interval
         scheduler.add_job(lambda g=grp: run_status_check(g),
-                          trigger=IntervalTrigger(hours=hours),
+                          trigger=IntervalTrigger(minutes=mins),
                           id=jid, replace_existing=True, next_run_time=nxt)
-        logger.info(f"{jid}: every {hours}h | last_run={last} | next_run={nxt}")
+        logger.info(f"{jid}: every {mins}min | last_run={last} | next_run={nxt}")
 
 @app.on_event("startup")
 async def startup():
@@ -1930,6 +1970,23 @@ async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_d
     return {"items": [dict(x) for x in rows], "total": total,
             "page": page, "pages": pages, "per_page": per_page}
 
+@app.post("/api/history-delete")
+async def history_delete(id: int, user=Depends(verify_token)):
+    """Delete ONE status-change history entry by id."""
+    conn = get_db()
+    conn.execute("DELETE FROM status_history WHERE id=?", (id,))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+@app.post("/api/history-clear")
+async def history_clear(user=Depends(verify_token)):
+    """Clear ALL status-change history (does not affect students)."""
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) FROM status_history").fetchone()[0]
+    conn.execute("DELETE FROM status_history")
+    conn.commit(); conn.close()
+    return {"ok": True, "deleted": n}
+
 @app.get("/api/export-history")
 async def export_history(from_dt: str = "", to_dt: str = "", status: str = "",
                          source: str = "", user=Depends(verify_token)):
@@ -2158,19 +2215,26 @@ async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
 
 @app.get("/api/intervals")
 async def get_intervals(user=Depends(verify_token)):
-    return {"regular": int(get_setting("interval_regular", "6")),
-            "public": int(get_setting("interval_public", "12"))}
+    return {"regular_min": _interval_minutes("regular", 6),
+            "public_min": _interval_minutes("public", 12)}
 
 @app.post("/api/intervals")
 async def set_intervals(body: dict, user=Depends(verify_token)):
-    reg = int(body.get("regular", 6))
-    pub = int(body.get("public", 12))
-    if not (1 <= reg <= 72) or not (1 <= pub <= 72):
-        raise HTTPException(status_code=400, detail="Hours must be 1-72")
-    set_setting("interval_regular", reg)
-    set_setting("interval_public", pub)
+    reg = int(body.get("regular_min", 360))
+    pub = int(body.get("public_min", 720))
+    if not (15 <= reg <= 4320) or not (15 <= pub <= 4320):
+        raise HTTPException(status_code=400, detail="Interval must be between 15 minutes and 72 hours")
+    set_setting("interval_regular_min", reg)
+    set_setting("interval_public_min", pub)
     reschedule_jobs()
-    return {"message": f"Regular: {reg}h, Public: {pub}h", "regular": reg, "public": pub}
+    def _fmt(m):
+        if m % 60 == 0:
+            return f"{m//60}h"
+        if m < 60:
+            return f"{m}m"
+        return f"{m//60}h {m%60}m"
+    return {"message": f"Regular: every {_fmt(reg)}, Public: every {_fmt(pub)}",
+            "regular_min": reg, "public_min": pub}
 
 @app.get("/api/source-override")
 async def get_source_override(user=Depends(verify_token)):
