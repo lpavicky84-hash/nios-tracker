@@ -1170,7 +1170,15 @@ function srcBadge(s){
     (p?'MVS Portal':'MVS Tracker')+'</span>'+
     (dup?'<span title="Same student also in the other source — kept once as MVS Portal" style="margin-left:5px;font-size:10px;font-weight:700;color:#7C3AED">&#8651; dup</span>':"");
 }
+function isLoginFailed(s){return (s.login_failed==1||s.login_failed===true);}
+function fixBtn(s){
+  return '<button onclick="editStudent(&quot;'+s.row_key+'&quot;)" '+
+    'style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:4px 10px;font-size:11.5px;font-weight:600;cursor:pointer">Edit &amp; fix data</button>';
+}
 function dlLinks(s){
+  if(isLoginFailed(s))
+    return '<div style="font-size:11.5px;font-weight:600;color:#b91c1c;max-width:240px">Documents blocked — NIOS login failed with this data. '+
+      'Links not shared (would open to an error). <div style="margin-top:5px">'+fixBtn(s)+'</div></div>';
   if(!s.reference_no||!s.dob) return '<span style="color:var(--warn);font-size:11px">ref/DOB missing</span>';
   const sess=(s.session||"").toLowerCase();
   const isPublic=sess.includes("april")||sess.includes("october")||sess.includes("public");
@@ -1192,6 +1200,8 @@ function dlBtn(s,kind,label){
 }
 function waBtn(s){
   if(!s.row_key)return "";
+  if(isLoginFailed(s))
+    return '<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">WhatsApp: FAILED (login error — not sent)</div>';
   const sent=(s.whatsapp_sent==1);
   return '<button class="btn-dl" style="background:#16A34A;color:#fff;border-color:#16A34A;margin-top:4px" '+
     'onclick="resendWa(&quot;'+s.row_key+'&quot;,this)">'+(sent?'Resend WhatsApp':'Send WhatsApp')+'</button>';
@@ -1202,8 +1212,11 @@ async function resendWa(rowKey,btn){
   let orig="";
   if(btn){btn.dataset.busy="1";orig=btn.innerHTML;btn.innerHTML="Sending...";}
   try{const r=await api("/api/wa-resend","POST",{row_key:rowKey});
-    if(r.ok)showToast("WhatsApp sent successfully");
-    else showToast("Failed: "+(r.info||"error"));}
+    if(r.ok){showToast("WhatsApp sent successfully");}
+    else{
+      showToast((r.login_failed?"Login failed — not sent. Edit & fix the data.":"Failed: "+(r.info||"error")));
+      try{loadConfirmed(1);}catch(e){}try{loadStudents(1);}catch(e){}try{loadDashboard();}catch(e){}
+    }}
   catch(e){showToast("Error: "+e.message);}
   finally{if(btn){btn.innerHTML=orig;btn.dataset.busy="";}}
 }
@@ -1973,7 +1986,9 @@ def reschedule_jobs():
     """Two interval jobs. BOTH data sources (MVS Portal + MVS Tracker) run together
     on the same interval; the split is by session group only:
         regular -> On Demand + Stream 2,  public -> April / October.
-    Next run = last + interval."""
+    Automatic runs happen ONLY at the set interval. We never fire a 'catch-up' run
+    right after a restart / redeploy / upload — if a run is needed sooner, the user
+    presses Run Now. So next run is always at least one full interval away."""
     reg = _interval_minutes("regular", 6)
     pub = _interval_minutes("public", 12)
     now = datetime.now()
@@ -1983,12 +1998,11 @@ def reschedule_jobs():
         pass
     for jid, grp, mins in [("job_regular", "regular", reg), ("job_public", "public", pub)]:
         last = _last_run_time(grp)
-        if last:
-            nxt = last + timedelta(minutes=mins)
-            if nxt <= now:
-                nxt = now + timedelta(seconds=20)      # overdue -> run shortly
-        else:
-            nxt = now + timedelta(minutes=mins)         # no history -> wait one interval
+        nxt = last + timedelta(minutes=mins) if last else now + timedelta(minutes=mins)
+        if nxt <= now:
+            # Overdue (e.g. app was restarted after a long gap). Do NOT burst-run —
+            # wait a full interval from now so an upload/redeploy never auto-triggers.
+            nxt = now + timedelta(minutes=mins)
         scheduler.add_job(lambda g=grp: run_status_check(g),
                           trigger=IntervalTrigger(minutes=mins),
                           id=jid, replace_existing=True, next_run_time=nxt)
@@ -2804,15 +2818,25 @@ async def wa_test(body: dict, user=Depends(verify_token)):
 
 @app.post("/api/wa-resend")
 async def wa_resend(body: dict, user=Depends(verify_token)):
-    """Manually (re)send documents to one student by row_key (session-aware)."""
+    """Manually (re)send documents to one student. VERIFIES the NIOS login first so a
+    broken link (wrong DOB/Reference) is never shared — it's marked failed instead."""
     import whatsapp
+    from nios_login import verify_login
     row_key = body.get("row_key", "")
     conn = get_db()
-    row = conn.execute("SELECT row_key, student_name, mobile, session, reference_no, dob "
+    row = conn.execute("SELECT row_key, student_name, mobile, session, reference_no, dob, enrollment_no "
                        "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="student not found")
+    ok_login, lmsg = verify_login(row["reference_no"], row["dob"], row["enrollment_no"] or "")
+    if not ok_login:
+        conn.execute("UPDATE student_status SET login_failed=1, login_remark=?, "
+                     "whatsapp_info=?, whatsapp_sent=0 WHERE row_key=?",
+                     (lmsg[:240], ("Not sent — " + lmsg)[:180], row_key))
+        conn.commit(); conn.close()
+        return {"ok": False, "info": lmsg, "login_failed": True}
+    conn.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
     ok, info = whatsapp.send_for_student(dict(row))
     if ok:
         conn.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",

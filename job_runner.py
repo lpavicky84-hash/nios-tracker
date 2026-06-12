@@ -419,8 +419,9 @@ def run_status_check(group_type="all", source_only=None, scope=None):
                     else:
                         login_blocked = True
                         stats["failed"] += 1
-                        c.execute("UPDATE student_status SET login_failed=1, login_remark=? WHERE row_key=?",
-                                  (lmsg[:240], row_key))
+                        c.execute("UPDATE student_status SET login_failed=1, login_remark=?, "
+                                  "whatsapp_info=?, whatsapp_sent=0 WHERE row_key=?",
+                                  (lmsg[:240], ("Not sent — " + lmsg)[:180], row_key))
                         logger.warning(f"Login verify FAILED {row_key}: {lmsg}")
                     conn.commit()
 
