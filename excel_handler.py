@@ -62,7 +62,20 @@ def read_students_from_excel(filepath):
         raise ValueError(f"Need 'Reference Number', 'Email' or 'Enrollment Number' column. Found: {hc}")
 
     def cell(row, col):
-        return str(ws.cell(row, col).value or "").strip() if col else ""
+        if not col:
+            return ""
+        v = ws.cell(row, col).value
+        if v is None:
+            return ""
+        # Excel often stores enrollment / mobile as numbers -> "220035253029.0".
+        # Convert whole-number floats to plain integers so NIOS login doesn't break.
+        if isinstance(v, float):
+            return str(int(v)) if v.is_integer() else str(v)
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, (datetime, date)):
+            return v.strftime("%d-%m-%Y")
+        return str(v).strip()
 
     def session_cell(row, col):
         """Format session: dates become 'Month YYYY', text stays as-is."""
