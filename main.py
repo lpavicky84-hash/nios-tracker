@@ -439,9 +439,9 @@ PORTAL_HTML = """<!DOCTYPE html>
           </div>
           <div class="filter-bar" id="s-daterow" style="display:none">
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
-              <input type="date" id="s-from"></label>
+              <input type="datetime-local" id="s-from"></label>
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">To
-              <input type="date" id="s-to"></label>
+              <input type="datetime-local" id="s-to"></label>
             <button class="btn btn-primary btn-sm" onclick="loadStudents(1)">Apply</button>
           <div id="s-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
@@ -480,9 +480,9 @@ PORTAL_HTML = """<!DOCTYPE html>
           </div>
           <div class="filter-bar" id="c-daterow" style="display:none">
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
-              <input type="date" id="c-from"></label>
+              <input type="datetime-local" id="c-from"></label>
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">To
-              <input type="date" id="c-to"></label>
+              <input type="datetime-local" id="c-to"></label>
             <button class="btn btn-primary btn-sm" onclick="loadConfirmed(1)">Apply</button>
           <div id="c-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
@@ -1400,12 +1400,12 @@ function fval(id){const e=document.getElementById(id);return e?e.value:"";}
 function dateRange(prefix){
   const preset=fval(prefix+"-datepreset");
   const now=new Date();
-  const ymd=d=>{const p=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());};
   let from="",to="";
-  if(preset==="today"){from=ymd(now);to=ymd(now);}
-  else if(preset==="yesterday"){const y=new Date(now);y.setDate(y.getDate()-1);from=ymd(y);to=ymd(y);}
-  else if(preset==="7d"){const s=new Date(now);s.setDate(s.getDate()-6);from=ymd(s);to=ymd(now);}
-  else if(preset==="custom"){from=fval(prefix+"-from");to=fval(prefix+"-to");}
+  if(preset==="today"){const s=new Date(now);s.setHours(0,0,0,0);from=fmtDT(s);to=fmtDT(now);}
+  else if(preset==="yesterday"){const s=new Date(now);s.setDate(s.getDate()-1);s.setHours(0,0,0,0);
+    const e=new Date(s);e.setHours(23,59,59,0);from=fmtDT(s);to=fmtDT(e);}
+  else if(preset==="7d"){const s=new Date(now);s.setDate(s.getDate()-6);s.setHours(0,0,0,0);from=fmtDT(s);to=fmtDT(now);}
+  else if(preset==="custom"){from=dtLocalToStr(fval(prefix+"-from"));to=dtLocalToStr(fval(prefix+"-to"));}
   return {from,to};
 }
 function onDatePreset(prefix,reload){
@@ -1716,13 +1716,20 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("session = ?"); params.append(session_filter)
     if class_filter:                       # "10" matches 10/10TH, "12" matches 12/12TH
         wc.append("class_level LIKE ?"); params.append(f"{class_filter}%")
-    # Date filter on when the status last changed; fall back to last_checked so a
-    # student with an empty last_changed is never dropped from a date range.
+    # Date/time filter on when the status last changed; fall back to last_checked so a
+    # student with an empty last_changed is never dropped. Accepts either a full
+    # "YYYY-MM-DD HH:MM:SS" (custom range with time) or a plain "YYYY-MM-DD".
+    def _dtval(v, end):
+        v = (v or "").strip()
+        if not v:
+            return ""
+        return v if len(v) > 10 else (v + (" 23:59:59" if end else " 00:00:00"))
     _dt = "COALESCE(NULLIF(last_changed,''), last_checked)"
-    if date_from:
-        wc.append(f"{_dt} >= ?"); params.append(f"{date_from} 00:00:00")
-    if date_to:
-        wc.append(f"{_dt} <= ?"); params.append(f"{date_to} 23:59:59")
+    df, dtv = _dtval(date_from, False), _dtval(date_to, True)
+    if df:
+        wc.append(f"{_dt} >= ?"); params.append(df)
+    if dtv:
+        wc.append(f"{_dt} <= ?"); params.append(dtv)
     return (("WHERE " + " AND ".join(wc)) if wc else ""), params
 
 @app.get("/api/students")
