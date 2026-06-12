@@ -1748,6 +1748,39 @@ async def dashboard(user=Depends(verify_token)):
         "session_counts": [dict(s) for s in sess_counts],
     }
 
+def normalize_session(s):
+    """Merge raw session text into clean filter categories so the dropdown shows ONE
+    entry per real category: every 'On Demand' variant -> 'On Demand',
+    'Stream 2' -> 'Stream 2', and public months group by month regardless of year
+    (e.g. 'April 2027' -> 'April'). Anything unrecognised is kept as-is."""
+    t = (s or "").strip().lower()
+    if not t:
+        return ""
+    if "syc" in t:                                               return "SYC"
+    if "on demand" in t or "ondemand" in t or "on-demand" in t:  return "On Demand"
+    if "stream 2" in t or "stream2" in t or "stream-2" in t:     return "Stream 2"
+    if "stream 1" in t or "stream1" in t or "stream-1" in t:     return "Stream 1"
+    if "april" in t:                                             return "April"
+    if "october" in t:                                           return "October"
+    return s.strip()
+
+def _session_clause(cat):
+    """SQL clause + params matching ALL raw variants of a normalized session category,
+    so selecting 'On Demand' catches both 'On Demand' and 'On Demand (June to Sept.)'."""
+    t = (cat or "").strip().lower()
+    pats = {
+        "on demand": ["%on demand%", "%ondemand%", "%on-demand%"],
+        "stream 2":  ["%stream 2%", "%stream2%", "%stream-2%"],
+        "stream 1":  ["%stream 1%", "%stream1%", "%stream-1%"],
+        "april":     ["%april%"],
+        "october":   ["%october%"],
+        "syc":       ["%syc%"],
+    }
+    if t in pats:
+        p = pats[t]
+        return "(" + " OR ".join(["session LIKE ?"] * len(p)) + ")", p
+    return "session = ?", [cat]
+
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to="", source_filter=""):
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
@@ -1767,7 +1800,8 @@ def _build_student_where(view, search, status_filter, session_filter,
     if status_filter:
         wc.append("current_status = ?"); params.append(status_filter)
     if session_filter:
-        wc.append("session = ?"); params.append(session_filter)
+        clause, sp = _session_clause(session_filter)
+        wc.append(clause); params += sp
     if source_filter:                      # mvs_portal | mvs_tracker (Data Type)
         wc.append("COALESCE(source,'mvs_tracker') = ?"); params.append(source_filter)
     if class_filter:                       # "10" matches 10/10TH, "12" matches 12/12TH
@@ -1801,11 +1835,13 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
         params + [per_page, offset]).fetchall()
-    sessions = conn.execute("SELECT DISTINCT session FROM student_status WHERE session != ''").fetchall()
+    raw_sessions = conn.execute("SELECT DISTINCT session FROM student_status WHERE session != ''").fetchall()
+    norm_sessions = sorted({normalize_session(r["session"]) for r in raw_sessions})
+    norm_sessions = [x for x in norm_sessions if x and x != "SYC"]   # SYC has its own page
     conn.close()
     return {"students": [dict(s) for s in students], "total": total, "page": page,
             "per_page": per_page, "pages": max(1, (total+per_page-1)//per_page),
-            "sessions": [s["session"] for s in sessions]}
+            "sessions": norm_sessions}
 
 @app.get("/api/export-students")
 async def export_students(view: str="normal", search: str="", status_filter: str="",
