@@ -186,14 +186,18 @@ DOC_URLS = {
 
 _session_cache = {}   # reference_no -> (session, expiry_ts)
 
-def get_logged_in_session(reference_no, dob, enrollment_no=""):
+def get_logged_in_session(reference_no, dob, enrollment_no="", force=False):
     """Return a logged-in session (cached ~5 min) or None.
-    Uses enrollment_no for login when given (SYC students), else reference_no."""
+    Uses enrollment_no for login when given (SYC students), else reference_no.
+    force=True ignores+clears the cache and logs in fresh (used for a retry)."""
     now = time.time()
     key = ("enr:" + enrollment_no) if enrollment_no else reference_no
-    cached = _session_cache.get(key)
-    if cached and cached[1] > now:
-        return cached[0]
+    if force:
+        _session_cache.pop(key, None)
+    else:
+        cached = _session_cache.get(key)
+        if cached and cached[1] > now:
+            return cached[0]
     session, resp = login_student(reference_no, dob, enrollment_no=enrollment_no)
     if resp is None or not is_logged_in(resp.text):
         return None
@@ -383,39 +387,53 @@ def fetch_document(reference_no, dob, kind, enrollment_no=""):
     path = DOC_URLS.get(kind)
     if not path:
         return None, "invalid document kind", None
-    session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no)
-    if session is None:
-        return None, f"login failed — DOB used was '{format_dob(dob)}'. Verify it matches NIOS records.", None
     ident = reference_no or enrollment_no or "doc"
     target = urljoin(BASE, path)
-    try:
-        r = session.get(target, headers=HEADERS, timeout=45)
-    except Exception as e:
-        return None, f"fetch error: {e}", None
-    ct = r.headers.get("Content-Type", "").lower()
-    # Already a PDF? serve directly
-    if "pdf" in ct or r.content[:4] == b"%PDF":
-        return r.content, "application/pdf", f"{kind}_{ident}.pdf"
-    # If NIOS bounced us back to the login page (session not valid / wrong DOB),
-    # don't serve that page as the document — report a clear error instead.
-    low = r.text.lower()
-    if ("login to your account" in low or 'loginform[' in low
-            or ("username / email" in low and "reset password" in low)):
-        return None, (f"NIOS rejected the login — DOB used was '{format_dob(dob)}'. "
-                      f"Please verify this DOB matches NIOS records, then Run Now."), None
-    # Print-ready HTML -> render a real PDF (best: print layout + embedded images)
-    if "html" in ct:
+    dob_str = format_dob(dob)
+    cache_key = ("enr:" + enrollment_no) if enrollment_no else reference_no
+    last_err = None
+    # Try twice: NIOS reCAPTCHA v3 is score-based and can intermittently reject an
+    # automated login even when the details are correct. On failure we drop the
+    # cached session and retry once with a fresh CSRF + captcha.
+    for attempt in range(2):
+        session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no,
+                                        force=(attempt == 1))
+        if session is None:
+            last_err = (f"login failed — DOB used was '{dob_str}'. "
+                        f"Verify it matches NIOS records.")
+            continue   # retry with a fresh login
         try:
-            pdf = html_to_pdf(r.text, session)
-            if pdf and pdf[:4] == b"%PDF":
-                return pdf, "application/pdf", f"{kind}_{ident}.pdf"
+            r = session.get(target, headers=HEADERS, timeout=45)
         except Exception as e:
-            logger.warning(f"PDF render failed for {kind}, falling back to HTML: {e}")
-        # Fallback: inline images + Save-as-PDF banner
-        html = inline_resources(r.text, session)
-        html = _inject_banner(html)
-        return html.encode("utf-8"), "text/html; charset=utf-8", f"{kind}_{ident}.html"
-    return None, f"unexpected content ({ct or 'unknown'})", None
+            last_err = f"fetch error: {e}"
+            continue
+        ct = r.headers.get("Content-Type", "").lower()
+        # Already a PDF? serve directly
+        if "pdf" in ct or r.content[:4] == b"%PDF":
+            return r.content, "application/pdf", f"{kind}_{ident}.pdf"
+        # If NIOS bounced us back to the login page (session not valid / captcha
+        # rejected), drop the session and retry once before giving up.
+        low = r.text.lower()
+        if ("login to your account" in low or 'loginform[' in low
+                or ("username / email" in low and "reset password" in low)):
+            last_err = (f"NIOS rejected the login — DOB used was '{dob_str}'. "
+                        f"Please verify this DOB matches NIOS records, then Run Now.")
+            _session_cache.pop(cache_key, None)
+            continue
+        # Print-ready HTML -> render a real PDF (best: print layout + embedded images)
+        if "html" in ct:
+            try:
+                pdf = html_to_pdf(r.text, session)
+                if pdf and pdf[:4] == b"%PDF":
+                    return pdf, "application/pdf", f"{kind}_{ident}.pdf"
+            except Exception as e:
+                logger.warning(f"PDF render failed for {kind}, falling back to HTML: {e}")
+            # Fallback: inline images + Save-as-PDF banner
+            html = inline_resources(r.text, session)
+            html = _inject_banner(html)
+            return html.encode("utf-8"), "text/html; charset=utf-8", f"{kind}_{ident}.html"
+        last_err = f"unexpected content ({ct or 'unknown'})"
+    return None, last_err or "login failed", None
 
 def fetch_id_card_html(reference_no, dob):
     """Return the raw ID-card page HTML (logged in as the student), or ''. """
