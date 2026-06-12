@@ -615,6 +615,15 @@ PORTAL_HTML = """<!DOCTYPE html>
                 Sample — SYC Students</button>
             </div>
           </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+            <span style="font-size:13px;font-weight:600">Data source for this sheet:</span>
+            <select id="upload-source" onchange="saveUploadSource()" style="max-width:260px">
+              <option value="">Auto-detect (recommended)</option>
+              <option value="mvs_portal">MVS Portal</option>
+              <option value="mvs_tracker">MVS Tracker</option>
+            </select>
+            <span style="font-size:11px;color:var(--muted)">Applied on the next Run Now</span>
+          </div>
           <div class="drop" id="drop" onclick="document.getElementById('file-input').click()">
             <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
             <div style="font-weight:600;font-size:15px">Click or drag Excel file here</div>
@@ -891,6 +900,7 @@ function nav(page){
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
   if(page==="settings"){loadIntervals();loadWa();}
+  if(page==="upload")loadUploadSource();
 }
 
 async function loadDashboard(){
@@ -1035,12 +1045,12 @@ function dlLinks(s){
   if(!s.reference_no||!s.dob) return '<span style="color:var(--warn);font-size:11px">ref/DOB missing</span>';
   const sess=(s.session||"").toLowerCase();
   const isPublic=sess.includes("april")||sess.includes("october")||sess.includes("public");
-  const isStream2=sess.includes("stream 2");
+  const isStream2=sess.includes("stream 2")||sess.includes("stream2")||sess.includes("stream-2")||sess.includes("stream ii");
   let b=[dlBtn(s,"id_card","ID Card")];
-  if(isPublic){
+  if(isStream2){
+    b.push(dlBtn(s,"app_form","App Form"));          // Stream 2: ID Card + App Form only (NO hall ticket)
+  }else if(isPublic){
     // Public exam students: ONLY id card
-  }else if(isStream2){
-    b.push(dlBtn(s,"app_form","App Form"));          // Stream 2: id + app form
   }else{
     b.push(dlBtn(s,"app_form","App Form"));          // On Demand: all three
     b.push(dlBtn(s,"hall_ticket","Hall Ticket"));
@@ -1428,6 +1438,13 @@ async function downloadExcel(){
   const blob=await r.blob();const url=URL.createObjectURL(blob);
   const a=document.createElement("a");a.href=url;a.download="nios_status_updated.xlsx";a.click();
   URL.revokeObjectURL(url);
+}
+async function saveUploadSource(){
+  try{await api("/api/source-override?value="+encodeURIComponent(fval("upload-source")),"POST");
+    showToast("Data source set for next run");}catch(e){showToast(""+e.message);}
+}
+async function loadUploadSource(){
+  try{const d=await api("/api/source-override");const sel=document.getElementById("upload-source");if(sel)sel.value=d.value||"";}catch(e){}
 }
 async function downloadSample(type){
   try{
@@ -2154,6 +2171,18 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
     set_setting("interval_public", pub)
     reschedule_jobs()
     return {"message": f"Regular: {reg}h, Public: {pub}h", "regular": reg, "public": pub}
+
+@app.get("/api/source-override")
+async def get_source_override(user=Depends(verify_token)):
+    return {"value": get_setting("source_override", "")}
+
+@app.post("/api/source-override")
+async def set_source_override(value: str = "", user=Depends(verify_token)):
+    """Force the data type of the NEXT run's sheet. Empty = auto-detect."""
+    if value not in ("", "mvs_portal", "mvs_tracker"):
+        raise HTTPException(status_code=400, detail="invalid value")
+    set_setting("source_override", value)
+    return {"ok": True, "value": value}
 
 @app.get("/api/debug-login")
 async def debug_login_endpoint(ref: str, dob: str, action: str = "", user=Depends(verify_token)):
