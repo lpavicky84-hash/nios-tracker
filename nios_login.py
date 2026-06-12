@@ -311,13 +311,41 @@ def inline_resources(html, session):
 
 PRINT_BANNER = """
 <div id="__mvs_bar" style="position:fixed;top:0;left:0;right:0;z-index:999999;background:#4F46E5;
-color:#fff;padding:10px 16px;text-align:center;font-family:-apple-system,Arial,sans-serif;
+color:#fff;padding:10px 14px;text-align:center;font-family:-apple-system,Arial,sans-serif;
 box-shadow:0 2px 8px rgba(0,0,0,.2)">
-  <button onclick="window.print()" style="padding:9px 22px;font-size:15px;border:none;border-radius:8px;
+  <button onclick="mvsPrint()" style="padding:10px 24px;font-size:15px;border:none;border-radius:8px;
   background:#fff;color:#4F46E5;font-weight:700;cursor:pointer">&#128196; Save as PDF / Print</button>
-  <span style="margin-left:12px;font-size:13px">or press Ctrl+P (Mac: Cmd+P) to save</span>
+  <div style="font-size:12px;margin-top:6px;opacity:.95">If the button does not respond, open your browser
+  menu ( &#8942; or the Share icon ) and tap <b>Print</b> or <b>Save as PDF</b>.</div>
 </div>
-<style>@media print{#__mvs_bar{display:none!important}} body{padding-top:56px!important}</style>
+<div id="__mvs_inapp" style="display:none;position:fixed;left:0;right:0;z-index:999998;background:#FEF3C7;
+color:#92400E;padding:9px 14px;text-align:center;font-family:-apple-system,Arial,sans-serif;
+font-size:12.5px;font-weight:600;border-bottom:1px solid #FCD34D">
+  For best results open this page in <b>Chrome</b> or <b>Safari</b>: tap the menu ( &#8942; ) at the top-right
+  &rarr; <b>Open in browser</b>, then tap Save as PDF.
+</div>
+<style>@media print{#__mvs_bar,#__mvs_inapp{display:none!important}} body{padding-top:70px!important}</style>
+<script>
+function mvsPrint(){
+  try{ window.focus(); }catch(e){}
+  try{ window.print(); }
+  catch(e){ alert("To save: open your browser menu ( the three dots or Share icon ) and choose Print or Save as PDF."); }
+}
+(function(){
+  try{
+    var ua = navigator.userAgent || "";
+    if(/(WhatsApp|Instagram|FBAN|FBAV|FB_IAB|Line|Snapchat|Twitter|Threads|MicroMessenger|GSA)/i.test(ua)){
+      var b = document.getElementById("__mvs_inapp");
+      if(b){
+        var topBar = document.getElementById("__mvs_bar");
+        b.style.top = (topBar ? topBar.offsetHeight : 64) + "px";
+        b.style.display = "block";
+        document.body.style.paddingTop = ((topBar ? topBar.offsetHeight : 64) + b.offsetHeight + 6) + "px";
+      }
+    }
+  }catch(e){}
+})();
+</script>
 """
 
 def _inject_banner(html):

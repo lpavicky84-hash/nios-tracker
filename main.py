@@ -236,6 +236,7 @@ PORTAL_HTML = """<!DOCTYPE html>
   .b-confirmed{background:#86EFAC;color:#14532D}
   .b-rejected{background:#FECACA;color:#991B1B}
   .b-error{background:#E2E8F0;color:#475569}
+  .b-syc{background:#EDE9FE;color:#5B21B6}
 
   .pg-bar{display:flex;align-items:center;justify-content:space-between;margin-top:18px;flex-wrap:wrap;gap:12px}
   .pg-controls{display:flex;gap:6px;align-items:center}
@@ -424,6 +425,9 @@ PORTAL_HTML = """<!DOCTYPE html>
               <option>Approved</option><option>Rejected</option><option>Fetch Error</option>
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
+            <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
+            <input type="date" id="s-from" onchange="loadStudents(1)" title="Status changed from" style="flex:0 0 auto;min-width:auto">
+            <input type="date" id="s-to" onchange="loadStudents(1)" title="Status changed to" style="flex:0 0 auto;min-width:auto">
             <button class="btn btn-outline btn-sm" onclick="exportStudents('normal')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
@@ -451,6 +455,9 @@ PORTAL_HTML = """<!DOCTYPE html>
               <option>Admission Confirmed</option><option>Admitted</option>
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
+            <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
+            <input type="date" id="c-from" onchange="loadConfirmed(1)" title="Confirmed from" style="flex:0 0 auto;min-width:auto">
+            <input type="date" id="c-to" onchange="loadConfirmed(1)" title="Confirmed to" style="flex:0 0 auto;min-width:auto">
             <button class="btn btn-outline btn-sm" onclick="exportStudents('confirmed')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
@@ -479,7 +486,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           <div id="syc-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
-              <th>#</th><th>Enrollment No</th><th>Student Name</th><th>Mobile</th><th>DOB</th><th>Hall Ticket</th><th>Remove</th>
+              <th>#</th><th>Enrollment No</th><th>Student Name</th><th>Mobile</th><th>DOB</th><th>Status</th><th>Hall Ticket</th><th>Remove</th>
             </tr></thead><tbody id="syc-body"></tbody></table>
           </div>
           <div class="pg-bar" id="syc-pg"></div>
@@ -566,8 +573,20 @@ PORTAL_HTML = """<!DOCTYPE html>
       <section id="sec-upload" class="page-section">
         <div class="card">
           <h3>Upload Student Excel</h3>
-          <p style="color:var(--muted);font-size:13px;margin-bottom:18px">
-            Upload an Excel file (.xlsx). Columns: Student Name, Mobile, Class, Reference Number, Email, DOB, Admission Session.</p>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+            Upload an Excel file (.xlsx). Columns: Student Name, Mobile No, Class, Reference Number, Enrol No, Email, Date of Birth, Admission Session.</p>
+          <div style="background:var(--soft);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:18px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">&#128196; Not sure about the format? Download a sample sheet:</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Fill your data in the same column order, then upload.</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="downloadSample('regular')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Sample — Regular (On Demand / Stream 2 / April-October)</button>
+              <button class="btn btn-outline btn-sm" onclick="downloadSample('syc')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Sample — SYC Students</button>
+            </div>
+          </div>
           <div class="drop" id="drop" onclick="document.getElementById('file-input').click()">
             <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
             <div style="font-weight:600;font-size:15px">Click or drag Excel file here</div>
@@ -640,6 +659,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             <div class="legend-item b-approved"><div class="nm">Approved</div><div class="ds">Application approved</div></div>
             <div class="legend-item b-confirmed"><div class="nm">Admission Confirmed</div><div class="ds">Admission confirmed</div></div>
             <div class="legend-item b-rejected"><div class="nm">Rejected</div><div class="ds">Application rejected</div></div>
+            <div class="legend-item b-syc"><div class="nm">SYC</div><div class="ds">SYC student — hall ticket ready</div></div>
           </div>
         </div>
         <div class="card">
@@ -963,7 +983,7 @@ function debounceRequired(){clearTimeout(rTimer);rTimer=setTimeout(()=>loadRequi
 
 function badge(s){
   const m={"Pending":"b-pending","Documents Verification In Progress":"b-docs","Document Required":"b-required",
-    "Verified":"b-verified","Approved":"b-approved","Admission Confirmed":"b-confirmed","Rejected":"b-rejected"};
+    "Verified":"b-verified","Approved":"b-approved","Admission Confirmed":"b-confirmed","Rejected":"b-rejected","SYC":"b-syc"};
   return '<span class="badge '+(m[s]||'b-error')+'">'+(s||'Unknown')+'</span>';
 }
 function dlLinks(s){
@@ -1053,7 +1073,8 @@ async function loadStudents(page){
   const q=new URLSearchParams({page:page,per_page:perPage,view:"normal",
     search:document.getElementById("s-search").value,
     status_filter:document.getElementById("s-status").value,
-    session_filter:document.getElementById("s-session").value});
+    session_filter:document.getElementById("s-session").value,
+    class_filter:fval("s-class"),date_from:fval("s-from"),date_to:fval("s-to")});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -1075,7 +1096,8 @@ async function loadConfirmed(page){
   const q=new URLSearchParams({page:page,per_page:perPage,view:"confirmed",
     search:document.getElementById("c-search").value,
     status_filter:(document.getElementById("c-status")?document.getElementById("c-status").value:""),
-    session_filter:document.getElementById("c-session").value});
+    session_filter:document.getElementById("c-session").value,
+    class_filter:fval("c-class"),date_from:fval("c-from"),date_to:fval("c-to")});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -1110,7 +1132,8 @@ async function loadSyc(page){
 function sycRow(s,i){
   var nm=(s.student_name||'').replace(/"/g,'&quot;');
   return '<tr><td>'+i+'</td><td>'+(s.enrollment_no||'—')+'</td><td>'+(s.student_name||'')+'</td>'+
-    '<td>'+(s.mobile||'')+'</td><td>'+(s.dob||'')+'</td><td>'+
+    '<td>'+(s.mobile||'')+'</td><td>'+(s.dob||'')+'</td>'+
+    '<td><span class="badge b-syc">SYC &#10003; Ready</span></td><td>'+
     '<button class="btn-dl" onclick="downloadSycHall(&quot;'+s.row_key+'&quot;,this)">'+DL_ICON+' Download Hall Ticket</button>'+
     '<div class="syc-prog" style="display:none;height:7px;background:#E2E8F0;border-radius:4px;margin-top:7px;overflow:hidden;max-width:220px"><div class="syc-bar" style="height:100%;width:0;background:#4F46E5;transition:width .35s"></div></div>'+
     '<div class="syc-msg" style="font-size:11px;color:var(--muted);margin-top:3px"></div></td>'+
@@ -1338,13 +1361,25 @@ async function downloadExcel(){
   const a=document.createElement("a");a.href=url;a.download="nios_status_updated.xlsx";a.click();
   URL.revokeObjectURL(url);
 }
+async function downloadSample(type){
+  try{
+    const r=await fetch(API+"/api/sample-sheet?type="+type,{headers:{"Authorization":"Bearer "+TOKEN}});
+    if(!r.ok){showToast("Sample download failed");return;}
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;
+    a.download="MVS_sample_"+type+".xlsx";a.click();
+    URL.revokeObjectURL(url);
+    showToast("Sample sheet downloaded");
+  }catch(e){showToast("Error: "+e.message);}
+}
 function fval(id){const e=document.getElementById(id);return e?e.value:"";}
 async function exportStudents(view){
-  let search="",status="",session="";
-  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");}
+  let search="",status="",session="",cls="",from="",to="";
+  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");from=fval("c-from");to=fval("c-to");}
   else if(view==="required"){search=fval("r-search");status=fval("r-status");session=fval("r-session");}
-  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");}
-  const q=new URLSearchParams({view:view,search:search,status_filter:status,session_filter:session});
+  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");from=fval("s-from");to=fval("s-to");}
+  const q=new URLSearchParams({view:view,search:search,status_filter:status,session_filter:session,
+    class_filter:cls,date_from:from,date_to:to});
   try{
     showToast("Preparing Excel...");
     const r=await fetch(API+"/api/export-students?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
@@ -1618,15 +1653,10 @@ async def dashboard(user=Depends(verify_token)):
         "session_counts": [dict(s) for s in sess_counts],
     }
 
-@app.get("/api/students")
-async def get_students(page: int=1, per_page: int=50, search: str="",
-                       status_filter: str="", session_filter: str="",
-                       view: str="normal", user=Depends(verify_token)):
-    conn = get_db()
-    offset = (page - 1) * per_page
+def _build_student_where(view, search, status_filter, session_filter,
+                         class_filter="", date_from="", date_to=""):
+    """Shared WHERE builder so the table and its Excel export stay perfectly in sync."""
     wc, params = [], []
-
-    # View determines base filter
     if view == "confirmed":
         wc.append("is_confirmed = 1")
     elif view == "required":
@@ -1635,7 +1665,6 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
         wc.append("is_confirmed = 0")
         wc.append("current_status != 'SYC'")
         wc.append("(session NOT LIKE '%syc%' OR session IS NULL)")
-
     if search:
         wc.append("(reference_no LIKE ? OR student_name LIKE ? OR email LIKE ?)")
         params += [f"%{search}%", f"%{search}%", f"%{search}%"]
@@ -1643,7 +1672,23 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
         wc.append("current_status = ?"); params.append(status_filter)
     if session_filter:
         wc.append("session = ?"); params.append(session_filter)
-    where = ("WHERE " + " AND ".join(wc)) if wc else ""
+    if class_filter:                       # "10" matches 10/10TH, "12" matches 12/12TH
+        wc.append("class_level LIKE ?"); params.append(f"{class_filter}%")
+    if date_from:
+        wc.append("last_changed >= ?"); params.append(f"{date_from} 00:00:00")
+    if date_to:
+        wc.append("last_changed <= ?"); params.append(f"{date_to} 23:59:59")
+    return (("WHERE " + " AND ".join(wc)) if wc else ""), params
+
+@app.get("/api/students")
+async def get_students(page: int=1, per_page: int=50, search: str="",
+                       status_filter: str="", session_filter: str="",
+                       class_filter: str="", date_from: str="", date_to: str="",
+                       view: str="normal", user=Depends(verify_token)):
+    conn = get_db()
+    offset = (page - 1) * per_page
+    where, params = _build_student_where(view, search, status_filter, session_filter,
+                                         class_filter, date_from, date_to)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
@@ -1656,28 +1701,18 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
 
 @app.get("/api/export-students")
 async def export_students(view: str="normal", search: str="", status_filter: str="",
-                         session_filter: str="", user=Depends(verify_token)):
-    """Export the CURRENTLY FILTERED list (active / confirmed / required) to .xlsx."""
+                         session_filter: str="", class_filter: str="",
+                         date_from: str="", date_to: str="", user=Depends(verify_token)):
+    """Export the CURRENTLY FILTERED list (active / confirmed / required) to .xlsx.
+    Honours the exact same filters as the on-screen table (search, status, session,
+    class 10/12, and date range)."""
     import io, openpyxl
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     conn = get_db()
-    wc, params = [], []
-    if view == "confirmed":
-        wc.append("is_confirmed = 1")
-    elif view == "required":
-        wc.append("current_status = 'Document Required'")
-    else:
-        wc.append("is_confirmed = 0")
-    if search:
-        wc.append("(reference_no LIKE ? OR student_name LIKE ? OR email LIKE ?)")
-        params += [f"%{search}%", f"%{search}%", f"%{search}%"]
-    if status_filter:
-        wc.append("current_status = ?"); params.append(status_filter)
-    if session_filter:
-        wc.append("session = ?"); params.append(session_filter)
-    where = ("WHERE " + " AND ".join(wc)) if wc else ""
+    where, params = _build_student_where(view, search, status_filter, session_filter,
+                                         class_filter, date_from, date_to)
     rows = conn.execute(f"SELECT * FROM student_status {where} ORDER BY student_name", params).fetchall()
     conn.close()
 
@@ -1909,6 +1944,42 @@ async def download_excel(user=Depends(verify_token)):
     return FileResponse(EXCEL_PATH,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename="nios_status_updated.xlsx")
+
+@app.get("/api/sample-sheet")
+async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
+    """Generate a ready-to-fill sample Excel so counsellors always know the format."""
+    import io, openpyxl
+    from openpyxl.utils import get_column_letter
+    from fastapi import Response
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Students"
+    headers = ["STUDENT NAME", "MOBILE NO", "CLASS", "REFERENCE NUMBER", "Enrol No", "Email",
+               "Date of Birth", "ADMISSION SESSION", "ADMISSION STATUS", "REMARKS",
+               "DOWNLOAD ID CARD", "DOWNLOAD APPLICATION FORM", "HALL TICKET"]
+    ws.append(headers)
+    if type == "syc":
+        rows = [
+            ["AYUSH KUMAR", "9876543210", "12TH", "", "220004253089", "", "19-06-2006", "SYC"],
+            ["PETER RANA", "7428240153", "12TH", "", "50258253204", "peter@example.com", "17-05-2001", "SYC"],
+        ]
+    else:
+        rows = [
+            ["SABBA NOOR", "6205148930", "12TH", "D1026300062", "", "", "05-02-2010", "On Demand"],
+            ["DEVRAJ JAT", "7737485139", "10TH", "B0926200020", "", "", "01-07-2004", "Stream 2"],
+            ["SANA PARWEEN", "9523534252", "12TH", "A1026300040", "", "sana@example.com", "28-02-2009", "April"],
+        ]
+    for r in rows:
+        ws.append(r)
+    for i, h in enumerate(headers, 1):
+        ws.column_dimensions[get_column_letter(i)].width = max(14, len(h) + 2)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fn = "MVS_sample_syc.xlsx" if type == "syc" else "MVS_sample_regular.xlsx"
+    return Response(content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fn}"'})
 
 @app.get("/api/intervals")
 async def get_intervals(user=Depends(verify_token)):

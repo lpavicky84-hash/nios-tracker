@@ -303,8 +303,9 @@ def run_status_check(group_type="all"):
             conn.commit()
             logger.info(f"Run cancelled | Checked:{checked} Changed:{changed} Failed:{failed}")
         else:
-            _finish(conn, run_id, checked, changed, failed, "completed")
-            logger.info(f"Run done | Checked:{checked} Changed:{changed} Failed:{failed}")
+            done_msg = "completed" if not syc_list else f"completed ({len(syc_list)} SYC registered)"
+            _finish(conn, run_id, checked, changed, failed, done_msg)
+            logger.info(f"Run done | Checked:{checked} Changed:{changed} Failed:{failed} SYC:{len(syc_list)}")
 
     except Exception as e:
         logger.error(f"Run failed: {e}")

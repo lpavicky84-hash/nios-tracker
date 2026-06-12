@@ -53,7 +53,7 @@ def read_students_from_excel(filepath):
     dob_col     = _find_col(hc, ["date of birth", "dob", "birth"])
     session_col = _find_col(hc, ["admission session", "session"])
     enroll_col  = _find_col(hc, ["enrollment number", "enrolment number", "enrollment no",
-                                 "enrolment no", "enroll no", "enrolment", "enrollment"])
+                                 "enrolment no", "enrol no", "enroll no", "enrol", "enrolment", "enrollment"])
 
     logger.info(f"Cols ref:{ref_col} name:{name_col} email:{email_col} dob:{dob_col} session:{session_col} enroll:{enroll_col}")
 
