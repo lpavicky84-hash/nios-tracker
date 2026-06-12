@@ -40,10 +40,22 @@ def _find_col(headers_clean, keywords):
                 return i + 1
     return None
 
+def detect_source(raw_headers):
+    """Decide where a sheet came from by its header style.
+    The MVS student portal exports camelCase headers (referenceNo, examSession,
+    enrollmentNo, niosAdmissionStatus); manually-prepared sheets use spaced/UPPER
+    headers (REFERENCE NUMBER, ADMISSION SESSION...). Returns 'mvs_portal' | 'mvs_tracker'."""
+    blob = " ".join(str(h or "").strip().lower() for h in raw_headers)
+    portal_sigs = ("referenceno", "examsession", "niosadmissionstatus",
+                   "enrollmentno", "admissionstatus")
+    return "mvs_portal" if any(sig in blob for sig in portal_sigs) else "mvs_tracker"
+
 def read_students_from_excel(filepath):
     wb = openpyxl.load_workbook(filepath)
     ws = wb.active
+    raw_headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
     hc = [_clean(ws.cell(1, c).value) for c in range(1, ws.max_column + 1)]
+    source = detect_source(raw_headers)
 
     ref_col     = _find_col(hc, ["reference number", "reference no", "ref no", "refno", "reference"])
     name_col    = _find_col(hc, ["student name", "name"])
@@ -109,6 +121,7 @@ def read_students_from_excel(filepath):
             "mobile":       cell(row, mobile_col),
             "class_level":  cell(row, class_col),
             "session":      session_cell(row, session_col),
+            "source":       source,
             # Stable key: prefer email, then reference, then enrollment (SYC students).
             "row_key":      rk,
         })

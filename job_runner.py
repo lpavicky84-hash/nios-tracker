@@ -39,10 +39,19 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
     wa_on = get_setting("wa_enabled", "0") == "1"
     for s in syc_list:
         row_key = s["row_key"]
+        new_source = s.get("source", "mvs_tracker")
+        prev = c.execute("SELECT source FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+        prev_source = (prev["source"] if prev and prev["source"] else "")
+        cross = 0
+        final_source = new_source
+        if prev_source and prev_source != new_source:
+            final_source = "mvs_portal"
+            cross = 1
         c.execute("""INSERT INTO student_status
             (row_key, reference_no, enrollment_no, email, dob, student_name, mobile, class_level,
-             session, current_status, remark, is_confirmed, last_checked, last_changed, check_count)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+             session, current_status, remark, is_confirmed, last_checked, last_changed,
+             source, cross_dup, check_count)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
             ON CONFLICT(row_key) DO UPDATE SET
                 enrollment_no = CASE WHEN excluded.enrollment_no != '' THEN excluded.enrollment_no ELSE enrollment_no END,
                 student_name = excluded.student_name,
@@ -51,10 +60,12 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
                 session = excluded.session,
                 current_status = 'SYC',
                 last_checked = excluded.last_checked,
+                source = excluded.source,
+                cross_dup = CASE WHEN excluded.cross_dup=1 THEN 1 ELSE cross_dup END,
                 check_count = check_count + 1""",
             (row_key, s.get("reference_no", ""), s.get("enrollment_no", ""), s.get("email", ""),
              s.get("dob", ""), s.get("student_name", ""), s.get("mobile", ""), s.get("class_level", ""),
-             s.get("session", ""), "SYC", "", 0, now_s, now_s))
+             s.get("session", ""), "SYC", "", 0, now_s, now_s, final_source, cross))
         if stats is not None:
             stats["checked"] += 1
             stats["same"] += 1
@@ -139,6 +150,9 @@ def run_status_check(group_type="all"):
         all_students, dup_count = dedupe_students(all_students)
         if dup_count:
             logger.info(f"Skipped {dup_count} duplicate row(s) from Excel")
+        # Map each student's row_key to the data source detected from the sheet
+        # (mvs_portal = MVS student-portal export, mvs_tracker = manual upload).
+        src_by_key = {s["row_key"]: s.get("source", "mvs_tracker") for s in all_students}
 
         # Clean any pre-existing duplicate rows (same reference under multiple keys):
         # keep the confirmed / most-recently-checked one.
@@ -211,9 +225,19 @@ def run_status_check(group_type="all"):
             is_conf = 1 if new_status == "Admission Confirmed" else 0
             now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            old = c.execute("SELECT current_status FROM student_status WHERE row_key=?",
+            old = c.execute("SELECT current_status, source FROM student_status WHERE row_key=?",
                             (row_key,)).fetchone()
             old_status = old["current_status"] if old else None
+            # Data source + cross-source duplicate detection. If this student already
+            # exists from a DIFFERENT source, it's the SAME student in both MVS Portal
+            # and MVS Tracker -> keep ONE row, give priority to MVS Portal, and flag it.
+            new_source = src_by_key.get(row_key, "mvs_tracker")
+            prev_source = (old["source"] if old and old["source"] else "")
+            cross = 0
+            final_source = new_source
+            if prev_source and prev_source != new_source:
+                final_source = "mvs_portal"
+                cross = 1
             status_changed = (old_status != new_status)
             if status_changed:
                 stats["changed"] += 1
@@ -226,8 +250,9 @@ def run_status_check(group_type="all"):
 
             c.execute("""INSERT INTO student_status
                 (row_key, reference_no, enrollment_no, email, dob, student_name, mobile, class_level,
-                 session, current_status, remark, is_confirmed, last_checked, last_changed, check_count)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+                 session, current_status, remark, is_confirmed, last_checked, last_changed,
+                 source, cross_dup, check_count)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
                 ON CONFLICT(row_key) DO UPDATE SET
                     reference_no = CASE WHEN excluded.reference_no != '' THEN excluded.reference_no ELSE reference_no END,
                     enrollment_no = CASE WHEN excluded.enrollment_no != '' THEN excluded.enrollment_no ELSE enrollment_no END,
@@ -243,10 +268,13 @@ def run_status_check(group_type="all"):
                     last_checked = excluded.last_checked,
                     last_changed = CASE WHEN current_status != excluded.current_status
                                         THEN excluded.last_changed ELSE last_changed END,
+                    source = excluded.source,
+                    cross_dup = CASE WHEN excluded.cross_dup=1 THEN 1 ELSE cross_dup END,
                     check_count = check_count + 1""",
                 (row_key, new_ref, res.get("enrollment_no", ""), res.get("email", ""), res.get("dob", ""),
                  res.get("student_name", ""), res.get("mobile", ""), res.get("class_level", ""),
-                 res.get("session", ""), new_status, res.get("remark", ""), is_conf, now_s, now_s))
+                 res.get("session", ""), new_status, res.get("remark", ""), is_conf, now_s, now_s,
+                 final_source, cross))
 
             if new_ref:
                 c.execute("DELETE FROM student_status WHERE reference_no=? AND row_key!=?",

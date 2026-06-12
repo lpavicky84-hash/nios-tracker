@@ -20,10 +20,6 @@ import aiofiles
 
 from database import init_db, get_db, get_setting, set_setting
 from job_runner import run_status_check
-try:
-    import mvs_sync
-except Exception:
-    mvs_sync = None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -430,6 +426,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
+            <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="s-datepreset" onchange="onDatePreset('s',()=>loadStudents(1))">
               <option value="">All dates</option>
               <option value="today">Today</option>
@@ -452,7 +449,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
-              <th>Status</th><th>Last Checked</th>
+              <th>Status</th><th>Last Checked</th><th>Action</th>
             </tr></thead><tbody id="s-body"></tbody></table>
           </div>
           <div class="pg-bar" id="s-pg"></div>
@@ -472,6 +469,7 @@ PORTAL_HTML = """<!DOCTYPE html>
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
+            <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="c-datepreset" onchange="onDatePreset('c',()=>loadConfirmed(1))">
               <option value="">All dates</option>
               <option value="today">Today</option>
@@ -494,7 +492,7 @@ PORTAL_HTML = """<!DOCTYPE html>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
-              <th>Status</th><th>Downloads</th><th>Confirmed On</th>
+              <th>Status</th><th>Downloads</th><th>Confirmed On</th><th>Action</th>
             </tr></thead><tbody id="c-body"></tbody></table>
           </div>
           <div class="pg-bar" id="c-pg"></div>
@@ -533,6 +531,7 @@ PORTAL_HTML = """<!DOCTYPE html>
               <option>Document Required</option>
             </select>
             <select id="r-session" onchange="loadRequired(1)"><option value="">All Sessions</option></select>
+            <select id="r-source" onchange="loadRequired(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <button class="btn btn-outline btn-sm" onclick="exportStudents('required')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
@@ -566,6 +565,7 @@ PORTAL_HTML = """<!DOCTYPE html>
               <option>Documents Verification In Progress</option><option>Document Required</option>
               <option>Approved</option><option>Rejected</option>
             </select>
+            <select id="h-source" onchange="loadHistory(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <button class="btn btn-outline btn-sm" onclick="exportHistory()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
@@ -908,7 +908,7 @@ async function loadDashboard(){
     renderDistribution(d.status_distribution,d.total_students);
     renderSessionCounts(d.session_counts||[]);
     renderRuns(d.recent_runs,"recent-runs");
-    renderBell(d.notifications||[]);
+    renderBell(d.notifications||[],d.dup_notifications||[]);
   }catch(e){showToast("Error: "+e.message);}
 }
 function renderSessionCounts(arr){
@@ -988,20 +988,29 @@ async function cancelRun(rid){
 
 function toggleBell(e){e.stopPropagation();document.getElementById("bell-dropdown").classList.toggle("open");}
 document.addEventListener("click",()=>document.getElementById("bell-dropdown").classList.remove("open"));
-async function refreshBell(){try{const d=await api("/api/dashboard");renderBell(d.notifications||[]);}catch(e){}}
-function renderBell(notifs){
-  const n=notifs.length;
+async function refreshBell(){try{const d=await api("/api/dashboard");renderBell(d.notifications||[],d.dup_notifications||[]);}catch(e){}}
+function renderBell(notifs,dups){
+  dups=dups||[];
+  const n=notifs.length, total=n+dups.length;
   const badge=document.getElementById("bell-badge");
   const navB=document.getElementById("nav-required-badge");
-  badge.textContent=n;badge.style.display=n?"flex":"none";
+  badge.textContent=total;badge.style.display=total?"flex":"none";
   navB.textContent=n;navB.style.display=n?"inline-block":"none";
-  document.getElementById("bell-head-cnt").textContent=n;
+  document.getElementById("bell-head-cnt").textContent=total;
   const list=document.getElementById("bell-list");
-  list.innerHTML=n?notifs.map(x=>'<div class="notif-item"><div class="dot"></div><div>'+
+  let html="";
+  if(n){html+=notifs.map(x=>'<div class="notif-item"><div class="dot"></div><div>'+
     '<div class="nm">'+(x.student_name||"—")+'</div>'+
     '<div class="rf">'+(x.reference_no||"No ref")+'</div>'+
-    (x.remark?'<div class="rk">'+x.remark+'</div>':"")+'</div></div>').join("")
-    :'<div class="notif-empty">No pending documents</div>';
+    (x.remark?'<div class="rk">'+x.remark+'</div>':"")+'</div></div>').join("");}
+  if(dups.length){
+    html+='<div style="padding:7px 14px;font-size:11px;font-weight:800;color:#5B21B6;background:#EDE9FE;border-top:1px solid var(--border)">&#9888; DUPLICATE — kept as MVS Portal</div>';
+    html+=dups.map(x=>'<div class="notif-item"><div class="dot" style="background:#7C3AED"></div><div>'+
+      '<div class="nm">'+(x.student_name||"—")+'</div>'+
+      '<div class="rf">'+(x.reference_no||x.enrollment_no||"—")+'</div>'+
+      '<div class="rk">Same student in MVS Portal &amp; MVS Tracker → kept once as MVS Portal</div></div></div>').join("");
+  }
+  list.innerHTML=html||'<div class="notif-empty">No pending documents</div>';
 }
 
 let stTimer,cTimer,rTimer;
@@ -1013,6 +1022,14 @@ function badge(s){
   const m={"Pending":"b-pending","Documents Verification In Progress":"b-docs","Document Required":"b-required",
     "Verified":"b-verified","Approved":"b-approved","Admission Confirmed":"b-confirmed","Rejected":"b-rejected","SYC":"b-syc"};
   return '<span class="badge '+(m[s]||'b-error')+'">'+(s||'Unknown')+'</span>';
+}
+function srcBadge(s){
+  var p=(s.source||"mvs_tracker")==="mvs_portal";
+  var dup=(s.cross_dup==1||s.cross_dup===true);
+  return '<span style="display:inline-block;white-space:nowrap;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;'+
+    (p?'background:#EDE9FE;color:#5B21B6':'background:#E0F2FE;color:#075985')+'">'+
+    (p?'MVS Portal':'MVS Tracker')+'</span>'+
+    (dup?'<span title="Same student also in the other source — kept once as MVS Portal" style="margin-left:5px;font-size:10px;font-weight:700;color:#7C3AED">&#8651; dup</span>':"");
 }
 function dlLinks(s){
   if(!s.reference_no||!s.dob) return '<span style="color:var(--warn);font-size:11px">ref/DOB missing</span>';
@@ -1103,7 +1120,7 @@ async function loadStudents(page){
     search:document.getElementById("s-search").value,
     status_filter:document.getElementById("s-status").value,
     session_filter:document.getElementById("s-session").value,
-    class_filter:fval("s-class"),date_from:dr.from,date_to:dr.to});
+    class_filter:fval("s-class"),source_filter:fval("s-source"),date_from:dr.from,date_to:dr.to});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -1112,10 +1129,11 @@ async function loadStudents(page){
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
-      '<td>'+(s.student_name||"—")+'</td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
+      '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td>'+badge(s.current_status)+'</td>'+
-      '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+'</td></tr>').join("")
-      :'<tr><td colspan="6" class="empty">No active students found</td></tr>';
+      '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+'</td>'+
+      '<td>'+delBtn(s)+'</td></tr>').join("")
+      :'<tr><td colspan="7" class="empty">No active students found</td></tr>';
     renderPg("s-pg",page,d.pages,"loadStudents");
   }catch(e){showToast(""+e.message);}
 }
@@ -1127,7 +1145,7 @@ async function loadConfirmed(page){
     search:document.getElementById("c-search").value,
     status_filter:(document.getElementById("c-status")?document.getElementById("c-status").value:""),
     session_filter:document.getElementById("c-session").value,
-    class_filter:fval("c-class"),date_from:dr.from,date_to:dr.to});
+    class_filter:fval("c-class"),source_filter:fval("c-source"),date_from:dr.from,date_to:dr.to});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -1136,10 +1154,11 @@ async function loadConfirmed(page){
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
-      '<td>'+(s.student_name||"—")+'</td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
+      '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td>'+badge(s.current_status)+'</td><td style="font-size:12px">'+dlLinks(s)+waBtn(s)+'</td>'+
-      '<td style="font-size:12px;color:var(--muted)">'+(s.last_changed||"—")+'</td></tr>').join("")
-      :'<tr><td colspan="7" class="empty">No confirmed students yet</td></tr>';
+      '<td style="font-size:12px;color:var(--muted)">'+(s.last_changed||"—")+'</td>'+
+      '<td>'+delBtn(s)+'</td></tr>').join("")
+      :'<tr><td colspan="8" class="empty">No confirmed students yet</td></tr>';
     renderPg("c-pg",page,d.pages,"loadConfirmed");
   }catch(e){showToast(""+e.message);}
 }
@@ -1180,6 +1199,22 @@ async function deleteSyc(rowKey,name){
     try{loadDashboard();}catch(e){}
   }catch(e){showToast(""+e.message);}
 }
+function delBtn(s){
+  var nm=(s.student_name||"this student").replace(/[\\"']/g," ");
+  return '<button title="Remove this student (e.g. a test entry)" '+
+    'style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap" '+
+    'onclick="deleteStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)">&#128465; Remove</button>';
+}
+async function deleteStudent(rowKey,name){
+  if(!confirm("Remove "+name+"?\\n\\nThis permanently deletes this student from the tracker (use this for test entries). It does NOT affect NIOS or the MVS portal."))return;
+  try{
+    await api("/api/student-delete?row_key="+encodeURIComponent(rowKey),"POST");
+    showToast("Removed "+name);
+    try{loadStudents(1);}catch(e){}
+    try{loadConfirmed(1);}catch(e){}
+    try{loadDashboard();}catch(e){}
+  }catch(e){showToast(""+e.message);}
+}
 async function downloadSycHall(rowKey,btn){
   if(btn.dataset.busy==="1")return;
   btn.dataset.busy="1";
@@ -1204,7 +1239,8 @@ async function loadRequired(page){
   const q=new URLSearchParams({page:page,per_page:perPage,view:"required",
     search:document.getElementById("r-search").value,
     status_filter:(document.getElementById("r-status")?document.getElementById("r-status").value:""),
-    session_filter:document.getElementById("r-session").value});
+    session_filter:document.getElementById("r-session").value,
+    source_filter:fval("r-source")});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -1213,7 +1249,7 @@ async function loadRequired(page){
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
-      '<td>'+(s.student_name||"—")+'</td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
+      '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td style="font-size:13px;color:var(--warn);max-width:420px">'+(s.remark||"(no comment captured)")+'</td></tr>').join("")
       :'<tr><td colspan="5" class="empty">No pending documents</td></tr>';
     renderPg("r-pg",page,d.pages,"loadRequired");
@@ -1270,14 +1306,15 @@ async function loadHistory(page){
   page=page||1;
   const rg=histRange();
   const q=new URLSearchParams({page:page,per_page:histPerPage,from_dt:rg.from,to_dt:rg.to,
-    status:fval("h-status")});
+    status:fval("h-status"),source:fval("h-source")});
   try{
     const d=await api("/api/history?"+q.toString());
     const items=d.items||[];
     const cnt=document.getElementById("h-count");
     if(cnt)cnt.textContent=d.total+" change(s)"+(rg.from?" in selected range":"");
     document.getElementById("h-body").innerHTML=items.length?items.map(x=>'<tr>'+
-      '<td><span class="ref-tag">'+(x.reference_no||"—")+'</span></td><td>'+(x.student_name||"—")+'</td>'+
+      '<td><span class="ref-tag">'+(x.reference_no||"—")+'</span></td>'+
+      '<td>'+(x.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(x)+'</div></td>'+
       '<td>'+badge(x.old_status)+'</td><td>'+badge(x.new_status)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+x.changed_at+'</td></tr>').join("")
       :'<tr><td colspan="5" class="empty">No changes in this range</td></tr>';
@@ -1286,14 +1323,15 @@ async function loadHistory(page){
 }
 async function exportHistory(){
   const rg=histRange();
-  const q=new URLSearchParams({from_dt:rg.from,to_dt:rg.to,status:fval("h-status")});
+  const q=new URLSearchParams({from_dt:rg.from,to_dt:rg.to,status:fval("h-status"),source:fval("h-source")});
   try{
     showToast("Preparing Excel...");
     const r=await fetch(API+"/api/export-history?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
     if(!r.ok){showToast("Export failed");return;}
     const blob=await r.blob();const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");a.href=url;a.download="nios_change_history.xlsx";a.click();
-    URL.revokeObjectURL(url);showToast("Excel downloaded");
+    const a=document.createElement("a");a.href=url;a.download="nios_change_history.xlsx";
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1500);showToast("Excel downloaded");
   }catch(e){showToast("Error: "+e.message);}
 }
 function renderHistPg(page,total,totalRows){
@@ -1394,11 +1432,12 @@ async function downloadExcel(){
 async function downloadSample(type){
   try{
     const r=await fetch(API+"/api/sample-sheet?type="+type,{headers:{"Authorization":"Bearer "+TOKEN}});
-    if(!r.ok){showToast("Sample download failed");return;}
+    if(!r.ok){showToast("Sample download failed ("+r.status+")");return;}
     const blob=await r.blob();const url=URL.createObjectURL(blob);
     const a=document.createElement("a");a.href=url;
-    a.download="MVS_sample_"+type+".xlsx";a.click();
-    URL.revokeObjectURL(url);
+    a.download="MVS_sample_"+type+".xlsx";
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
     showToast("Sample sheet downloaded");
   }catch(e){showToast("Error: "+e.message);}
 }
@@ -1421,20 +1460,21 @@ function onDatePreset(prefix,reload){
   if(!custom&&reload)reload();
 }
 async function exportStudents(view){
-  let search="",status="",session="",cls="",from="",to="";
-  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");const dr=dateRange("c");from=dr.from;to=dr.to;}
-  else if(view==="required"){search=fval("r-search");status=fval("r-status");session=fval("r-session");}
-  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");const dr=dateRange("s");from=dr.from;to=dr.to;}
+  let search="",status="",session="",cls="",from="",to="",source="";
+  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");source=fval("c-source");const dr=dateRange("c");from=dr.from;to=dr.to;}
+  else if(view==="required"){search=fval("r-search");status=fval("r-status");session=fval("r-session");source=fval("r-source");}
+  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");source=fval("s-source");const dr=dateRange("s");from=dr.from;to=dr.to;}
   const q=new URLSearchParams({view:view,search:search,status_filter:status,session_filter:session,
-    class_filter:cls,date_from:from,date_to:to});
+    class_filter:cls,source_filter:source,date_from:from,date_to:to});
   try{
     showToast("Preparing Excel...");
     const r=await fetch(API+"/api/export-students?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
     if(!r.ok){showToast("Export failed");return;}
     const blob=await r.blob();const url=URL.createObjectURL(blob);
     const a=document.createElement("a");a.href=url;
-    a.download="nios_"+(view==="normal"?"active":view)+"_students.xlsx";a.click();
-    URL.revokeObjectURL(url);
+    a.download="nios_"+(view==="normal"?"active":view)+"_students.xlsx";
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
     showToast("Excel downloaded");
   }catch(e){showToast("Error: "+e.message);}
 }
@@ -1645,33 +1685,6 @@ async def serve_portal():
 async def health():
     return {"status": "ok", "captcha_key_set": bool(os.environ.get("CAPTCHA_API_KEY", ""))}
 
-@app.get("/mvs-test")
-async def mvs_test(key: str = ""):
-    """Browser test for the MVS connection (READ-ONLY — kuch likhta nahi).
-    Open: https://<your-tracker-url>/mvs-test?key=YOUR_TRACKER_KEY"""
-    if not mvs_sync:
-        return {"ok": False, "error": "mvs_sync.py not found in tracker repo"}
-    if not getattr(mvs_sync, "MVS_TRACKER_KEY", "") or key != mvs_sync.MVS_TRACKER_KEY:
-        return {"ok": False, "error": "Wrong or missing ?key=  (use your TRACKER_KEY value)"}
-    try:
-        by_session, total = {}, 0
-        for sess in mvs_sync.SESSIONS:
-            rows = mvs_sync.fetch_students_for_tracker(sess)
-            total += len(rows)
-            by_session[sess] = {
-                "count": len(rows),
-                "sample": [
-                    {"name": r["student_name"], "ref": r["reference_no"],
-                     "enrol": r["enrollment_no"], "dob": r["dob"], "mobile": r["mobile"]}
-                    for r in rows[:2]
-                ],
-            }
-        return {"ok": True, "mvs_mode_on": mvs_sync.enabled(),
-                "total_students": total, "by_session": by_session}
-    except Exception as e:
-        return {"ok": False, "error": str(e),
-                "hint": "Check MVS_API_URL (/exec), MVS_TRACKER_KEY, and that Apps Script New Version is deployed."}
-
 @app.post("/api/login")
 async def login(body: dict):
     if body.get("username") != PORTAL_USER or body.get("password") != PORTAL_PASS:
@@ -1706,6 +1719,13 @@ async def dashboard(user=Depends(verify_token)):
         "SELECT student_name, reference_no, remark FROM student_status WHERE current_status='Document Required' ORDER BY last_changed DESC LIMIT 50"
     ).fetchall()
 
+    # Cross-source duplicates: same student present in BOTH MVS Portal & MVS Tracker
+    # (kept once, as MVS Portal). Surfaced in the bell so the counsellor is aware.
+    dup_notifs = conn.execute(
+        "SELECT student_name, reference_no, enrollment_no FROM student_status "
+        "WHERE COALESCE(cross_dup,0)=1 ORDER BY student_name LIMIT 50"
+    ).fetchall()
+
     # Session-wise totals
     sess_counts = conn.execute(
         "SELECT session, COUNT(*) as cnt FROM student_status WHERE session != '' GROUP BY session ORDER BY cnt DESC"
@@ -1724,11 +1744,12 @@ async def dashboard(user=Depends(verify_token)):
             "changes_today": changes_today, "syc": syc_cnt,
         },
         "notifications": [dict(n) for n in notifs],
+        "dup_notifications": [dict(d) for d in dup_notifs],
         "session_counts": [dict(s) for s in sess_counts],
     }
 
 def _build_student_where(view, search, status_filter, session_filter,
-                         class_filter="", date_from="", date_to=""):
+                         class_filter="", date_from="", date_to="", source_filter=""):
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
@@ -1747,6 +1768,8 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("current_status = ?"); params.append(status_filter)
     if session_filter:
         wc.append("session = ?"); params.append(session_filter)
+    if source_filter:                      # mvs_portal | mvs_tracker (Data Type)
+        wc.append("COALESCE(source,'mvs_tracker') = ?"); params.append(source_filter)
     if class_filter:                       # "10" matches 10/10TH, "12" matches 12/12TH
         wc.append("class_level LIKE ?"); params.append(f"{class_filter}%")
     # Date/time filter on when the status last changed; fall back to last_checked so a
@@ -1769,11 +1792,11 @@ def _build_student_where(view, search, status_filter, session_filter,
 async def get_students(page: int=1, per_page: int=50, search: str="",
                        status_filter: str="", session_filter: str="",
                        class_filter: str="", date_from: str="", date_to: str="",
-                       view: str="normal", user=Depends(verify_token)):
+                       source_filter: str="", view: str="normal", user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
     where, params = _build_student_where(view, search, status_filter, session_filter,
-                                         class_filter, date_from, date_to)
+                                         class_filter, date_from, date_to, source_filter)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
@@ -1787,27 +1810,29 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
 @app.get("/api/export-students")
 async def export_students(view: str="normal", search: str="", status_filter: str="",
                          session_filter: str="", class_filter: str="",
-                         date_from: str="", date_to: str="", user=Depends(verify_token)):
+                         date_from: str="", date_to: str="", source_filter: str="",
+                         user=Depends(verify_token)):
     """Export the CURRENTLY FILTERED list (active / confirmed / required) to .xlsx.
     Honours the exact same filters as the on-screen table (search, status, session,
-    class 10/12, and date range)."""
+    class 10/12, data type, and date range)."""
     import io, openpyxl
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     conn = get_db()
     where, params = _build_student_where(view, search, status_filter, session_filter,
-                                         class_filter, date_from, date_to)
+                                         class_filter, date_from, date_to, source_filter)
     rows = conn.execute(f"SELECT * FROM student_status {where} ORDER BY student_name", params).fetchall()
     conn.close()
 
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Students"
     headers = ["#", "Reference No", "Student Name", "Mobile", "Class", "Email",
-               "Session", "Status", "Remark", "Last Checked"]
+               "Session", "Status", "Data Type", "Remark", "Last Checked"]
     ws.append(headers)
     for i, r in enumerate(rows, 1):
+        dt = "MVS Portal" if (r["source"] or "mvs_tracker") == "mvs_portal" else "MVS Tracker"
         ws.append([i, r["reference_no"], r["student_name"], r["mobile"], r["class_level"],
-                   r["email"], r["session"], r["current_status"], r["remark"], r["last_checked"]])
+                   r["email"], r["session"], r["current_status"], dt, r["remark"], r["last_checked"]])
     hdr_fill = PatternFill("solid", fgColor="4F46E5")
     for cell in ws[1]:
         cell.font = Font(bold=True, color="FFFFFF")
@@ -1825,8 +1850,11 @@ async def export_students(view: str="normal", search: str="", status_filter: str
 
 @app.get("/api/history")
 async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_dt: str = "",
-                     status: str = "", user=Depends(verify_token)):
+                     status: str = "", source: str = "", user=Depends(verify_token)):
     conn = get_db()
+    # Resolve each history row's data type from the student it belongs to (by reference).
+    src_expr = ("(SELECT COALESCE(ss.source,'mvs_tracker') FROM student_status ss "
+                "WHERE ss.reference_no = status_history.reference_no LIMIT 1)")
     wc, params = [], []
     if from_dt:
         wc.append("changed_at >= ?"); params.append(from_dt)
@@ -1834,26 +1862,32 @@ async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_d
         wc.append("changed_at <= ?"); params.append(to_dt)
     if status:
         wc.append("new_status = ?"); params.append(status)
+    if source:
+        wc.append(f"{src_expr} = ?"); params.append(source)
     where = ("WHERE " + " AND ".join(wc)) if wc else ""
     total = conn.execute(f"SELECT COUNT(*) FROM status_history {where}", params).fetchone()[0]
     per_page = max(1, min(per_page, 200))
     page = max(1, page)
     offset = (page - 1) * per_page
-    rows = conn.execute(f"SELECT * FROM status_history {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-                        params + [per_page, offset]).fetchall()
+    rows = conn.execute(
+        f"SELECT *, {src_expr} AS source FROM status_history {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+        params + [per_page, offset]).fetchall()
     conn.close()
     pages = max(1, (total + per_page - 1) // per_page)
     return {"items": [dict(x) for x in rows], "total": total,
             "page": page, "pages": pages, "per_page": per_page}
 
 @app.get("/api/export-history")
-async def export_history(from_dt: str = "", to_dt: str = "", status: str = "", user=Depends(verify_token)):
+async def export_history(from_dt: str = "", to_dt: str = "", status: str = "",
+                         source: str = "", user=Depends(verify_token)):
     """Export the filtered Change History to .xlsx."""
     import io, openpyxl
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     conn = get_db()
+    src_expr = ("(SELECT COALESCE(ss.source,'mvs_tracker') FROM student_status ss "
+                "WHERE ss.reference_no = status_history.reference_no LIMIT 1)")
     wc, params = [], []
     if from_dt:
         wc.append("changed_at >= ?"); params.append(from_dt)
@@ -1861,20 +1895,23 @@ async def export_history(from_dt: str = "", to_dt: str = "", status: str = "", u
         wc.append("changed_at <= ?"); params.append(to_dt)
     if status:
         wc.append("new_status = ?"); params.append(status)
+    if source:
+        wc.append(f"{src_expr} = ?"); params.append(source)
     where = ("WHERE " + " AND ".join(wc)) if wc else ""
-    rows = conn.execute(f"SELECT * FROM status_history {where} ORDER BY id DESC", params).fetchall()
+    rows = conn.execute(f"SELECT *, {src_expr} AS source FROM status_history {where} ORDER BY id DESC", params).fetchall()
     conn.close()
 
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Change History"
-    headers = ["#", "Reference No", "Student Name", "Old Status", "New Status", "Changed At"]
+    headers = ["#", "Reference No", "Student Name", "Old Status", "New Status", "Data Type", "Changed At"]
     ws.append(headers)
     for i, r in enumerate(rows, 1):
+        dt = "MVS Portal" if (r["source"] or "mvs_tracker") == "mvs_portal" else "MVS Tracker"
         ws.append([i, r["reference_no"], r["student_name"], r["old_status"],
-                   r["new_status"], r["changed_at"]])
+                   r["new_status"], dt, r["changed_at"]])
     fill = PatternFill("solid", fgColor="4F46E5")
     for cell in ws[1]:
         cell.font = Font(bold=True, color="FFFFFF"); cell.fill = fill
-    for idx, w in enumerate([5, 18, 26, 28, 28, 20], 1):
+    for idx, w in enumerate([5, 18, 26, 28, 28, 16, 20], 1):
         ws.column_dimensions[get_column_letter(idx)].width = w
     ws.freeze_panes = "A2"
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
@@ -2152,12 +2189,27 @@ async def syc_delete(row_key: str, user=Depends(verify_token)):
     conn.commit()
     conn.close()
     return {"ok": True}
-    """Inspect a document page's structure (Phase 2 debug)."""
+
+@app.post("/api/student-delete")
+async def student_delete(row_key: str, user=Depends(verify_token)):
+    """Delete ANY single student (used to remove test entries) — clears the
+    student row plus its history and short links."""
+    conn = get_db()
+    row = conn.execute("SELECT row_key, student_name FROM student_status WHERE row_key=?",
+                       (row_key,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Student not found")
+    name = row["student_name"] or ""
+    conn.execute("DELETE FROM student_status WHERE row_key=?", (row_key,))
+    conn.execute("DELETE FROM short_links WHERE row_key=?", (row_key,))
     try:
-        from nios_login import debug_doc
-        return debug_doc(ref, dob, kind)
-    except Exception as e:
-        return {"error": str(e)}
+        conn.execute("DELETE FROM status_history WHERE row_key=?", (row_key,))
+    except Exception:
+        pass
+    conn.commit()
+    conn.close()
+    return {"ok": True, "name": name}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WhatsApp (AiSensy) — settings, test, manual resend
