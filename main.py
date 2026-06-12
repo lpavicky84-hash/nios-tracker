@@ -659,6 +659,14 @@ PORTAL_HTML = """<!DOCTYPE html>
             <select id="iv-public-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
               <option value="hours">hours</option><option value="minutes">minutes</option></select>
           </div>
+          <div id="iv-mvs-row" style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
+            <span style="width:280px;font-weight:600">🟣 MVS Portal data (own interval)</span>
+            <input type="number" id="iv-mvs" min="1" max="4320" value="60"
+              style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
+            <select id="iv-mvs-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
+              <option value="minutes">minutes</option><option value="hours">hours</option></select>
+            <button class="btn btn-sm" style="background:#7C3AED;color:#fff" onclick="runNowMvs()">▶ Run MVS Portal now</button>
+          </div>
           <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
           <div style="font-size:11px;color:var(--muted);margin-top:8px">Minimum 15 minutes. Tip: shorter intervals use more CapSolver credits.</div>
           <div id="iv-status" style="margin-top:12px;font-size:13px"></div>
@@ -1541,15 +1549,22 @@ function ivToMin(which){
 async function loadIntervals(){
   try{const r=await api("/api/intervals");
     setIvField("regular",r.regular_min);
-    setIvField("public",r.public_min);}catch(e){}
+    setIvField("public",r.public_min);
+    setIvField("mvs",r.mvs_min);
+    const row=document.getElementById("iv-mvs-row");
+    if(row)row.style.display=r.mvs_on?"flex":"none";}catch(e){}
 }
 async function saveIntervals(){
-  const rm=ivToMin("regular"),pm=ivToMin("public");
-  if(rm<15||pm<15){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
-  try{const r=await api("/api/intervals","POST",{regular_min:rm,public_min:pm});
+  const rm=ivToMin("regular"),pm=ivToMin("public"),mm=ivToMin("mvs");
+  if(rm<15||pm<15||mm<15){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
+  try{const r=await api("/api/intervals","POST",{regular_min:rm,public_min:pm,mvs_min:mm});
     document.getElementById("iv-status").innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
     showToast("Intervals saved!");}
   catch(e){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
+}
+async function runNowMvs(){
+  try{const r=await api("/api/run-now-mvs","POST");showToast(r.message+" — running in background");}
+  catch(e){showToast(""+e.message);}
 }
 
 async function loadWa(){
@@ -1705,12 +1720,31 @@ def _interval_minutes(grp, default_h):
     except Exception:
         return default_h * 60
 
+def _mvs_enabled():
+    try:
+        import mvs_sync
+        return mvs_sync.enabled()
+    except Exception:
+        return False
+
 def reschedule_jobs():
-    """Schedule both jobs. Next run = last_run + interval. If overdue, run shortly."""
+    """Schedule jobs. Tracker (Excel) data runs on the session intervals (regular/
+    public); MVS Portal data runs on its OWN interval. Next run = last + interval."""
     reg = _interval_minutes("regular", 6)
     pub = _interval_minutes("public", 12)
+    mvs = _interval_minutes("mvs", 1)   # default 60 min
     now = datetime.now()
-    for jid, grp, mins in [("job_regular", "regular", reg), ("job_public", "public", pub)]:
+    # (job_id, group_type, source_only, minutes)
+    specs = [("job_regular", "regular", "mvs_tracker", reg),
+             ("job_public",  "public",  "mvs_tracker", pub)]
+    if _mvs_enabled():
+        specs.append(("job_mvs", "all", "mvs_portal", mvs))
+    else:
+        try:
+            scheduler.remove_job("job_mvs")
+        except Exception:
+            pass
+    for jid, grp, src, mins in specs:
         last = _last_run_time(grp)
         if last:
             nxt = last + timedelta(minutes=mins)
@@ -1718,10 +1752,10 @@ def reschedule_jobs():
                 nxt = now + timedelta(seconds=20)      # overdue -> run shortly
         else:
             nxt = now + timedelta(minutes=mins)         # no history -> wait one interval
-        scheduler.add_job(lambda g=grp: run_status_check(g),
+        scheduler.add_job(lambda g=grp, s=src: run_status_check(g, s),
                           trigger=IntervalTrigger(minutes=mins),
                           id=jid, replace_existing=True, next_run_time=nxt)
-        logger.info(f"{jid}: every {mins}min | last_run={last} | next_run={nxt}")
+        logger.info(f"{jid}: every {mins}min src={src} | last_run={last} | next_run={nxt}")
 
 @app.on_event("startup")
 async def startup():
@@ -2041,6 +2075,14 @@ async def run_now(background_tasks: BackgroundTasks, user=Depends(verify_token))
     background_tasks.add_task(run_status_check, "all")
     return {"message": "Run triggered for all students!"}
 
+@app.post("/api/run-now-mvs")
+async def run_now_mvs(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Manually run ONLY the MVS Portal data (its own check)."""
+    if not _mvs_enabled():
+        raise HTTPException(status_code=400, detail="MVS mode is off (set MVS_MODE + URL + KEY)")
+    background_tasks.add_task(run_status_check, "all", "mvs_portal")
+    return {"message": "Run triggered for MVS Portal students!"}
+
 @app.post("/api/cancel-run")
 async def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
     conn = get_db()
@@ -2216,16 +2258,21 @@ async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
 @app.get("/api/intervals")
 async def get_intervals(user=Depends(verify_token)):
     return {"regular_min": _interval_minutes("regular", 6),
-            "public_min": _interval_minutes("public", 12)}
+            "public_min": _interval_minutes("public", 12),
+            "mvs_min": _interval_minutes("mvs", 1),
+            "mvs_on": _mvs_enabled()}
 
 @app.post("/api/intervals")
 async def set_intervals(body: dict, user=Depends(verify_token)):
     reg = int(body.get("regular_min", 360))
     pub = int(body.get("public_min", 720))
-    if not (15 <= reg <= 4320) or not (15 <= pub <= 4320):
-        raise HTTPException(status_code=400, detail="Interval must be between 15 minutes and 72 hours")
+    mvs = int(body.get("mvs_min", 60))
+    for v in (reg, pub, mvs):
+        if not (15 <= v <= 4320):
+            raise HTTPException(status_code=400, detail="Interval must be between 15 minutes and 72 hours")
     set_setting("interval_regular_min", reg)
     set_setting("interval_public_min", pub)
+    set_setting("interval_mvs_min", mvs)
     reschedule_jobs()
     def _fmt(m):
         if m % 60 == 0:
@@ -2233,8 +2280,8 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
         if m < 60:
             return f"{m}m"
         return f"{m//60}h {m%60}m"
-    return {"message": f"Regular: every {_fmt(reg)}, Public: every {_fmt(pub)}",
-            "regular_min": reg, "public_min": pub}
+    return {"message": f"Tracker: {_fmt(reg)}/{_fmt(pub)}, MVS Portal: every {_fmt(mvs)}",
+            "regular_min": reg, "public_min": pub, "mvs_min": mvs}
 
 @app.get("/api/source-override")
 async def get_source_override(user=Depends(verify_token)):

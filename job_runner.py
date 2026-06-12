@@ -121,14 +121,16 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
             logger.warning(f"MVS SYC push error: {pe}")
 
 
-def run_status_check(group_type="all"):
+def run_status_check(group_type="all", source_only=None):
     """
     group_type: 'all' | 'regular' | 'public'
+    source_only: None (both) | 'mvs_portal' | 'mvs_tracker' — restrict the run to
+                 ONE data source so MVS Portal data can run on its own interval.
     Skips students already 'Admission Confirmed'.
     Processes in batches with delays (handled inside scraper).
     """
     logger.info("=" * 50)
-    logger.info(f"Run started [{group_type}] at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Run started [{group_type}/{source_only or 'both'}] at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     mvs_on = _mvs_on()
     if not mvs_on and not os.path.exists(EXCEL_PATH):
@@ -145,8 +147,13 @@ def run_status_check(group_type="all"):
         conn.commit()
         logger.info(f"Auto-cancelled {len(prev)} previous running run(s)")
     run_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_group = group_type
+    if source_only == "mvs_portal":
+        log_group = "MVS Portal"
+    elif source_only == "mvs_tracker":
+        log_group = "MVS Tracker"
     c.execute("INSERT INTO run_logs (run_at, group_type, status) VALUES (?,?, 'running')",
-              (run_at, group_type))
+              (run_at, log_group))
     conn.commit()
     run_id = c.lastrowid
 
@@ -217,6 +224,9 @@ def run_status_check(group_type="all"):
         to_check = []
         syc_list = []
         for s in all_students:
+            # Restrict to one data source when requested (MVS Portal own interval).
+            if source_only and src_by_key.get(s["row_key"], "mvs_tracker") != source_only:
+                continue
             # SYC students are never status-checked. They're only registered (and
             # their hall ticket made available) on a MANUAL run (group_type == 'all').
             if is_syc_session(s["session"]):
@@ -383,7 +393,13 @@ def run_status_check(group_type="all"):
             scrape_students(to_check, should_cancel=_is_cancelled, on_result=process_one)
         checked, changed, failed = stats["checked"], stats["changed"], stats["failed"]
 
-        write_status_to_excel(EXCEL_PATH, excel_updates)
+        # Write status back to Excel ONLY when an Excel sheet actually exists.
+        # In MVS-only mode there is no students.xlsx, so skip (no error).
+        if os.path.exists(EXCEL_PATH):
+            try:
+                write_status_to_excel(EXCEL_PATH, excel_updates)
+            except Exception as xe:
+                logger.warning(f"Excel write skipped: {xe}")
         # If this run was cancelled mid-way, keep it 'cancelled' (save partial counts).
         cur = c.execute("SELECT status FROM run_logs WHERE id=?", (run_id,)).fetchone()
         if cur and cur["status"] == "cancelled":
@@ -392,9 +408,15 @@ def run_status_check(group_type="all"):
             conn.commit()
             logger.info(f"Run cancelled | Checked:{checked} Changed:{changed} Failed:{failed}")
         else:
-            done_msg = "completed" if not syc_list else f"completed ({len(syc_list)} SYC registered)"
+            extras = []
+            if syc_list:
+                extras.append(f"{len(syc_list)} SYC registered")
+            if dup_count:
+                extras.append(f"{dup_count} duplicate{'s' if dup_count != 1 else ''} merged")
+            done_msg = "completed" + (f" ({', '.join(extras)})" if extras else "")
             _finish(conn, run_id, checked, changed, failed, done_msg)
-            logger.info(f"Run done | Checked:{checked} Changed:{changed} Failed:{failed} SYC:{len(syc_list)}")
+            logger.info(f"Run done | Checked:{checked} Changed:{changed} Failed:{failed} "
+                        f"SYC:{len(syc_list)} Dups:{dup_count}")
 
     except Exception as e:
         logger.error(f"Run failed: {e}")
