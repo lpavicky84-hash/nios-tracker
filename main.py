@@ -107,6 +107,9 @@ PORTAL_HTML = """<!DOCTYPE html>
   .nav-item .ic svg{width:19px;height:19px}
   .nav-item .badge-count{margin-left:auto;background:var(--danger);color:#fff;
     font-size:11px;padding:1px 7px;border-radius:10px;font-weight:700;display:none}
+  .nav-item .nav-num{margin-left:auto;background:rgba(255,255,255,.14);color:#fff;
+    font-size:11px;padding:1px 8px;border-radius:10px;font-weight:700}
+  .nav-item.active .nav-num{background:rgba(255,255,255,.22)}
   .nav-sep{padding:14px 22px 6px;color:var(--sidebar-muted);font-size:11px;font-weight:700;
     text-transform:uppercase;letter-spacing:.5px}
 
@@ -329,14 +332,17 @@ PORTAL_HTML = """<!DOCTYPE html>
     <div class="nav-item active" data-page="dashboard" onclick="nav('dashboard')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span><span class="lbl">Dashboard</span></div>
     <div class="nav-item" data-page="students" onclick="nav('students')">
-      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="lbl">Active Students</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="lbl">Active Students</span>
+      <span class="nav-num" id="nav-students-badge" style="display:none">0</span></div>
     <div class="nav-item" data-page="confirmed" onclick="nav('confirmed')">
-      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span class="lbl">Confirmed</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span class="lbl">Confirmed</span>
+      <span class="nav-num" id="nav-confirmed-badge" style="display:none">0</span></div>
     <div class="nav-item" data-page="required" onclick="nav('required')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="15"/><line x1="12" y1="18" x2="12" y2="18"/></svg></span><span class="lbl">Required</span>
       <span class="badge-count" id="nav-required-badge">0</span></div>
     <div class="nav-item" data-page="syc" onclick="nav('syc')">
-      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="lbl">SYC Students</span></div>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="lbl">SYC Students</span>
+      <span class="nav-num" id="nav-syc-badge" style="display:none">0</span></div>
     <div class="nav-item" data-page="failed" onclick="nav('failed')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span><span class="lbl">Failed to Run</span>
       <span class="badge-count" id="nav-failed-badge" style="display:none">0</span></div>
@@ -966,6 +972,7 @@ async function pollProgress(){
       }
       const g=d.group_type==="public"?"Public (April / October)":(d.group_type==="regular"?"On Demand + Stream 2":"all");
       document.getElementById("pb-label").textContent="Checking "+g+" students…";
+      updateNavCounts();   // live badge updates as students move between tabs
       // live filtering: refresh whatever view the counsellor is on, as it happens
       if(secActive("dashboard"))loadDashboard();
       else if(secActive("confirmed"))loadConfirmed(1);
@@ -1041,6 +1048,7 @@ function nav(page){
   if(page==="runlogs")loadRunLogs();
   if(page==="settings"){loadIntervals();loadWa();loadTrash();}
   if(page==="upload")loadUploadSource();
+  updateNavCounts();
 }
 
 async function loadDashboard(){
@@ -1541,15 +1549,21 @@ async function loadFailed(page){
     renderPg("f-pg",page,d.pages,"loadFailed");
   }catch(e){showToast(""+e.message);}
 }
-async function updateFailedBadge(){
+function _setNavBadge(id,n,red){
+  const b=document.getElementById(id);if(!b)return;
+  if(n>0){b.textContent=n;b.style.display="";}else{b.style.display="none";}
+}
+async function updateNavCounts(){
   try{
-    const d=await api("/api/failed-count");
-    const b=document.getElementById("nav-failed-badge");
-    if(!b)return;
-    if(d.count>0){b.textContent=d.count;b.style.display="";}
-    else{b.style.display="none";}
+    const d=await api("/api/nav-count");
+    _setNavBadge("nav-students-badge",d.students);
+    _setNavBadge("nav-confirmed-badge",d.confirmed);
+    _setNavBadge("nav-required-badge",d.required);
+    _setNavBadge("nav-syc-badge",d.syc);
+    _setNavBadge("nav-failed-badge",d.failed);
   }catch(e){}
 }
+async function updateFailedBadge(){return updateNavCounts();}   // back-compat
 function renderPg(id,page,total,fnName){
   const el=document.getElementById(id);
   let ctrl='<div class="pg-controls">';
@@ -1834,12 +1848,17 @@ async function runUploaded(btn){
   try{
     const r=await api("/api/run-now-upload","POST");
     showToast(r.message+" — running in the background");
+    // Clear the upload preview/summary now that the run has started.
+    ["upload-status","upload-summary","upload-preview"].forEach(id=>{
+      const el=document.getElementById(id);if(el)el.innerHTML="";});
+    const fi=document.getElementById("file-input");if(fi)fi.value="";
     const box=document.getElementById("run-progress");
     if(box){box.style.display="block";document.getElementById("pb-pct").textContent="0%";
       document.getElementById("pb-fill").style.width="0%";
       document.getElementById("pb-sub").textContent="Starting…";
       document.getElementById("pb-label").textContent="Checking uploaded students…";}
     startProgressPoll();
+    showToast("Upload preview cleared — run started");
   }catch(e){showToast("Error: "+e.message);}
   finally{ setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},4000); }
 }
@@ -2316,6 +2335,23 @@ async def failed_students(page: int = 1, per_page: int = 50, search: str = "",
     conn.close()
     return {"students": [dict(r) for r in rows], "total": total, "page": page,
             "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page)}
+
+@app.get("/api/nav-count")
+async def nav_count(user=Depends(verify_token)):
+    """Live counts for the sidebar badges (active / confirmed / required / syc / failed)."""
+    conn = get_db()
+    ND = "COALESCE(deleted,0)=0"
+    def c(sql, *p):
+        return conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND " + sql, p).fetchone()[0]
+    active = c("COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
+               "AND (session IS NULL OR session NOT LIKE '%syc%')")
+    confirmed = c("is_confirmed=1")
+    required = c("current_status='Document Required'")
+    syc = c("(session LIKE '%syc%' OR current_status='SYC')")
+    failed = c("COALESCE(login_failed,0)=1")
+    conn.close()
+    return {"students": active, "confirmed": confirmed, "required": required,
+            "syc": syc, "failed": failed}
 
 @app.get("/api/failed-count")
 async def failed_count(user=Depends(verify_token)):

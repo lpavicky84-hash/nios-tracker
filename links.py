@@ -12,8 +12,9 @@ import hashlib
 SECRET_KEY = os.environ.get("SECRET_KEY", "nios-tracker-secret-2025-mvs")
 
 # Public base URL of the deployed portal (used to build absolute links for WhatsApp).
+# Default is the new custom domain; override with the PUBLIC_BASE_URL env var if needed.
 PUBLIC_BASE_URL = os.environ.get(
-    "PUBLIC_BASE_URL", "https://web-production-09671.up.railway.app"
+    "PUBLIC_BASE_URL", "https://status.mvsfoundation.in"
 ).rstrip("/")
 
 

@@ -385,13 +385,40 @@ font-size:12.5px;font-weight:600;border-bottom:1px solid #FCD34D">
   For best results open this page in <b>Chrome</b> or <b>Safari</b>: tap the menu ( &#8942; ) at the top-right
   &rarr; <b>Open in browser</b>, then tap Save as PDF.
 </div>
-<style>@media print{#__mvs_bar,#__mvs_inapp{display:none!important}} body{padding-top:70px!important}</style>
+<style>
+@media print{#__mvs_bar,#__mvs_inapp{display:none!important}}
+body{padding-top:70px!important}
+/* Make the document readable & familiar on EVERY device (phone / tablet / laptop / PC) */
+img{max-width:100%!important;height:auto!important}
+table{max-width:100%}
+@media (max-width:640px){ body{-webkit-text-size-adjust:100%} }
+</style>
 <script>
 function mvsPrint(){
   try{ window.focus(); }catch(e){}
   try{ window.print(); }
   catch(e){ alert("To save: open your browser menu ( the three dots or Share icon ) and choose Print or Save as PDF."); }
 }
+/* Auto-fit: if the document is wider than the screen, scale it down so it fits neatly
+   on any device instead of looking huge on one and tiny on another. */
+(function(){
+  function fitDoc(){
+    try{
+      var meta=document.querySelector('meta[name="viewport"]');
+      if(!meta){meta=document.createElement('meta');meta.setAttribute('name','viewport');
+        (document.head||document.documentElement).appendChild(meta);}
+      var prev=document.body.style.minWidth; document.body.style.minWidth="0";
+      var w=Math.max(document.body.scrollWidth, document.documentElement.scrollWidth, 320);
+      document.body.style.minWidth=prev;
+      var sw=window.innerWidth||document.documentElement.clientWidth;
+      if(w > sw+4){ meta.setAttribute('content','width='+w+', initial-scale='+(sw/w).toFixed(4)); }
+      else { meta.setAttribute('content','width=device-width, initial-scale=1'); }
+    }catch(e){}
+  }
+  if(document.readyState!=="loading")setTimeout(fitDoc,60);
+  window.addEventListener('load',function(){setTimeout(fitDoc,60);});
+  window.addEventListener('resize',function(){setTimeout(fitDoc,150);});
+})();
 (function(){
   try{
     var ua = navigator.userAgent || "";
@@ -410,6 +437,18 @@ function mvsPrint(){
 """
 
 def _inject_banner(html):
+    # Ensure a viewport meta exists so phones/tablets render at a sensible scale
+    # (the fit script then refines it). NIOS print pages usually omit this.
+    if "name=\"viewport\"" not in html.lower() and "name='viewport'" not in html.lower():
+        vp = '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        low = html.lower()
+        if "<head" in low:
+            hidx = low.find("<head")
+            hend = html.find(">", hidx)
+            if hend != -1:
+                html = html[:hend+1] + vp + html[hend+1:]
+        else:
+            html = vp + html
     if "<body" in html.lower():
         idx = html.lower().find("<body")
         end = html.find(">", idx)
