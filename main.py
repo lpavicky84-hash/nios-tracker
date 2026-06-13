@@ -1278,7 +1278,18 @@ async function downloadDoc(btn,ref,dob,kind,name){
   try{
     const q=new URLSearchParams({ref:ref,dob:dob,kind:kind});
     const r=await fetch(API+"/api/download-doc?"+q.toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
-    if(!r.ok){const e=await r.json().catch(()=>({detail:"failed"}));showToast("Error: "+(e.detail||"download failed"));restore();return;}
+    if(!r.ok){const e=await r.json().catch(()=>({detail:"failed"}));
+      var msg=(e.detail||"download failed");
+      showToast("Error: "+msg);
+      // A login/DOB failure just moved this student to 'Failed to Run' on the server —
+      // refresh the badges and current view so it disappears from here immediately.
+      if(/login|rejected|dob/i.test(msg)){
+        updateNavCounts();
+        try{loadConfirmed(1);}catch(_e){}try{loadStudents(1);}catch(_e){}
+        try{loadRequired(1);}catch(_e){}try{loadFailed(1);}catch(_e){}
+        showToast("Moved to 'Failed to Run' — fix the data there & run again");
+      }
+      restore();return;}
     const ctype=r.headers.get("Content-Type")||"";
     const blob=await r.blob();
     const url=URL.createObjectURL(blob);
@@ -1549,9 +1560,9 @@ async function loadFailed(page){
     renderPg("f-pg",page,d.pages,"loadFailed");
   }catch(e){showToast(""+e.message);}
 }
-function _setNavBadge(id,n,red){
+function _setNavBadge(id,n){
   const b=document.getElementById(id);if(!b)return;
-  if(n>0){b.textContent=n;b.style.display="";}else{b.style.display="none";}
+  if(n>0){b.textContent=n;b.style.display="inline-block";}else{b.style.display="none";}
 }
 async function updateNavCounts(){
   try{
@@ -2256,6 +2267,7 @@ def _build_student_where(view, search, status_filter, session_filter,
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
     wc.append("COALESCE(deleted,0) = 0")          # never show soft-deleted (in Trash)
+    wc.append("COALESCE(login_failed,0) = 0")     # login-failed -> only in 'Failed to Run'
     if view == "confirmed":
         wc.append("is_confirmed = 1")
     elif view == "required":
@@ -2341,13 +2353,14 @@ async def nav_count(user=Depends(verify_token)):
     """Live counts for the sidebar badges (active / confirmed / required / syc / failed)."""
     conn = get_db()
     ND = "COALESCE(deleted,0)=0"
+    NF = "COALESCE(login_failed,0)=0"     # login-failed shown only in 'Failed to Run'
     def c(sql, *p):
         return conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND " + sql, p).fetchone()[0]
-    active = c("COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
+    active = c(NF + " AND COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
                "AND (session IS NULL OR session NOT LIKE '%syc%')")
-    confirmed = c("is_confirmed=1")
-    required = c("current_status='Document Required'")
-    syc = c("(session LIKE '%syc%' OR current_status='SYC')")
+    confirmed = c(NF + " AND is_confirmed=1")
+    required = c(NF + " AND current_status='Document Required'")
+    syc = c(NF + " AND (session LIKE '%syc%' OR current_status='SYC')")
     failed = c("COALESCE(login_failed,0)=1")
     conn.close()
     return {"students": active, "confirmed": confirmed, "required": required,
@@ -2798,7 +2811,8 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
 async def get_syc(page: int = 1, per_page: int = 20, search: str = "", user=Depends(verify_token)):
     """List SYC students (session contains SYC). No status check is done for these."""
     conn = get_db()
-    where = "WHERE COALESCE(deleted,0)=0 AND (session LIKE '%syc%' OR current_status='SYC')"
+    where = ("WHERE COALESCE(deleted,0)=0 AND COALESCE(login_failed,0)=0 "
+             "AND (session LIKE '%syc%' OR current_status='SYC')")
     params = []
     if search:
         where += " AND (student_name LIKE ? OR enrollment_no LIKE ? OR mobile LIKE ? OR reference_no LIKE ?)"
