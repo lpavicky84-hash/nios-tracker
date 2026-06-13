@@ -154,18 +154,20 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
             logger.warning(f"MVS SYC push error: {pe}")
 
 
-def run_status_check(group_type="all", source_only=None, scope=None):
+def run_status_check(group_type="all", source_only=None, scope=None, only_keys=None):
     """
     group_type: 'all' | 'regular' | 'public'
     source_only: None (both) | 'mvs_portal' | 'mvs_tracker'.
     scope: None  -> full run: MVS Portal (live) + Excel + every existing DB student.
-           'upload' -> run ONLY the students in the just-uploaded Excel sheet (no DB,
-                       no MVS fetch) so an upload re-checks just those new students.
+           'upload'   -> run ONLY the students in the just-uploaded Excel sheet.
+           'selected' -> run ONLY the students whose row_key is in only_keys (manual
+                         hand-picked run, 1..20 students — saves CapSolver credits).
+    only_keys: list of row_keys to run when scope == 'selected'.
     Skips students already 'Admission Confirmed'.
     Processes in batches with delays (handled inside scraper).
     """
     logger.info("=" * 50)
-    logger.info(f"Run started [{group_type}/{source_only or 'both'}] at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Run started [{group_type}/{source_only or 'both'}/{scope or 'full'}] at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     mvs_on = _mvs_on()
     # NOTE: the DB itself is now a data source (we re-check existing students), so a
@@ -184,6 +186,8 @@ def run_status_check(group_type="all", source_only=None, scope=None):
     log_group = group_type
     if scope == "upload":
         log_group = "Uploaded sheet"
+    elif scope == "selected":
+        log_group = "Selected students"
     elif source_only == "mvs_portal":
         log_group = "MVS Portal"
     elif source_only == "mvs_tracker":
@@ -208,7 +212,13 @@ def run_status_check(group_type="all", source_only=None, scope=None):
 
     try:
         all_students = []
-        if scope == "upload":
+        if scope == "selected":
+            # Hand-picked run: only the chosen students, using their CURRENT DB values.
+            keys = set(only_keys or [])
+            all_students = [s for s in _load_db_students(c) if s["row_key"] in keys]
+            dup_count = 0
+            logger.info(f"Selected run: {len(all_students)} of {len(keys)} requested student(s)")
+        elif scope == "upload":
             # UPLOAD RUN: only the students in the just-uploaded sheet. No MVS fetch,
             # no DB — so pressing "Run Check Now" after an upload checks ONLY those
             # newly uploaded students (always treated as MVS Tracker data).

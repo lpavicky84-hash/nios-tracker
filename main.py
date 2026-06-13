@@ -24,7 +24,15 @@ from job_runner import run_status_check
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-SECRET_KEY  = os.environ.get("SECRET_KEY",  "nios-tracker-secret-2025-mvs")
+import secrets as _secrets
+# SECRET_KEY signs the login tokens. NEVER fall back to a public hardcoded value (that
+# would let anyone forge a valid token). If the env var is missing we generate a strong
+# random key for this process — tokens then simply reset on restart (re-login needed).
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    SECRET_KEY = _secrets.token_hex(32)
+    logger.warning("SECRET_KEY not set in environment — using a random key for this run. "
+                   "Set SECRET_KEY so logins survive restarts.")
 PORTAL_USER = os.environ.get("PORTAL_USER", "admin")
 PORTAL_PASS = os.environ.get("PORTAL_PASS", "MVS2025")
 EXCEL_PATH  = os.environ.get("EXCEL_PATH",  os.path.join(os.environ.get("DATA_DIR", "."), "students.xlsx"))
@@ -35,7 +43,16 @@ pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer  = HTTPBearer()
 
 app = FastAPI(title="NIOS Status Tracker", version="2.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# CORS: the portal UI is served from the SAME origin as the API, so cross-origin access
+# isn't needed. Restrict to the known production domains (override with ALLOWED_ORIGINS)
+# so other websites cannot call the data API from a browser.
+_allowed = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+if not _allowed:
+    _allowed = ["https://status.mvsfoundation.in",
+                "https://web-production-09671.up.railway.app"]
+app.add_middleware(CORSMiddleware, allow_origins=_allowed,
+                   allow_methods=["GET", "POST"], allow_headers=["*"],
+                   allow_credentials=False)
 
 PORTAL_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -303,7 +320,33 @@ PORTAL_HTML = """<!DOCTYPE html>
     .nav-item{justify-content:center;padding:14px}.main{margin-left:64px}
     .bell-dropdown{width:300px}
   }
+  /* Counsellor-toggled collapse (click only) — icon-only sidebar, content expands */
+  #app.sidebar-min .sidebar{width:64px}
+  #app.sidebar-min .sidebar .brand .tx,
+  #app.sidebar-min .nav-item span.lbl,
+  #app.sidebar-min .nav-sep,
+  #app.sidebar-min .nav-item .nav-num,
+  #app.sidebar-min .nav-item .badge-count{display:none!important}
+  #app.sidebar-min .nav-item{justify-content:center;padding:14px;position:relative}
+  /* small dot so a non-zero count is still visible when collapsed */
+  #app.sidebar-min .nav-item .nav-num.has,
+  #app.sidebar-min .nav-item .badge-count.has{display:block!important;position:absolute;top:8px;right:10px;
+    min-width:0;width:8px;height:8px;padding:0;border-radius:50%;font-size:0;overflow:hidden}
+  #app.sidebar-min .main{margin-left:64px}
+  .sb-toggle{background:none;border:none;cursor:pointer;color:var(--text);padding:7px;border-radius:9px;
+    display:flex;align-items:center;margin-right:6px}
+  .sb-toggle:hover{background:var(--soft)}
 </style>
+<script>
+function toggleSidebar(){
+  var app=document.getElementById("app");if(!app)return;
+  var min=app.classList.toggle("sidebar-min");
+  try{localStorage.setItem("mvs_sidebar_min",min?"1":"0");}catch(e){}
+}
+function applySidebarPref(){
+  try{ if(localStorage.getItem("mvs_sidebar_min")==="1"){var a=document.getElementById("app");if(a)a.classList.add("sidebar-min");} }catch(e){}
+}
+</script>
 </head>
 <body>
 
@@ -315,8 +358,14 @@ PORTAL_HTML = """<!DOCTYPE html>
     <label>Username</label>
     <input type="text" id="lg-user" placeholder="admin" autocomplete="username">
     <label>Password</label>
-    <input type="password" id="lg-pass" placeholder="enter password" autocomplete="current-password"
-      onkeydown="if(event.key==='Enter')doLogin()">
+    <div style="position:relative">
+      <input type="password" id="lg-pass" placeholder="enter password" autocomplete="current-password"
+        style="padding-right:44px" onkeydown="if(event.key==='Enter')doLogin()">
+      <button type="button" id="lg-pass-toggle" onclick="toggleLgPass()" aria-label="Show password"
+        style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:6px;color:#94a3b8;display:flex;align-items:center">
+        <svg id="lg-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="19" height="19"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
     <button onclick="doLogin()">Sign In</button>
     <div id="login-error"></div>
   </div>
@@ -367,7 +416,12 @@ PORTAL_HTML = """<!DOCTYPE html>
 
   <div class="main">
     <div class="topbar">
-      <h1 id="page-title">Dashboard</h1>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button class="sb-toggle" onclick="toggleSidebar()" title="Minimize / maximize menu" aria-label="Toggle sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <h1 id="page-title">Dashboard</h1>
+      </div>
       <div class="right">
         <div class="run-menu-wrap" style="position:relative">
           <button class="btn btn-success btn-sm" id="run-now-btn" onclick="toggleRunMenu(event)">
@@ -486,8 +540,16 @@ PORTAL_HTML = """<!DOCTYPE html>
             <button class="btn btn-primary btn-sm" onclick="loadStudents(1)">Apply</button>
           </div>
           <div id="s-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div id="sel-bar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px">
+            <span style="font-weight:600;font-size:13.5px"><span id="sel-count">0</span> selected <span style="color:var(--muted);font-weight:400">(max 20)</span></span>
+            <button class="btn btn-success btn-sm" id="sel-run-btn" onclick="runSelected()">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Selected</button>
+            <button class="btn btn-sm" style="background:transparent;color:var(--muted);border:1px solid var(--border)" onclick="clearSelection()">Clear</button>
+            <span style="font-size:12px;color:var(--muted)">Pick the exact students whose status you need right now — saves credits.</span>
+          </div>
           <div style="overflow-x:auto">
             <table><thead><tr>
+              <th style="width:34px"><input type="checkbox" id="sel-all" onclick="toggleSelectAll(this)" title="Select all on this page"></th>
               <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
               <th>Status</th><th>Last Checked</th><th>Action</th>
             </tr></thead><tbody id="s-body"></tbody></table>
@@ -873,8 +935,75 @@ PORTAL_HTML = """<!DOCTYPE html>
 const API = window.location.origin;
 let TOKEN = "";
 let perPage = 20;
+const SELECTED = new Set();   // hand-picked active students for a manual "Run Selected"
+const SEL_MAX = 20;
+function toggleSel(rk,cb){
+  if(cb.checked){
+    if(SELECTED.size>=SEL_MAX){ cb.checked=false; showToast("Maximum "+SEL_MAX+" students can be selected at once"); return; }
+    SELECTED.add(rk);
+  }else{ SELECTED.delete(rk); }
+  updateSelBar();
+}
+function toggleSelectAll(cb){
+  const boxes=document.querySelectorAll(".sel-cb");
+  if(cb.checked){
+    boxes.forEach(b=>{
+      if(!b.checked){
+        if(SELECTED.size>=SEL_MAX){ b.checked=false; return; }
+        b.checked=true; SELECTED.add(b.dataset.rk);
+      }
+    });
+    if(SELECTED.size>=SEL_MAX) showToast("Selected the first "+SEL_MAX+" (maximum) on this page");
+  }else{
+    boxes.forEach(b=>{ b.checked=false; SELECTED.delete(b.dataset.rk); });
+  }
+  updateSelBar();
+}
+function clearSelection(){
+  SELECTED.clear();
+  document.querySelectorAll(".sel-cb").forEach(b=>b.checked=false);
+  const sa=document.getElementById("sel-all");if(sa)sa.checked=false;
+  updateSelBar();
+}
+function updateSelBar(){
+  const bar=document.getElementById("sel-bar");if(!bar)return;
+  const n=SELECTED.size;
+  bar.style.display=n>0?"flex":"none";
+  const cnt=document.getElementById("sel-count");if(cnt)cnt.textContent=n;
+}
+async function runSelected(){
+  const keys=[...SELECTED];
+  if(keys.length<1){showToast("Select at least 1 student");return;}
+  if(keys.length>SEL_MAX){showToast("Maximum "+SEL_MAX+" students");return;}
+  const btn=document.getElementById("sel-run-btn");
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    const r=await api("/api/run-selected","POST",{row_keys:keys});
+    showToast(r.message+" — running in the background");
+    clearSelection();
+    const box=document.getElementById("run-progress");
+    if(box){box.style.display="block";document.getElementById("pb-pct").textContent="0%";
+      document.getElementById("pb-fill").style.width="0%";
+      document.getElementById("pb-sub").textContent="Starting…";
+      document.getElementById("pb-label").textContent="Checking selected students…";}
+    startProgressPoll();
+  }catch(e){showToast("Error: "+e.message);}
+  finally{ setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},3000); }
+}
 let sessionsLoaded = false;
 
+function toggleLgPass(){
+  const inp=document.getElementById("lg-pass");
+  const eye=document.getElementById("lg-eye");
+  if(!inp)return;
+  if(inp.type==="password"){
+    inp.type="text";
+    if(eye)eye.innerHTML='<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+  }else{
+    inp.type="password";
+    if(eye)eye.innerHTML='<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+  }
+}
 async function doLogin(){
   const u=document.getElementById("lg-user").value;
   const p=document.getElementById("lg-pass").value;
@@ -888,6 +1017,7 @@ async function doLogin(){
     TOKEN=d.token;
     document.getElementById("login-screen").style.display="none";
     document.getElementById("app").style.display="block";
+    applySidebarPref();
     loadDashboard();
     loadNextRuns();
     startProgressPoll();
@@ -1331,14 +1461,17 @@ async function loadStudents(page){
     document.getElementById("s-count").textContent="Showing "+d.students.length+" of "+d.total+" active students";
     const b=document.getElementById("s-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
+      '<td><input type="checkbox" class="sel-cb" data-rk="'+s.row_key+'" '+(SELECTED.has(s.row_key)?'checked':'')+' onclick="toggleSel(&quot;'+s.row_key+'&quot;,this)"></td>'+
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td>'+badge(s.current_status)+loginWarn(s)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+'</td>'+
       '<td>'+delBtn(s)+'</td></tr>').join("")
-      :'<tr><td colspan="7" class="empty">No active students found</td></tr>';
+      :'<tr><td colspan="8" class="empty">No active students found</td></tr>';
     renderPg("s-pg",page,d.pages,"loadStudents");
+    updateSelBar();
+    const sa=document.getElementById("sel-all");if(sa)sa.checked=false;
   }catch(e){showToast(""+e.message);}
 }
 
@@ -1562,7 +1695,8 @@ async function loadFailed(page){
 }
 function _setNavBadge(id,n){
   const b=document.getElementById(id);if(!b)return;
-  if(n>0){b.textContent=n;b.style.display="inline-block";}else{b.style.display="none";}
+  if(n>0){b.textContent=n;b.style.display="inline-block";b.classList.add("has");}
+  else{b.style.display="none";b.classList.remove("has");}
 }
 async function updateNavCounts(){
   try{
@@ -2136,9 +2270,15 @@ async def health():
 
 @app.post("/api/login")
 async def login(body: dict):
-    if body.get("username") != PORTAL_USER or body.get("password") != PORTAL_PASS:
+    import asyncio
+    u = str(body.get("username") or "")
+    p = str(body.get("password") or "")
+    # Constant-time comparison avoids leaking the password via response timing.
+    ok = (_secrets.compare_digest(u, PORTAL_USER) and _secrets.compare_digest(p, PORTAL_PASS))
+    if not ok:
+        await asyncio.sleep(1.0)        # slow down brute-force guessing
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    return {"token": create_token(body.get("username")), "username": body.get("username")}
+    return {"token": create_token(u), "username": u}
 
 @app.get("/api/dashboard")
 async def dashboard(user=Depends(verify_token)):
@@ -2207,12 +2347,11 @@ async def dashboard(user=Depends(verify_token)):
 
 def _normalized_session_counts(raw_rows):
     """Collapse raw session rows into the normalized categories (On Demand, Stream 2,
-    Public, etc.) so the dashboard shows ONE row per real category. SYC excluded — it
-    has its own page. Ordered by count desc."""
+    Public, SYC) so the dashboard shows ONE row per real category. Ordered by count desc."""
     agg = {}
     for r in raw_rows:
         norm = normalize_session(r["session"])
-        if not norm or norm == "SYC":
+        if not norm:
             continue
         agg[norm] = agg.get(norm, 0) + (r["cnt"] or 0)
     out = [{"session": k, "cnt": v} for k, v in agg.items()]
@@ -2550,6 +2689,32 @@ async def run_now_upload(background_tasks: BackgroundTasks, user=Depends(verify_
     whole database or MVS Portal. Used by the 'Run Check Now' button after upload."""
     background_tasks.add_task(run_status_check, "all", None, "upload")
     return {"message": "Checking only the uploaded students!"}
+
+@app.post("/api/run-selected")
+async def run_selected(body: dict, background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Run ONLY hand-picked students (1..20) — saves CapSolver credits when a counsellor
+    needs just one or a few statuses right now instead of running everyone."""
+    keys = body.get("row_keys") or []
+    if not isinstance(keys, list):
+        raise HTTPException(status_code=400, detail="row_keys must be a list")
+    # de-dup + clean
+    keys = [str(k) for k in keys if str(k).strip()]
+    keys = list(dict.fromkeys(keys))
+    if len(keys) < 1:
+        raise HTTPException(status_code=400, detail="Select at least 1 student")
+    if len(keys) > 20:
+        raise HTTPException(status_code=400, detail="You can select a maximum of 20 students at a time")
+    # keep only real, non-deleted students
+    conn = get_db()
+    qmarks = ",".join("?" * len(keys))
+    valid = [r["row_key"] for r in conn.execute(
+        f"SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 AND row_key IN ({qmarks})",
+        keys).fetchall()]
+    conn.close()
+    if not valid:
+        raise HTTPException(status_code=404, detail="No valid students found for the selection")
+    background_tasks.add_task(run_status_check, "all", None, "selected", valid)
+    return {"message": f"Checking {len(valid)} selected student(s)…", "count": len(valid)}
 
 @app.post("/api/cancel-run")
 async def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):

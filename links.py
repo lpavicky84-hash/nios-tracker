@@ -8,8 +8,18 @@ import os
 import hmac
 import base64
 import hashlib
+import logging
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "nios-tracker-secret-2025-mvs")
+# Doc-link tokens are HMAC-signed with SECRET_KEY. This MUST match the value set in the
+# environment so links stay valid across restarts. We keep a fixed fallback (rather than
+# a random one) so already-sent WhatsApp links don't break — but warn loudly if the env
+# var is missing, because the fallback is public and would make links forgeable.
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    logging.getLogger(__name__).warning(
+        "SECRET_KEY not set — document links use a public fallback key and are NOT secure. "
+        "Set SECRET_KEY in the environment before going live.")
+    SECRET_KEY = "nios-tracker-secret-2025-mvs"
 
 # Public base URL of the deployed portal (used to build absolute links for WhatsApp).
 # Default is the new custom domain; override with the PUBLIC_BASE_URL env var if needed.
