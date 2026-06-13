@@ -362,7 +362,7 @@ function applySidebarPref(){
       <input type="password" id="lg-pass" placeholder="enter password" autocomplete="current-password"
         style="padding-right:44px" onkeydown="if(event.key==='Enter')doLogin()">
       <button type="button" id="lg-pass-toggle" onclick="toggleLgPass()" aria-label="Show password"
-        style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:6px;color:#94a3b8;display:flex;align-items:center">
+        style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:auto!important;min-width:0;margin:0!important;background:none!important;border:none;cursor:pointer;padding:6px;color:#94a3b8;display:flex;align-items:center;justify-content:center">
         <svg id="lg-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="19" height="19"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       </button>
     </div>
