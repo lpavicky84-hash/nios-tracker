@@ -337,6 +337,9 @@ PORTAL_HTML = """<!DOCTYPE html>
       <span class="badge-count" id="nav-required-badge">0</span></div>
     <div class="nav-item" data-page="syc" onclick="nav('syc')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="lbl">SYC Students</span></div>
+    <div class="nav-item" data-page="failed" onclick="nav('failed')">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span><span class="lbl">Failed to Run</span>
+      <span class="badge-count" id="nav-failed-badge" style="display:none">0</span></div>
     <div class="nav-sep">Activity</div>
     <div class="nav-item" data-page="history" onclick="nav('history')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="lbl">Change History</span></div>
@@ -577,6 +580,29 @@ PORTAL_HTML = """<!DOCTYPE html>
         </div>
       </section>
 
+      <section id="sec-failed" class="page-section">
+        <div class="card">
+          <h3>Failed to Run — Wrong Data (NIOS login failed)</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+            These students' NIOS portal could not be opened with the uploaded details (wrong DOB / Reference / Enrollment No),
+            so <b>no WhatsApp/document was sent</b> (the link would open to an error and panic the student).
+            Click <b>Edit &amp; fix</b>, correct the detail, then <b>Save &amp; Run again</b> — only that one student re-runs.
+            If the data is correct it leaves this list and moves to its normal category.</p>
+          <div class="filter-bar">
+            <input type="text" id="f-search" placeholder="Search name / reference / email..." oninput="debounceFailed()">
+            <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <button class="btn btn-outline btn-sm" onclick="loadFailed(1)">Refresh</button>
+          </div>
+          <div id="f-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Problem</th><th>Action</th>
+            </tr></thead><tbody id="f-body"></tbody></table>
+          </div>
+          <div class="pg-bar" id="f-pg"></div>
+        </div>
+      </section>
+
       <section id="sec-history" class="page-section">
         <div class="card">
           <h3>Status Change History</h3>
@@ -597,6 +623,8 @@ PORTAL_HTML = """<!DOCTYPE html>
               <option>Approved</option><option>Rejected</option>
             </select>
             <select id="h-source" onchange="loadHistory(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <input id="h-search" type="text" placeholder="Search name / reference / email…" oninput="histSearchDebounced()"
+              style="padding:9px 12px;border:2px solid var(--border);border-radius:9px;font-size:13.5px;min-width:230px">
             <button class="btn btn-outline btn-sm" onclick="exportHistory()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
@@ -943,11 +971,14 @@ async function pollProgress(){
       else if(secActive("confirmed"))loadConfirmed(1);
       else if(secActive("required"))loadRequired(1);
       else if(secActive("students"))loadStudents(1);
+      else if(secActive("failed"))loadFailed(1);
     }else{
       box.style.display="none";
       if(wasRunning){wasRunning=false;
+        updateFailedBadge();
         if(secActive("dashboard"))loadDashboard();
-        if(secActive("runlogs"))loadRunLogs();}
+        if(secActive("runlogs"))loadRunLogs();
+        if(secActive("failed"))loadFailed(1);}
     }
   }catch(e){}
 }
@@ -983,7 +1014,7 @@ function renderTimers(){
 
 const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
   syc:"SYC Students",
-  required:"Document Required",history:"Change History",runlogs:"Run Logs",upload:"Upload Excel",settings:"Settings"};
+  required:"Document Required",failed:"Failed to Run",history:"Change History",runlogs:"Run Logs",upload:"Upload Excel",settings:"Settings"};
 function refreshPage(btn){
   // reload the data of whichever page is currently open (no full reload, stays logged in)
   if(btn){var ic=btn.querySelector("svg");if(ic){ic.style.transition="transform .6s";ic.style.transform="rotate(360deg)";
@@ -1005,6 +1036,7 @@ function nav(page){
   if(page==="confirmed")loadConfirmed(1);
   if(page==="syc")loadSyc(1);
   if(page==="required")loadRequired(1);
+  if(page==="failed")loadFailed(1);
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
   if(page==="settings"){loadIntervals();loadWa();loadTrash();}
@@ -1030,6 +1062,7 @@ async function loadDashboard(){
     try{const rr=await api("/api/run-logs?limit="+rrLim);renderRuns(rr,"recent-runs");}
     catch(e){renderRuns(d.recent_runs,"recent-runs");}
     renderBell(d.notifications||[],d.dup_notifications||[]);
+  updateFailedBadge();
   }catch(e){showToast("Error: "+e.message);}
 }
 function renderSessionCounts(arr){
@@ -1375,6 +1408,8 @@ async function deleteStudent(rowKey,name){
     try{loadStudents(1);}catch(e){}
     try{loadConfirmed(1);}catch(e){}
     try{loadRequired(1);}catch(e){}
+    try{loadFailed(1);}catch(e){}
+    updateFailedBadge();
     try{loadDashboard();}catch(e){}
   }catch(e){showToast(""+e.message);}
 }
@@ -1423,12 +1458,14 @@ async function pollAfterRecheck(rk,n){
       st.innerHTML="&#9888; Still failing — "+((s.login_remark||"").replace(/</g,"&lt;"))+" Fix the field and run again.";
       const w=document.getElementById("edit-warn");w.style.display="block";w.innerHTML=st.innerHTML;
       try{loadConfirmed(1);}catch(e){}try{loadDashboard();}catch(e){}
+      try{loadFailed(1);}catch(e){}updateFailedBadge();
       return;
     }
     if((s.current_status||"")&&n>=1){
       st.style.color="var(--success)";
       st.textContent="✓ Done — status: "+s.current_status+(s.current_status==="Admission Confirmed"?" · login OK, documents sent.":".");
       try{loadStudents(1);}catch(e){}try{loadConfirmed(1);}catch(e){}try{loadRequired(1);}catch(e){}try{loadDashboard();}catch(e){}
+      try{loadFailed(1);}catch(e){}updateFailedBadge();
       return;
     }
   }catch(e){}
@@ -1475,6 +1512,44 @@ async function loadRequired(page){
   }catch(e){showToast(""+e.message);}
 }
 
+let fTimer=null;
+function debounceFailed(){clearTimeout(fTimer);fTimer=setTimeout(()=>loadFailed(1),400);}
+async function loadFailed(page){
+  page=page||1;
+  const q=new URLSearchParams({page:page,per_page:perPage,
+    search:(document.getElementById("f-search")?document.getElementById("f-search").value:""),
+    source:fval("f-source")});
+  try{
+    const d=await api("/api/failed-students?"+q.toString());
+    document.getElementById("f-count").textContent=d.total+" student(s) need data correction";
+    const b=document.getElementById("f-body");
+    b.innerHTML=d.students.length?d.students.map(s=>{
+      var ref=(s.reference_no||s.enrollment_no||"—");
+      var nm=(s.student_name||"this student").replace(/[\\"']/g," ");
+      var rm=(s.login_remark||"NIOS login failed — check Reference/Enrollment No & DOB").replace(/</g,"&lt;");
+      return '<tr>'+
+        '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td>'+
+        '<td><span class="ref-tag">'+ref+'</span></td>'+
+        '<td style="font-size:13px">'+(s.session||"—")+'</td>'+
+        '<td style="font-size:12px;color:#b91c1c;font-weight:600;max-width:300px">'+rm+'</td>'+
+        '<td><div style="display:flex;gap:6px;flex-wrap:wrap">'+
+          '<button onclick="editStudent(&quot;'+s.row_key+'&quot;)" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">Edit &amp; fix</button>'+
+          '<button onclick="deleteStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">Remove</button>'+
+        '</div></td></tr>';
+    }).join("")
+      :'<tr><td colspan="5" class="empty" style="color:var(--success)">No failed students — all clear!</td></tr>';
+    renderPg("f-pg",page,d.pages,"loadFailed");
+  }catch(e){showToast(""+e.message);}
+}
+async function updateFailedBadge(){
+  try{
+    const d=await api("/api/failed-count");
+    const b=document.getElementById("nav-failed-badge");
+    if(!b)return;
+    if(d.count>0){b.textContent=d.count;b.style.display="";}
+    else{b.style.display="none";}
+  }catch(e){}
+}
 function renderPg(id,page,total,fnName){
   const el=document.getElementById(id);
   let ctrl='<div class="pg-controls">';
@@ -1521,11 +1596,13 @@ function histRange(){
   else if(preset==="custom"){from=dtLocalToStr(fval("h-from"));to=dtLocalToStr(fval("h-to"));}
   return {from,to};
 }
+let _histSearchT=null;
+function histSearchDebounced(){clearTimeout(_histSearchT);_histSearchT=setTimeout(()=>loadHistory(1),350);}
 async function loadHistory(page){
   page=page||1;
   const rg=histRange();
   const q=new URLSearchParams({page:page,per_page:histPerPage,from_dt:rg.from,to_dt:rg.to,
-    status:fval("h-status"),source:fval("h-source")});
+    status:fval("h-status"),source:fval("h-source"),search:fval("h-search")});
   try{
     const d=await api("/api/history?"+q.toString());
     const items=d.items||[];
@@ -2095,33 +2172,56 @@ async def dashboard(user=Depends(verify_token)):
         "notifications": [dict(n) for n in notifs],
         "dup_notifications": [dict(d) for d in dup_notifs],
         "login_issues": [dict(li) for li in login_issues],
-        "session_counts": [dict(s) for s in sess_counts],
+        "session_counts": _normalized_session_counts(sess_counts),
     }
 
+def _normalized_session_counts(raw_rows):
+    """Collapse raw session rows into the normalized categories (On Demand, Stream 2,
+    Public, etc.) so the dashboard shows ONE row per real category. SYC excluded — it
+    has its own page. Ordered by count desc."""
+    agg = {}
+    for r in raw_rows:
+        norm = normalize_session(r["session"])
+        if not norm or norm == "SYC":
+            continue
+        agg[norm] = agg.get(norm, 0) + (r["cnt"] or 0)
+    out = [{"session": k, "cnt": v} for k, v in agg.items()]
+    out.sort(key=lambda x: x["cnt"], reverse=True)
+    return out
+
 def normalize_session(s):
-    """Merge raw session text into clean filter categories so the dropdown shows ONE
-    entry per real category: every 'On Demand' variant -> 'On Demand',
-    'Stream 2' -> 'Stream 2', and public months group by month regardless of year
-    (e.g. 'April 2027' -> 'April'). Anything unrecognised is kept as-is."""
+    """Merge raw session text into the real filter categories so there is ONE entry
+    per category, no matter how it's typed:
+        • any 'On Demand' variant            -> 'On Demand'
+        • any 'Stream 2' variant             -> 'Stream 2'
+        • any 'Stream 1' variant             -> 'Stream 1'
+        • April / October (with ANY year, e.g. 'April 2027', 'Public Oct 2025')
+                                             -> 'Public'
+        • any 'SYC' variant                  -> 'SYC'
+    Anything unrecognised is kept as-is."""
     t = (s or "").strip().lower()
     if not t:
         return ""
     if "syc" in t:                                               return "SYC"
-    if "on demand" in t or "ondemand" in t or "on-demand" in t:  return "On Demand"
-    if "stream 2" in t or "stream2" in t or "stream-2" in t:     return "Stream 2"
-    if "stream 1" in t or "stream1" in t or "stream-1" in t:     return "Stream 1"
-    if "april" in t:                                             return "April"
-    if "october" in t:                                           return "October"
+    if "on demand" in t or "ondemand" in t or "on-demand" in t or "on_demand" in t:
+        return "On Demand"
+    if "stream 2" in t or "stream2" in t or "stream-2" in t or "stream ii" in t or "stream_2" in t:
+        return "Stream 2"
+    if "stream 1" in t or "stream1" in t or "stream-1" in t or "stream i" in t or "stream_1" in t:
+        return "Stream 1"
+    if "april" in t or "october" in t or "public" in t:         return "Public"
     return s.strip()
 
 def _session_clause(cat):
     """SQL clause + params matching ALL raw variants of a normalized session category,
-    so selecting 'On Demand' catches both 'On Demand' and 'On Demand (June to Sept.)'."""
+    so selecting 'On Demand' catches 'On Demand1', 'On Demand (June to Sept.)' etc.,
+    and 'Public' catches every April / October (any year)."""
     t = (cat or "").strip().lower()
     pats = {
-        "on demand": ["%on demand%", "%ondemand%", "%on-demand%"],
-        "stream 2":  ["%stream 2%", "%stream2%", "%stream-2%"],
-        "stream 1":  ["%stream 1%", "%stream1%", "%stream-1%"],
+        "on demand": ["%on demand%", "%ondemand%", "%on-demand%", "%on_demand%"],
+        "stream 2":  ["%stream 2%", "%stream2%", "%stream-2%", "%stream ii%", "%stream_2%"],
+        "stream 1":  ["%stream 1%", "%stream1%", "%stream-1%", "%stream_1%"],
+        "public":    ["%april%", "%october%", "%public%"],
         "april":     ["%april%"],
         "october":   ["%october%"],
         "syc":       ["%syc%"],
@@ -2194,6 +2294,37 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
             "per_page": per_page, "pages": max(1, (total+per_page-1)//per_page),
             "sessions": norm_sessions}
 
+@app.get("/api/failed-students")
+async def failed_students(page: int = 1, per_page: int = 50, search: str = "",
+                          source: str = "", user=Depends(verify_token)):
+    """Students whose NIOS login failed (wrong data) — the 'Failed to Run' list."""
+    conn = get_db()
+    wc = ["COALESCE(deleted,0)=0", "COALESCE(login_failed,0)=1"]
+    params = []
+    if search:
+        like = f"%{search.strip()}%"
+        wc.append("(student_name LIKE ? OR reference_no LIKE ? OR email LIKE ? OR enrollment_no LIKE ?)")
+        params += [like, like, like, like]
+    if source:
+        wc.append("COALESCE(source,'mvs_tracker')=?"); params.append(source)
+    where = "WHERE " + " AND ".join(wc)
+    total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
+    per_page = max(1, min(per_page, 200)); page = max(1, page)
+    offset = (page - 1) * per_page
+    rows = conn.execute(f"SELECT * FROM student_status {where} ORDER BY last_checked DESC LIMIT ? OFFSET ?",
+                        params + [per_page, offset]).fetchall()
+    conn.close()
+    return {"students": [dict(r) for r in rows], "total": total, "page": page,
+            "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page)}
+
+@app.get("/api/failed-count")
+async def failed_count(user=Depends(verify_token)):
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
+                     "AND COALESCE(login_failed,0)=1").fetchone()[0]
+    conn.close()
+    return {"count": n}
+
 @app.get("/api/export-students")
 async def export_students(view: str="normal", search: str="", status_filter: str="",
                          session_filter: str="", class_filter: str="",
@@ -2237,7 +2368,7 @@ async def export_students(view: str="normal", search: str="", status_filter: str
 
 @app.get("/api/history")
 async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_dt: str = "",
-                     status: str = "", source: str = "", user=Depends(verify_token)):
+                     status: str = "", source: str = "", search: str = "", user=Depends(verify_token)):
     conn = get_db()
     # Prefer the source STORED on the history row (set at write time). Fall back to a
     # reference-no lookup for old rows, then default. This keeps History in sync with
@@ -2256,6 +2387,15 @@ async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_d
         wc.append("new_status = ?"); params.append(status)
     if source:
         wc.append(f"{src_expr} = ?"); params.append(source)
+    if search:
+        like = f"%{search.strip()}%"
+        # Match reference no OR student name (stored on the row) OR the student's email
+        # / enrollment (looked up from student_status by reference).
+        wc.append("(status_history.reference_no LIKE ? OR status_history.student_name LIKE ? "
+                  "OR EXISTS (SELECT 1 FROM student_status ss3 "
+                  "WHERE ss3.reference_no = status_history.reference_no "
+                  "AND (ss3.email LIKE ? OR ss3.enrollment_no LIKE ?)))")
+        params += [like, like, like, like]
     where = ("WHERE " + " AND ".join(wc)) if wc else ""
     total = conn.execute(f"SELECT COUNT(*) FROM status_history {where}", params).fetchone()[0]
     per_page = max(1, min(per_page, 200))
