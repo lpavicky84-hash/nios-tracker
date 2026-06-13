@@ -2734,7 +2734,23 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
     from nios_login import fetch_document
     content, ctype, filename = fetch_document(ref, dob, kind)
     if content is None:
-        raise HTTPException(status_code=404, detail=ctype)
+        # Login/bounce failure -> flag this student as Failed to Run so it surfaces in
+        # the sidebar (and any pending WhatsApp is blocked) even if it was confirmed
+        # earlier. Matched by reference + DOB.
+        err = ctype or "NIOS login failed"
+        low = err.lower()
+        if ("login" in low or "rejected" in low or "dob" in low) and ref:
+            try:
+                conn = get_db()
+                conn.execute(
+                    "UPDATE student_status SET login_failed=1, login_remark=?, "
+                    "whatsapp_info=?, whatsapp_sent=0 "
+                    "WHERE COALESCE(deleted,0)=0 AND reference_no=? AND COALESCE(dob,'')=?",
+                    (err[:240], ("Not sent — " + err)[:180], ref, dob))
+                conn.commit(); conn.close()
+            except Exception:
+                pass
+        raise HTTPException(status_code=404, detail=err)
     # PDF -> attachment download; HTML -> inline (open in tab to print)
     if "pdf" in ctype:
         disp = f'attachment; filename="{filename}"'

@@ -187,6 +187,13 @@ def debug_login(reference_no, dob, page_action=None):
 
 def is_logged_in(html):
     body = (html or "").lower()
+    # NEGATIVE signal first: if NIOS is showing the login page, we are NOT logged in,
+    # even if some menu words happen to appear. This is the same bounce-back signature
+    # that fetch_document uses, so verification and download agree.
+    if ("login to your account" in body or "loginform[" in body
+            or ("username / email" in body and "reset password" in body)
+            or "google_recapcha_response" in body):
+        return False
     return any(m in body for m in ["admission status", "my documents", "payment status",
                                     "logout", "enroll no", "i card", "dashboard"])
 
@@ -218,16 +225,34 @@ def get_logged_in_session(reference_no, dob, enrollment_no="", force=False):
     return session
 
 def verify_login(reference_no, dob, enrollment_no=""):
-    """Try a FRESH NIOS login (https://sdmis.nios.ac.in/auth/other-login) to confirm
-    the Reference/Enrollment No + DOB are correct BEFORE we send any document links.
-    Returns (ok: bool, message: str). On failure the message explains the likely cause
-    so the counsellor can fix the field and re-run — instead of sending a link that
-    opens to a login error and panics the student."""
+    """TRUE verification: log in AND fetch a protected page (ID card) — exactly the path
+    the student's WhatsApp link takes. If NIOS bounces back to the login page (wrong DOB
+    / Reference / Enrollment), the link would also fail, so we report failure and the
+    caller blocks WhatsApp + marks it Failed to Run. Two attempts (reCAPTCHA v3 can flake)
+    so a correct student is never falsely failed. Returns (ok: bool, message: str)."""
+    key = ("enr:" + enrollment_no) if enrollment_no else reference_no
     try:
-        sess = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no, force=True)
-        if sess is not None:
-            return True, ""
-        who = ("Enrollment No" if enrollment_no else "Reference No")
+        target = urljoin(BASE, DOC_URLS["id_card"])
+        for attempt in range(2):
+            session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no,
+                                            force=(attempt == 1))
+            if session is None:
+                continue                                   # login page bounce -> retry
+            try:
+                r = session.get(target, headers=HEADERS, timeout=35)
+            except Exception:
+                continue
+            ct = r.headers.get("Content-Type", "").lower()
+            low = r.text.lower()
+            if "pdf" in ct or r.content[:4] == b"%PDF":
+                return True, ""
+            if ("login to your account" in low or "loginform[" in low
+                    or ("username / email" in low and "reset password" in low)):
+                _session_cache.pop(key, None)              # bounced -> drop + retry
+                continue
+            if "html" in ct:
+                return True, ""                            # got the protected doc page
+        who = "Enrollment No" if enrollment_no else "Reference No"
         return False, (f"NIOS login failed — data mismatch. Check {who} & Date of Birth "
                        f"(DOB used: '{format_dob(dob)}').")
     except Exception as e:
