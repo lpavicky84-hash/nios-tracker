@@ -20,6 +20,10 @@ except Exception:
     mvs_sync = None
 
 logger = logging.getLogger(__name__)
+
+# Shown in 'Failed to Run' when NIOS didn't return a readable status for a student.
+_CHECK_FAIL_MSG = ("Status check failed — NIOS didn't return a readable status. "
+                   "Verify the Reference No, or run this student again (may be temporary).")
 EXCEL_PATH = os.environ.get("EXCEL_PATH", os.path.join(os.environ.get("DATA_DIR", "."), "students.xlsx"))
 
 def _mvs_on():
@@ -409,6 +413,18 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 c.execute("DELETE FROM student_status WHERE reference_no=? AND row_key!=?",
                           (new_ref, row_key))
 
+            # ── Status-check outcome -> 'Failed to Run' visibility ──────────────
+            # If NIOS didn't return a readable status (success=False: 'Unknown' /
+            # 'Fetch Error' — usually a wrong Reference No, or a temporary NIOS /
+            # network / captcha issue), surface the student in 'Failed to Run' with a
+            # clear remark so the counsellor can verify the reference or just run it
+            # again. It clears automatically on the next successful check.
+            if not res.get("success"):
+                c.execute("UPDATE student_status SET check_failed=1, login_remark=? WHERE row_key=?",
+                          (_CHECK_FAIL_MSG, row_key))
+            else:
+                c.execute("UPDATE student_status SET check_failed=0 WHERE row_key=?", (row_key,))
+
             # ── On confirm: VERIFY the NIOS login works BEFORE sharing any document ──
             # If the uploaded Reference/Enrollment No or DOB is wrong, the login at
             # https://sdmis.nios.ac.in/auth/other-login fails. We must NOT send a link
@@ -558,7 +574,7 @@ def recheck_one(row_key):
     }
     final_source = (r["source"] if "source" in r.keys() else "") or "mvs_tracker"
     now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    out = {"ok": True, "status": "", "login_failed": False, "login_remark": "", "whatsapp_sent": False}
+    out = {"ok": True, "status": "", "login_failed": False, "check_failed": False, "login_remark": "", "whatsapp_sent": False}
 
     def _cb(res):
         new_status = res["status"]
@@ -574,6 +590,15 @@ def recheck_one(row_key):
         c.execute("""UPDATE student_status SET reference_no=?, current_status=?, remark=?,
                      is_confirmed=?, last_checked=?, check_count=check_count+1 WHERE row_key=?""",
                   (new_ref, new_status, res.get("remark", ""), is_conf, now_s, row_key))
+        # Status-check outcome -> 'Failed to Run' visibility (same as a full run).
+        if not res.get("success"):
+            c.execute("UPDATE student_status SET check_failed=1, login_remark=? WHERE row_key=?",
+                      (_CHECK_FAIL_MSG, row_key))
+            out["login_remark"] = out["login_remark"] or _CHECK_FAIL_MSG
+            out["check_failed"] = True
+        else:
+            c.execute("UPDATE student_status SET check_failed=0 WHERE row_key=?", (row_key,))
+            out["check_failed"] = False
         conn.commit()
         out["status"] = new_status
         # Verify NIOS login before any document share

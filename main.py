@@ -1605,11 +1605,12 @@ async function pollAfterRecheck(rk,n){
   try{
     const s=await api("/api/student-get?row_key="+encodeURIComponent(rk));
     const st=document.getElementById("edit-status");
-    if(s.login_failed==1||s.login_failed===true){
+    const failed=(s.login_failed==1||s.login_failed===true||s.check_failed==1||s.check_failed===true);
+    if(failed){
       st.style.color="var(--danger)";
       st.innerHTML="&#9888; Still failing — "+((s.login_remark||"").replace(/</g,"&lt;"))+" Fix the field and run again.";
       const w=document.getElementById("edit-warn");w.style.display="block";w.innerHTML=st.innerHTML;
-      try{loadConfirmed(1);}catch(e){}try{loadDashboard();}catch(e){}
+      try{loadStudents(1);}catch(e){}try{loadConfirmed(1);}catch(e){}try{loadDashboard();}catch(e){}
       try{loadFailed(1);}catch(e){}updateFailedBadge();
       return;
     }
@@ -2316,10 +2317,11 @@ async def dashboard(user=Depends(verify_token)):
         f"WHERE {ND} AND COALESCE(cross_dup,0)=1 ORDER BY student_name LIMIT 50"
     ).fetchall()
 
-    # Login-issue students: NIOS login failed -> documents NOT sent (need edit + re-run)
+    # Failed-to-run students: NIOS login failed OR status check failed -> need edit/re-run
     login_issues = conn.execute(
         f"SELECT student_name, reference_no, enrollment_no, login_remark, row_key FROM student_status "
-        f"WHERE {ND} AND COALESCE(login_failed,0)=1 ORDER BY student_name LIMIT 100"
+        f"WHERE {ND} AND (COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1) "
+        f"ORDER BY student_name LIMIT 100"
     ).fetchall()
 
     # Session-wise totals
@@ -2407,6 +2409,7 @@ def _build_student_where(view, search, status_filter, session_filter,
     wc, params = [], []
     wc.append("COALESCE(deleted,0) = 0")          # never show soft-deleted (in Trash)
     wc.append("COALESCE(login_failed,0) = 0")     # login-failed -> only in 'Failed to Run'
+    wc.append("COALESCE(check_failed,0) = 0")     # status-check-failed -> only in 'Failed to Run'
     if view == "confirmed":
         wc.append("is_confirmed = 1")
     elif view == "required":
@@ -2469,7 +2472,7 @@ async def failed_students(page: int = 1, per_page: int = 50, search: str = "",
                           source: str = "", user=Depends(verify_token)):
     """Students whose NIOS login failed (wrong data) — the 'Failed to Run' list."""
     conn = get_db()
-    wc = ["COALESCE(deleted,0)=0", "COALESCE(login_failed,0)=1"]
+    wc = ["COALESCE(deleted,0)=0", "(COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)"]
     params = []
     if search:
         like = f"%{search.strip()}%"
@@ -2492,7 +2495,7 @@ async def nav_count(user=Depends(verify_token)):
     """Live counts for the sidebar badges (active / confirmed / required / syc / failed)."""
     conn = get_db()
     ND = "COALESCE(deleted,0)=0"
-    NF = "COALESCE(login_failed,0)=0"     # login-failed shown only in 'Failed to Run'
+    NF = "COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0"   # only in 'Failed to Run'
     def c(sql, *p):
         return conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND " + sql, p).fetchone()[0]
     active = c(NF + " AND COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
@@ -2500,7 +2503,7 @@ async def nav_count(user=Depends(verify_token)):
     confirmed = c(NF + " AND is_confirmed=1")
     required = c(NF + " AND current_status='Document Required'")
     syc = c(NF + " AND (session LIKE '%syc%' OR current_status='SYC')")
-    failed = c("COALESCE(login_failed,0)=1")
+    failed = c("(COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)")
     conn.close()
     return {"students": active, "confirmed": confirmed, "required": required,
             "syc": syc, "failed": failed}
@@ -2509,7 +2512,7 @@ async def nav_count(user=Depends(verify_token)):
 async def failed_count(user=Depends(verify_token)):
     conn = get_db()
     n = conn.execute("SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
-                     "AND COALESCE(login_failed,0)=1").fetchone()[0]
+                     "AND (COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)").fetchone()[0]
     conn.close()
     return {"count": n}
 
@@ -2976,7 +2979,7 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
 async def get_syc(page: int = 1, per_page: int = 20, search: str = "", user=Depends(verify_token)):
     """List SYC students (session contains SYC). No status check is done for these."""
     conn = get_db()
-    where = ("WHERE COALESCE(deleted,0)=0 AND COALESCE(login_failed,0)=0 "
+    where = ("WHERE COALESCE(deleted,0)=0 AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0 "
              "AND (session LIKE '%syc%' OR current_status='SYC')")
     params = []
     if search:
@@ -3078,7 +3081,8 @@ async def student_get(row_key: str, user=Depends(verify_token)):
     conn = get_db()
     r = conn.execute("SELECT row_key, student_name, mobile, email, dob, reference_no, "
                      "enrollment_no, class_level, session, current_status, "
-                     "COALESCE(login_failed,0) AS login_failed, login_remark "
+                     "COALESCE(login_failed,0) AS login_failed, "
+                     "COALESCE(check_failed,0) AS check_failed, login_remark "
                      "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
     conn.close()
     if not r:
@@ -3108,7 +3112,7 @@ async def student_edit(body: dict, user=Depends(verify_token)):
         conn.close()
         raise HTTPException(status_code=400, detail="No fields to update")
     # Editing the data invalidates any previous login result / sent flag.
-    sets += ["login_failed=0", "login_remark=''", "whatsapp_sent=0"]
+    sets += ["login_failed=0", "login_remark=''", "check_failed=0", "whatsapp_sent=0"]
     params.append(row_key)
     conn.execute(f"UPDATE student_status SET {', '.join(sets)} WHERE row_key=?", params)
     conn.commit()

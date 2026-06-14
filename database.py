@@ -100,6 +100,7 @@ def init_db():
             cross_dup INTEGER DEFAULT 0,
             login_failed INTEGER DEFAULT 0,
             login_remark TEXT,
+            check_failed INTEGER DEFAULT 0,
             deleted INTEGER DEFAULT 0,
             deleted_at TEXT
         )
@@ -111,6 +112,7 @@ def init_db():
                       ("cross_dup", "INTEGER DEFAULT 0"),
                       ("login_failed", "INTEGER DEFAULT 0"),
                       ("login_remark", "TEXT"),
+                      ("check_failed", "INTEGER DEFAULT 0"),
                       ("deleted", "INTEGER DEFAULT 0"),
                       ("deleted_at", "TEXT")):
         try:
