@@ -3223,6 +3223,16 @@ async def wa_resend(body: dict, user=Depends(verify_token)):
     conn.close()
     return {"ok": ok, "info": info}
 
+@app.get("/api/debug-doc")
+async def debug_doc(ref: str, dob: str, kind: str = "app_form", user=Depends(verify_token)):
+    """Inspect how a document page embeds & sizes its images (photo/signature/QR),
+    so we can match NIOS exactly. Returns image pixel sizes, EXIF orientation & CSS."""
+    try:
+        from nios_login import inspect_doc_page
+        return inspect_doc_page(ref, dob, kind)
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/api/debug-idcard")
 async def debug_idcard(ref: str, dob: str, user=Depends(verify_token)):
     """Show the ID card's visible text + best-effort Regional Centre address

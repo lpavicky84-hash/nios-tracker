@@ -423,8 +423,11 @@ font-size:12.5px;font-weight:600;border-bottom:1px solid #FCD34D">
 <style>
 @media print{#__mvs_bar,#__mvs_inapp{display:none!important}}
 body{padding-top:70px!important}
-/* Make the document readable & familiar on EVERY device (phone / tablet / laptop / PC) */
-img{max-width:100%!important;height:auto!important;image-orientation:from-image!important}
+/* Responsive bounds ONLY for un-sized images (the header logo). The photo, signature
+   and QR are pinned to NIOS's exact CSS size elsewhere — DON'T touch them here, or they
+   distort vs the official copy. Page-level fit is handled by the viewport script. */
+img:not(.sign):not(.signature):not(.signature--img):not(.icone):not(.icon):not(.code):not(.photo){max-width:100%;height:auto}
+img{image-orientation:from-image}
 table{max-width:100%}
 @media (max-width:640px){ body{-webkit-text-size-adjust:100%} }
 </style>
@@ -505,6 +508,73 @@ def html_to_pdf(html, session, base_url=BASE):
             pass
         return default_url_fetcher(url)
     return HTML(string=html, base_url=base_url, url_fetcher=fetcher).write_pdf()
+
+def inspect_doc_page(reference_no, dob, kind, enrollment_no=""):
+    """Diagnostic: log in, fetch the document page, and report how each image (photo /
+    signature / QR) is embedded and sized — its real pixel dimensions, EXIF orientation,
+    the size NIOS pins via CSS, and any image-orientation rule. Used by the portal's
+    'Inspect Doc Page' tool to debug why a document renders differently than NIOS."""
+    out = {"kind": kind}
+    try:
+        from PIL import Image as _PILImage
+        out["pillow_available"] = True
+    except Exception:
+        out["pillow_available"] = False
+    path = DOC_URLS.get(kind)
+    if not path:
+        return {"error": f"invalid document kind '{kind}'"}
+    session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no, force=True)
+    if session is None:
+        return {"error": f"NIOS login failed — verify Reference/Enrollment No & DOB (DOB used: '{format_dob(dob)}')."}
+    try:
+        r = session.get(urljoin(BASE, path), headers=HEADERS, timeout=45)
+    except Exception as e:
+        return {"error": f"fetch error: {e}"}
+    ct = r.headers.get("Content-Type", "").lower()
+    out["content_type"] = ct
+    if "pdf" in ct or r.content[:4] == b"%PDF":
+        out["note"] = "NIOS returned a ready-made PDF (no HTML images to inspect)."
+        return out
+    low = r.text.lower()
+    if ("login to your account" in low or "loginform[" in low):
+        return {"error": "Bounced back to NIOS login page — login not valid."}
+    soup = BeautifulSoup(r.text, "html.parser")
+    # any image-orientation rules NIOS declares
+    orient_css = []
+    for st in soup.find_all("style"):
+        for m in re.findall(r"([^{}]*\{[^{}]*image-orientation[^{}]*\})", st.get_text() or "", re.I):
+            orient_css.append(re.sub(r"\s+", " ", m).strip()[:200])
+    out["image_orientation_css"] = orient_css or "none declared (browser default applies)"
+    size_map = _size_rules_from_soup(soup)
+    imgs = []
+    for img in soup.find_all("img"):
+        cls = img.get("class") or []
+        info = {"class": " ".join(cls) or "(none)",
+                "width_attr": img.get("width"), "height_attr": img.get("height"),
+                "style": (img.get("style") or "")[:160],
+                "css_size_pinned": {c: size_map[c] for c in cls if c in size_map} or None}
+        src = img.get("src") or ""
+        full = src if src.startswith("http") else urljoin(BASE, src)
+        data, ctype = _fetch_bytes(full, session)
+        if data:
+            info["bytes"] = len(data)
+            info["mime"] = _guess_mime(full, ctype, data)
+            if out["pillow_available"]:
+                try:
+                    import io as _io
+                    from PIL import Image as _I
+                    im = _I.open(_io.BytesIO(data))
+                    info["pixels"] = f"{im.size[0]}x{im.size[1]}"
+                    ex = im.getexif()
+                    info["exif_orientation"] = ex.get(0x0112) if ex else None
+                except Exception as e:
+                    info["pixel_error"] = str(e)[:80]
+        imgs.append(info)
+    out["images"] = imgs
+    out["summary"] = ("Look at the image whose class is 'sign'/'signature' — 'pixels' is its real "
+                      "size, 'exif_orientation' (6 or 8 = rotated) tells if NIOS expects rotation, "
+                      "'css_size_pinned' is the box NIOS gives it.")
+    return out
 
 def fetch_document(reference_no, dob, kind, enrollment_no=""):
     """Login as student & return the document. Logs in with enrollment_no when given
