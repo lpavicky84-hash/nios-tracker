@@ -302,6 +302,40 @@ def _size_rules_from_soup(soup):
                 rules.setdefault(cls, {}).update(props)
     return rules
 
+def _fix_orientation(data, mime):
+    """Bake any EXIF rotation INTO the pixels so signatures/photos render upright on
+    every device & browser — matching the NIOS official copy. NIOS stores phone-camera
+    images with an EXIF 'orientation' tag; when we re-embed the raw bytes the browser
+    may ignore that tag and show the image sideways. We rotate the pixels and strip the
+    tag so it can't double-rotate. Falls back to the original bytes if Pillow is missing
+    or there's nothing to rotate (so document serving never breaks)."""
+    if not data or not mime or "image" not in mime:
+        return data, mime
+    if not any(t in mime for t in ("jpeg", "jpg", "png")):
+        return data, mime
+    try:
+        import io as _io
+        from PIL import Image, ImageOps
+        im = Image.open(_io.BytesIO(data))
+        exif = im.getexif()
+        orient = exif.get(0x0112) if exif else None          # 0x0112 = Orientation
+        if not orient or orient == 1:
+            return data, mime                                 # already upright
+        fixed = ImageOps.exif_transpose(im)                   # rotate pixels per EXIF
+        is_jpeg = ("jpeg" in mime or "jpg" in mime)
+        fmt = "JPEG" if is_jpeg else "PNG"
+        if is_jpeg and fixed.mode in ("RGBA", "P", "LA"):
+            fixed = fixed.convert("RGB")
+        buf = _io.BytesIO()
+        if is_jpeg:
+            fixed.save(buf, format="JPEG", quality=92)
+        else:
+            fixed.save(buf, format="PNG")
+        return buf.getvalue(), ("image/jpeg" if is_jpeg else "image/png")
+    except Exception as e:
+        logger.warning(f"orientation fix skipped: {e}")
+        return data, mime
+
 def inline_resources(html, session):
     """Fetch images & CSS (using student's session for protected ones) and embed inline,
     so the document renders fully in the counsellor's / student's browser.
@@ -344,6 +378,7 @@ def inline_resources(html, session):
         data, ctype = _fetch_bytes(full, session)
         if data:
             mime = _guess_mime(full, ctype, data)
+            data, mime = _fix_orientation(data, mime)   # upright signatures/photos
             img["src"] = f"data:{mime};base64,{base64.b64encode(data).decode()}"
         elif not src.startswith("http"):
             # couldn't inline a relative URL -> at least point it at NIOS (not the portal)
@@ -389,7 +424,7 @@ font-size:12.5px;font-weight:600;border-bottom:1px solid #FCD34D">
 @media print{#__mvs_bar,#__mvs_inapp{display:none!important}}
 body{padding-top:70px!important}
 /* Make the document readable & familiar on EVERY device (phone / tablet / laptop / PC) */
-img{max-width:100%!important;height:auto!important}
+img{max-width:100%!important;height:auto!important;image-orientation:from-image!important}
 table{max-width:100%}
 @media (max-width:640px){ body{-webkit-text-size-adjust:100%} }
 </style>
