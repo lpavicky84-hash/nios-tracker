@@ -242,6 +242,9 @@ PORTAL_HTML = """<!DOCTYPE html>
     justify-content:center;background:var(--primary-light);color:var(--primary);flex-shrink:0}
   .timer-chip.soon{border-color:var(--warn);border-left:4px solid var(--warn)}
   .timer-chip.soon .tc-ic{background:rgba(234,88,12,.12);color:var(--warn)}
+  .timer-chip.paused{border-left:4px solid #94a3b8;opacity:.85}
+  .timer-chip.paused .tc-ic{background:rgba(148,163,184,.16);color:#64748b}
+  .timer-chip.paused .tc-time{color:#64748b}
   .tc-lbl{font-size:12px;color:var(--muted);font-weight:600}
   .tc-time{font-size:18px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums}
   .tc-grp{font-size:11px;color:var(--muted)}
@@ -782,20 +785,20 @@ function applySidebarPref(){
             Set separate intervals for each group. Confirmed students are skipped automatically.</p>
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
             <span style="width:280px;font-weight:600">📗 Regular (On Demand + Stream 2)</span>
-            <input type="number" id="iv-regular" min="1" max="4320" value="6"
+            <input type="number" id="iv-regular" min="1" max="43200" value="6"
               style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
             <select id="iv-regular-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-              <option value="hours">hours</option><option value="minutes">minutes</option></select>
+              <option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
           </div>
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
             <span style="width:280px;font-weight:600">📘 Public Exam (April / October + any year)</span>
-            <input type="number" id="iv-public" min="1" max="4320" value="12"
+            <input type="number" id="iv-public" min="1" max="43200" value="12"
               style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
             <select id="iv-public-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-              <option value="hours">hours</option><option value="minutes">minutes</option></select>
+              <option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
           </div>
           <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
-          <div style="font-size:11px;color:var(--muted);margin-top:8px">Minimum 15 minutes. Tip: shorter intervals use more CapSolver credits.</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">Range: 15 minutes up to 30 days (use the <b>days</b> unit to run every few days). Tip: shorter intervals use more CapSolver credits.</div>
           <div id="iv-status" style="margin-top:12px;font-size:13px"></div>
         </div>
         <div class="card">
@@ -1122,9 +1125,11 @@ async function pollProgress(){
 
 /* ---------- next-run timers ---------- */
 let timers=[],timerInt=null;
+let intervalsPaused=false;
 async function loadNextRuns(){
   try{
     const d=await api("/api/next-runs");
+    intervalsPaused=!!d.paused;
     timers=(d.runs||[]).map(r=>({label:r.label,remain:(r.seconds==null?null:r.seconds),at:Date.now()}));
     renderTimers();
     if(!timerInt)timerInt=setInterval(renderTimers,1000);
@@ -1138,15 +1143,30 @@ function fmtDur(s){
 function renderTimers(){
   const el=document.getElementById("next-runs");if(!el)return;
   if(!timers.length){el.innerHTML="";return;}
-  el.innerHTML=timers.map(t=>{
-    let rem=(t.remain==null)?null:Math.max(0,t.remain-Math.floor((Date.now()-t.at)/1000));
-    const soon=(rem!=null&&rem<=1800);
-    return '<div class="timer-chip'+(soon?' soon':'')+'">'+
+  let chips=timers.map(t=>{
+    // When paused, freeze the remaining time (don't subtract elapsed).
+    let rem=(t.remain==null)?null:(intervalsPaused?t.remain:Math.max(0,t.remain-Math.floor((Date.now()-t.at)/1000)));
+    const soon=(!intervalsPaused&&rem!=null&&rem<=1800);
+    return '<div class="timer-chip'+(soon?' soon':'')+(intervalsPaused?' paused':'')+'">'+
       '<div class="tc-ic">'+CLOCK+'</div><div>'+
-      '<div class="tc-lbl">Next auto-run'+(soon?' — running soon':'')+'</div>'+
-      '<div class="tc-time">'+fmtDur(rem)+'</div>'+
+      '<div class="tc-lbl">'+(intervalsPaused?'Paused':('Next auto-run'+(soon?' — running soon':'')))+'</div>'+
+      '<div class="tc-time">'+fmtDur(rem)+(intervalsPaused?' (frozen)':'')+'</div>'+
       '<div class="tc-grp">'+t.label+'</div></div></div>';
   }).join("");
+  const btn=intervalsPaused
+    ? '<button class="btn btn-success btn-sm" onclick="resumeIntervals(this)" style="align-self:center"><svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume timer</button>'
+    : '<button class="btn btn-sm" onclick="pauseIntervals(this)" style="align-self:center;background:var(--soft);color:var(--text);border:1px solid var(--border)"><svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause timer</button>';
+  el.innerHTML=chips+btn;
+}
+async function pauseIntervals(btn){
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{const r=await api("/api/intervals-pause","POST");showToast(r.message);await loadNextRuns();}
+  catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.style.opacity="";}}
+}
+async function resumeIntervals(btn){
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{const r=await api("/api/intervals-resume","POST");showToast(r.message);await loadNextRuns();}
+  catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.style.opacity="";}}
 }
 
 const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
@@ -2012,13 +2032,16 @@ async function runUploaded(btn){
 function setIvField(which,mins){
   const inp=document.getElementById("iv-"+which),unit=document.getElementById("iv-"+which+"-unit");
   if(!inp||!unit)return;
-  if(mins>=60 && mins%60===0){inp.value=mins/60;unit.value="hours";}
+  if(mins>=1440 && mins%1440===0){inp.value=mins/1440;unit.value="days";}
+  else if(mins>=60 && mins%60===0){inp.value=mins/60;unit.value="hours";}
   else{inp.value=mins;unit.value="minutes";}
 }
 function ivToMin(which){
   const v=parseInt(document.getElementById("iv-"+which).value)||0;
   const unit=document.getElementById("iv-"+which+"-unit").value;
-  return unit==="hours"?v*60:v;
+  if(unit==="days")return v*1440;
+  if(unit==="hours")return v*60;
+  return v;
 }
 async function loadIntervals(){
   try{const r=await api("/api/intervals");
@@ -2058,6 +2081,7 @@ async function purgeStudent(rk,name){
 async function saveIntervals(){
   const rm=ivToMin("regular"),pm=ivToMin("public");
   if(rm<15||pm<15){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
+  if(rm>43200||pm>43200){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Maximum interval is 30 days</span>';return;}
   try{const r=await api("/api/intervals","POST",{regular_min:rm,public_min:pm});
     document.getElementById("iv-status").innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
     showToast("Intervals saved!");}
@@ -2238,6 +2262,15 @@ def reschedule_jobs():
         scheduler.remove_job("job_mvs")     # drop the old separate MVS Portal job
     except Exception:
         pass
+    # If the counsellor paused automatic runs, keep them off (across restarts too).
+    if get_setting("intervals_paused", "") == "1":
+        for jid in ("job_regular", "job_public"):
+            try:
+                scheduler.remove_job(jid)
+            except Exception:
+                pass
+        logger.info("Intervals are PAUSED — no automatic runs scheduled.")
+        return
     for jid, grp, mins in [("job_regular", "regular", reg), ("job_public", "public", pub)]:
         last = _last_run_time(grp)
         nxt = last + timedelta(minutes=mins) if last else now + timedelta(minutes=mins)
@@ -2761,23 +2794,75 @@ async def run_progress(user=Depends(verify_token)):
 
 GROUP_LABELS = {"regular": "On Demand + Stream 2", "public": "Public (April / October)"}
 
+def _job_remaining_sec(jid):
+    """Seconds until a scheduled job's next run (None if not scheduled)."""
+    job = scheduler.get_job(jid)
+    if not job or not job.next_run_time:
+        return None
+    nrt = job.next_run_time
+    if nrt.tzinfo is None:
+        delta = (nrt - datetime.now()).total_seconds()
+    else:
+        delta = (nrt - datetime.now(timezone.utc)).total_seconds()
+    return max(0, int(delta))
+
 @app.get("/api/next-runs")
 async def next_runs(user=Depends(verify_token)):
-    """Seconds remaining until the next automatic run of each group."""
-    now = datetime.now(timezone.utc)
+    """Seconds remaining until the next automatic run of each group.
+    When paused, returns the FROZEN remaining time + paused=True."""
+    paused = get_setting("intervals_paused", "") == "1"
     out = []
     for grp, jid in [("regular", "job_regular"), ("public", "job_public")]:
-        job = scheduler.get_job(jid)
-        secs = None
-        if job and job.next_run_time:
-            nrt = job.next_run_time
-            if nrt.tzinfo is None:
-                delta = (nrt - datetime.now()).total_seconds()
-            else:
-                delta = (nrt - now).total_seconds()
-            secs = max(0, int(delta))
+        if paused:
+            try:
+                secs = int(get_setting(f"pause_remaining_{grp}_sec", "") or 0)
+            except Exception:
+                secs = None
+        else:
+            secs = _job_remaining_sec(jid)
         out.append({"group": grp, "label": GROUP_LABELS.get(grp, grp), "seconds": secs})
-    return {"runs": out}
+    return {"runs": out, "paused": paused}
+
+@app.post("/api/intervals-pause")
+async def intervals_pause(user=Depends(verify_token)):
+    """Freeze the automatic-run timer: capture how long is left for each group, then
+    stop the schedule. Resuming continues from exactly this remaining time."""
+    for grp, jid, dh in [("regular", "job_regular", 6), ("public", "job_public", 12)]:
+        rem = _job_remaining_sec(jid)
+        if rem is None:
+            rem = _interval_minutes(grp, dh) * 60      # fallback: a full interval
+        set_setting(f"pause_remaining_{grp}_sec", rem)
+        try:
+            scheduler.remove_job(jid)
+        except Exception:
+            pass
+    set_setting("intervals_paused", "1")
+    return {"paused": True, "message": "Automatic runs paused — timer frozen. Press Resume to continue from here."}
+
+@app.post("/api/intervals-resume")
+async def intervals_resume(user=Depends(verify_token)):
+    """Resume: re-schedule each group to fire after its FROZEN remaining time, so the
+    countdown picks up exactly where it was paused (not reset to a full interval)."""
+    set_setting("intervals_paused", "")
+    now = datetime.now()
+    for grp, jid, dh in [("regular", "job_regular", 6), ("public", "job_public", 12)]:
+        mins = _interval_minutes(grp, dh)
+        try:
+            rem = int(get_setting(f"pause_remaining_{grp}_sec", "") or 0)
+        except Exception:
+            rem = 0
+        if rem <= 0:
+            rem = mins * 60
+        scheduler.add_job(lambda g=grp: run_status_check(g),
+                          trigger=IntervalTrigger(minutes=mins),
+                          id=jid, replace_existing=True,
+                          next_run_time=now + timedelta(seconds=rem))
+        set_setting(f"pause_remaining_{grp}_sec", "")
+    return {"paused": False, "message": "Resumed — timer continues from where it was paused."}
+
+@app.get("/api/intervals-paused")
+async def intervals_paused(user=Depends(verify_token)):
+    return {"paused": get_setting("intervals_paused", "") == "1"}
 
 @app.post("/api/upload-excel")
 async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token)):
@@ -2907,13 +2992,21 @@ async def get_intervals(user=Depends(verify_token)):
 async def set_intervals(body: dict, user=Depends(verify_token)):
     reg = int(body.get("regular_min", 360))
     pub = int(body.get("public_min", 720))
+    MAX_MIN = 43200   # 30 days — lets counsellors run every few days, not just hours
     for v in (reg, pub):
-        if not (15 <= v <= 4320):
-            raise HTTPException(status_code=400, detail="Interval must be between 15 minutes and 72 hours")
+        if not (15 <= v <= MAX_MIN):
+            raise HTTPException(status_code=400, detail="Interval must be between 15 minutes and 30 days")
     set_setting("interval_regular_min", reg)
     set_setting("interval_public_min", pub)
+    # Saving new intervals restarts the timer fresh, so clear any paused state.
+    set_setting("intervals_paused", "")
+    set_setting("pause_remaining_regular_sec", "")
+    set_setting("pause_remaining_public_sec", "")
     reschedule_jobs()
     def _fmt(m):
+        if m % 1440 == 0:
+            d = m // 1440
+            return f"{d} day" + ("s" if d != 1 else "")
         if m % 60 == 0:
             return f"{m//60}h"
         if m < 60:
