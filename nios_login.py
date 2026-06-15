@@ -423,10 +423,10 @@ font-size:12.5px;font-weight:600;border-bottom:1px solid #FCD34D">
 <style>
 @media print{#__mvs_bar,#__mvs_inapp{display:none!important}}
 body{padding-top:70px!important}
-/* Responsive bounds ONLY for un-sized images (the header logo). The photo, signature
-   and QR are pinned to NIOS's exact CSS size elsewhere — DON'T touch them here, or they
-   distort vs the official copy. Page-level fit is handled by the viewport script. */
-img:not(.sign):not(.signature):not(.signature--img):not(.icone):not(.icon):not(.code):not(.photo){max-width:100%;height:auto}
+/* Do NOT override image width/height here — NIOS sizes each image (photo/signature/QR)
+   via its own attributes/CSS. Any override (e.g. height:auto) distorts a square signature
+   or photo vs the official copy. Page-level fit for phones is handled by the viewport
+   fit script below, so per-image bounds aren't needed. */
 img{image-orientation:from-image}
 table{max-width:100%}
 @media (max-width:640px){ body{-webkit-text-size-adjust:100%} }
