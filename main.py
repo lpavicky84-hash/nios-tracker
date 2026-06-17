@@ -79,8 +79,10 @@ PORTAL_HTML = """<!DOCTYPE html>
     --shadow:0 1px 3px rgba(0,0,0,.4); --shadow-lg:0 10px 25px rgba(0,0,0,.5);
   }
   *{margin:0;padding:0;box-sizing:border-box}
+  html,body{overflow-x:hidden;max-width:100%}
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+  img{max-width:100%}
   a{text-decoration:none}
   ::-webkit-scrollbar{width:8px;height:8px}
   ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px}
@@ -395,6 +397,12 @@ PORTAL_HTML = """<!DOCTYPE html>
     table th,table td{padding:10px 12px}
     .rn-txt{display:none}
     #run-now-btn{padding:9px 11px}
+    /* hard guards so nothing forces a horizontal scroll / zoom-out */
+    #app,.main,.content,.page-section,.card{max-width:100%;min-width:0}
+    .content{overflow-x:hidden}
+    #toast{left:12px;right:12px;bottom:18px;max-width:none;text-align:center}
+    .iv-row .iv-lbl{width:auto;flex:1 1 100%}
+    .topbar{max-width:100vw}
   }
 
   /* ===== Big screens / TV: cap content width so it never stretches awkwardly ===== */
