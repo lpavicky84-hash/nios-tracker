@@ -436,36 +436,22 @@ function applySidebarPref(){
           <button class="btn btn-success btn-sm" id="run-now-btn" onclick="toggleRunMenu(event)">
             <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Now
             <svg id="run-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="margin-left:5px;transition:transform .15s"><polyline points="6 9 12 15 18 9"/></svg></button>
-          <div id="run-menu" style="display:none;position:absolute;right:0;top:calc(100% + 8px);background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.16);min-width:248px;z-index:900;overflow:hidden;padding:5px">
-            <button class="run-menu-item" onclick="runChoice('all')">
-              <span class="rmi-main">Run all data</span>
-              <span class="rmi-sub">MVS Tracker + MVS Portal</span></button>
-            <div style="padding:6px 12px 3px;font-size:10.5px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">MVS Tracker — by group</div>
-            <button class="run-menu-item" onclick="runChoice('tracker','ondemand')">
-              <span class="rmi-dot" style="background:#0EA5E9"></span>
-              <span class="rmi-main">On Demand only</span></button>
-            <button class="run-menu-item" onclick="runChoice('tracker','stream2')">
-              <span class="rmi-dot" style="background:#0EA5E9"></span>
-              <span class="rmi-main">Stream 2 only</span></button>
-            <button class="run-menu-item" onclick="runChoice('tracker','public')">
-              <span class="rmi-dot" style="background:#0EA5E9"></span>
-              <span class="rmi-main">Public only</span></button>
-            <button class="run-menu-item" onclick="runChoice('tracker','all')">
-              <span class="rmi-dot" style="background:#0EA5E9"></span>
-              <span class="rmi-main">All MVS Tracker</span></button>
-            <div style="padding:6px 12px 3px;font-size:10.5px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">MVS Portal — by group</div>
-            <button class="run-menu-item" onclick="runChoice('portal','ondemand')">
-              <span class="rmi-dot" style="background:#7C3AED"></span>
-              <span class="rmi-main">On Demand only</span></button>
-            <button class="run-menu-item" onclick="runChoice('portal','stream2')">
-              <span class="rmi-dot" style="background:#7C3AED"></span>
-              <span class="rmi-main">Stream 2 only</span></button>
-            <button class="run-menu-item" onclick="runChoice('portal','public')">
-              <span class="rmi-dot" style="background:#7C3AED"></span>
-              <span class="rmi-main">Public only</span></button>
-            <button class="run-menu-item" onclick="runChoice('portal','all')">
-              <span class="rmi-dot" style="background:#7C3AED"></span>
-              <span class="rmi-main">All MVS Portal</span></button>
+          <div id="run-menu" style="display:none">
+            <div class="rm-head">Run a status check</div>
+            <button class="run-menu-item rmi-all" onclick="runChoice('all')">
+              <span class="rmi-ic"><svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
+              <span class="rmi-txt"><span class="rmi-main">Run all data</span>
+              <span class="rmi-sub">MVS Tracker + MVS Portal</span></span></button>
+            <div class="rm-sec"><span class="rm-sq" style="background:#0EA5E9"></span>MVS Tracker</div>
+            <button class="run-menu-item trk" onclick="runChoice('tracker','ondemand')"><span class="rmi-dot"></span><span class="rmi-main">On Demand</span></button>
+            <button class="run-menu-item trk" onclick="runChoice('tracker','stream2')"><span class="rmi-dot"></span><span class="rmi-main">Stream 2</span></button>
+            <button class="run-menu-item trk" onclick="runChoice('tracker','public')"><span class="rmi-dot"></span><span class="rmi-main">Public</span></button>
+            <button class="run-menu-item trk" onclick="runChoice('tracker','all')"><span class="rmi-dot"></span><span class="rmi-main">All Tracker</span><span class="rmi-tag">all</span></button>
+            <div class="rm-sec"><span class="rm-sq" style="background:#7C3AED"></span>MVS Portal</div>
+            <button class="run-menu-item por" onclick="runChoice('portal','ondemand')"><span class="rmi-dot"></span><span class="rmi-main">On Demand</span></button>
+            <button class="run-menu-item por" onclick="runChoice('portal','stream2')"><span class="rmi-dot"></span><span class="rmi-main">Stream 2</span></button>
+            <button class="run-menu-item por" onclick="runChoice('portal','public')"><span class="rmi-dot"></span><span class="rmi-main">Public</span></button>
+            <button class="run-menu-item por" onclick="runChoice('portal','all')"><span class="rmi-dot"></span><span class="rmi-main">All Portal</span><span class="rmi-tag">all</span></button>
           </div>
         </div>
         <div class="bell-btn" onclick="refreshPage(this)" title="Refresh this page" style="cursor:pointer">
@@ -980,11 +966,25 @@ function applySidebarPref(){
   </div>
 </div>
 <style>.edit-inp{width:100%;margin-top:4px;padding:9px 11px;border:2px solid var(--border);border-radius:9px;font-size:14px;font-weight:400}
-.run-menu-item{display:flex;align-items:center;flex-wrap:wrap;width:100%;text-align:left;padding:10px 12px;border:none;background:none;cursor:pointer;border-radius:8px;transition:background .12s}
+#run-menu{display:none;position:absolute;right:0;top:calc(100% + 10px);background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;box-shadow:0 16px 44px rgba(15,23,42,.18),0 2px 8px rgba(15,23,42,.06);min-width:262px;z-index:900;overflow:hidden;padding:6px}
+.rm-head{padding:9px 12px 8px;font-size:10px;font-weight:800;letter-spacing:.7px;color:var(--muted);text-transform:uppercase}
+.run-menu-item{display:flex;align-items:center;width:100%;text-align:left;padding:9px 12px;border:none;background:none;cursor:pointer;border-radius:9px;transition:background .12s,box-shadow .12s}
 .run-menu-item:hover{background:var(--soft)}
 .run-menu-item .rmi-main{font-size:13.5px;font-weight:600;color:var(--text)}
-.run-menu-item .rmi-sub{flex-basis:100%;font-size:11.5px;font-weight:400;color:var(--muted);margin-top:1px}
-.run-menu-item .rmi-dot{width:9px;height:9px;border-radius:50%;margin-right:9px;flex-shrink:0}
+.run-menu-item .rmi-dot{width:7px;height:7px;border-radius:50%;margin:0 11px 0 4px;flex-shrink:0;background:var(--muted)}
+.run-menu-item .rmi-tag{margin-left:auto;font-size:10px;font-weight:700;color:var(--muted);background:var(--soft);border:1px solid var(--border);padding:1px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:.3px}
+.run-menu-item.trk .rmi-dot{background:#0EA5E9}
+.run-menu-item.por .rmi-dot{background:#7C3AED}
+.run-menu-item.trk:hover{background:rgba(14,165,233,.10)}
+.run-menu-item.por:hover{background:rgba(124,58,237,.10)}
+.rmi-all{margin-bottom:3px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(16,185,129,.04));border:1px solid rgba(16,185,129,.22)}
+.rmi-all:hover{background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(16,185,129,.08))}
+.rmi-all .rmi-ic{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:var(--success,#10B981);color:#fff;margin-right:11px;flex-shrink:0}
+.rmi-all .rmi-txt{display:flex;flex-direction:column;line-height:1.25}
+.rmi-all .rmi-main{font-size:14px;font-weight:700}
+.rmi-all .rmi-sub{font-size:11.5px;font-weight:500;color:var(--muted)}
+.rm-sec{display:flex;align-items:center;gap:8px;padding:10px 12px 5px;font-size:10.5px;font-weight:800;letter-spacing:.5px;color:var(--muted);text-transform:uppercase}
+.rm-sec .rm-sq{width:9px;height:9px;border-radius:3px;flex-shrink:0}
 #run-now-btn.open #run-caret{transform:rotate(180deg)}</style>
 
 <script>
