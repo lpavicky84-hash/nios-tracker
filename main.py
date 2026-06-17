@@ -86,9 +86,10 @@ PORTAL_HTML = """<!DOCTYPE html>
   ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px}
 
   #login-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-    background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);z-index:1000}
-  .login-card{background:var(--card);border-radius:18px;padding:42px;width:380px;
+    background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);z-index:1000;padding:16px}
+  .login-card{background:var(--card);border-radius:18px;padding:42px;width:380px;max-width:100%;
     box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  @media(max-width:480px){.login-card{padding:28px 22px}}
   .login-card .logo{width:60px;height:60px;background:linear-gradient(135deg,#4F46E5,#7C3AED);
     border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 18px}
   .login-card h2{text-align:center;font-size:21px;margin-bottom:4px}
@@ -324,10 +325,63 @@ PORTAL_HTML = """<!DOCTYPE html>
     transition:.3s;z-index:2000;max-width:360px}
   #toast.show{opacity:1;transform:translateY(0)}
 
-  @media(max-width:820px){
-    .sidebar{width:64px}.sidebar .brand .tx,.nav-item span.lbl,.nav-sep{display:none}
-    .nav-item{justify-content:center;padding:14px}.main{margin-left:64px}
-    .bell-dropdown{width:300px}
+  .nav-backdrop{display:none}
+
+  /* ===== Tablet / iPad: slim icon-only sidebar, content uses the space ===== */
+  @media(max-width:1024px) and (min-width:768px){
+    .sidebar{width:64px}
+    .sidebar .brand .tx,.nav-item span.lbl,.nav-sep{display:none}
+    .nav-item{justify-content:center;padding:14px}
+    .main{margin-left:64px}
+    .content{padding:20px}
+    .topbar{padding:0 18px}
+    .bell-dropdown{width:340px}
+    .stat-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+  }
+
+  /* ===== Phone: off-canvas slide-in drawer, full-width content ===== */
+  @media(max-width:767px){
+    .sidebar{width:250px;transform:translateX(-100%);
+      transition:transform .26s cubic-bezier(.4,0,.2,1);box-shadow:0 0 50px rgba(0,0,0,.35)}
+    #app.nav-open .sidebar{transform:translateX(0)}
+    .main{margin-left:0}
+    /* drawer always shows full labels even if 'minimize' was toggled earlier */
+    #app.sidebar-min .sidebar{width:250px}
+    #app.sidebar-min .sidebar .brand .tx,
+    #app.sidebar-min .nav-item span.lbl,
+    #app.sidebar-min .nav-sep,
+    #app.sidebar-min .nav-item .nav-num,
+    #app.sidebar-min .nav-item .badge-count{display:revert!important}
+    #app.sidebar-min .nav-item{justify-content:flex-start;padding:11px 22px}
+    #app.sidebar-min .main{margin-left:0}
+    .nav-backdrop{display:block;position:fixed;inset:0;background:rgba(15,23,42,.5);
+      z-index:90;opacity:0;visibility:hidden;transition:opacity .26s,visibility .26s}
+    #app.nav-open .nav-backdrop{opacity:1;visibility:visible}
+
+    .topbar{padding:0 12px;height:58px}
+    .topbar h1{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40vw}
+    .topbar .right{gap:8px}
+    .content{padding:14px}
+    .card{padding:16px;border-radius:12px;margin-bottom:16px}
+    .card h3{font-size:14px}
+    .stat-grid{grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+    .stat{padding:15px}
+    .filter-bar{gap:8px;margin-bottom:14px}
+    .filter-bar input,.filter-bar select{padding:10px 12px;font-size:14px}
+    .filter-bar input{min-width:130px;flex:1 1 100%}
+    .bell-dropdown{width:calc(100vw - 20px);right:-8px;max-height:70vh}
+    #run-menu{min-width:0;width:calc(100vw - 24px);max-width:310px}
+    .btn-sm{padding:9px 12px;font-size:13px}
+    .legend-grid{grid-template-columns:1fr}
+    table{font-size:13px}
+    table th,table td{padding:10px 12px}
+    .rn-txt{display:none}
+    #run-now-btn{padding:9px 11px}
+  }
+
+  /* ===== Big screens / TV: cap content width so it never stretches awkwardly ===== */
+  @media(min-width:1700px){
+    .content{max-width:1640px;margin-left:auto;margin-right:auto}
   }
   /* Counsellor-toggled collapse (click only) — icon-only sidebar, content expands */
   #app.sidebar-min .sidebar{width:64px}
@@ -349,9 +403,16 @@ PORTAL_HTML = """<!DOCTYPE html>
 <script>
 function toggleSidebar(){
   var app=document.getElementById("app");if(!app)return;
+  // On phones the hamburger opens an off-canvas drawer; on larger screens it
+  // collapses the sidebar to icons (persisted).
+  if(window.matchMedia("(max-width:767px)").matches){
+    app.classList.toggle("nav-open");
+    return;
+  }
   var min=app.classList.toggle("sidebar-min");
   try{localStorage.setItem("mvs_sidebar_min",min?"1":"0");}catch(e){}
 }
+function closeNav(){var a=document.getElementById("app");if(a)a.classList.remove("nav-open");}
 function applySidebarPref(){
   try{ if(localStorage.getItem("mvs_sidebar_min")==="1"){var a=document.getElementById("app");if(a)a.classList.add("sidebar-min");} }catch(e){}
 }
@@ -422,6 +483,7 @@ function applySidebarPref(){
         <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span class="lbl">Logout</span></div>
     </div>
   </aside>
+  <div class="nav-backdrop" onclick="closeNav()"></div>
 
   <div class="main">
     <div class="topbar">
@@ -434,7 +496,7 @@ function applySidebarPref(){
       <div class="right">
         <div class="run-menu-wrap" style="position:relative">
           <button class="btn btn-success btn-sm" id="run-now-btn" onclick="toggleRunMenu(event)">
-            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Now
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg> <span class="rn-txt">Run Now</span>
             <svg id="run-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="margin-left:5px;transition:transform .15s"><polyline points="6 9 12 15 18 9"/></svg></button>
           <div id="run-menu" style="display:none">
             <div class="rm-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Run a status check</div>
@@ -1272,6 +1334,7 @@ function refreshPage(btn){
 }
 
 function nav(page){
+  closeNav();   // close the mobile drawer after picking a page
   document.querySelectorAll(".nav-item").forEach(n=>n.classList.toggle("active",n.dataset.page===page));
   document.querySelectorAll(".page-section").forEach(s=>s.classList.remove("active"));
   document.getElementById("sec-"+page).classList.add("active");
