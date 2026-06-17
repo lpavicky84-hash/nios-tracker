@@ -3177,6 +3177,8 @@ def build_report_excel(path):
         return conn.execute(f"SELECT {cols} FROM student_status WHERE {ND} AND {where} "
                             f"ORDER BY student_name").fetchall()
     confirmed = rows(f"is_confirmed=1 AND {NF}")
+    today = datetime.now().strftime("%Y-%m-%d")
+    confirmed_today = rows(f"is_confirmed=1 AND {NF} AND last_changed LIKE '{today}%'")
     required = rows(f"current_status='Document Required' AND {NF}")
     error = rows("(current_status IN ('Unknown','Fetch Error') "
                  "OR COALESCE(check_failed,0)=1 OR COALESCE(login_failed,0)=1)")
@@ -3191,7 +3193,8 @@ def build_report_excel(path):
     ws.append(["Category", "Count"])
     for c in ("A4", "B4"):
         ws[c].fill = hfill; ws[c].font = hfont
-    ws.append(["Confirmed", len(confirmed)])
+    ws.append(["Confirmed Today", len(confirmed_today)])
+    ws.append(["Confirmed (Total)", len(confirmed)])
     ws.append(["Document Required", len(required)])
     ws.append(["Error / Unknown", len(error)])
     ws.column_dimensions["A"].width = 26; ws.column_dimensions["B"].width = 12
@@ -3210,11 +3213,13 @@ def build_report_excel(path):
         for i, w in enumerate(widths, 1):
             s.column_dimensions[chr(64 + i)].width = w
         s.freeze_panes = "A2"
-    sheet("Confirmed", confirmed)
+    sheet("Confirmed Today", confirmed_today)
+    sheet("Confirmed (Total)", confirmed)
     sheet("Document Required", required)
     sheet("Error & Unknown", error)
     wb.save(path)
-    return {"confirmed": len(confirmed), "required": len(required), "error": len(error)}
+    return {"confirmed": len(confirmed), "confirmed_today": len(confirmed_today),
+            "required": len(required), "error": len(error)}
 
 @app.get("/report-excel/{token}")
 async def report_excel(token: str):
