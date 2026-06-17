@@ -340,7 +340,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                      (total, tot_mvs, tot_trk, run_id))
         conn.commit()
 
-        stats = {"checked": 0, "changed": 0, "same": 0, "failed": 0}
+        stats = {"checked": 0, "changed": 0, "same": 0, "failed": 0,
+                 "confirmed": 0, "required": 0, "error": 0}
 
         # Register SYC students first (fast; no NIOS status check) with live progress.
         if syc_list:
@@ -354,6 +355,13 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 stats["failed"] += 1
             row_key = res["row_key"]
             new_status = res["status"]
+            # Per-run outcome buckets for the WhatsApp report.
+            if new_status == "Admission Confirmed":
+                stats["confirmed"] += 1
+            elif new_status == "Document Required":
+                stats["required"] += 1
+            if not res.get("success") or new_status in ("Unknown", "Fetch Error"):
+                stats["error"] += 1
             new_ref = res.get("discovered_ref") or res.get("reference_no") or ""
             is_conf = 1 if new_status == "Admission Confirmed" else 0
             now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -538,12 +546,43 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             _finish(conn, run_id, checked, changed, failed, done_msg)
             logger.info(f"Run done | Checked:{checked} Changed:{changed} Failed:{failed} "
                         f"SYC:{len(syc_list)} Dups:{dup_count}")
+            _send_run_report(stats, log_group)
 
     except Exception as e:
         logger.error(f"Run failed: {e}")
         _finish(conn, run_id, checked, changed, failed, f"error: {str(e)[:150]}")
     finally:
         conn.close()
+
+def _send_run_report(stats, group_label):
+    """After a completed run, WhatsApp a summary + Excel-report link to the admin numbers
+    set in Settings (only if reporting is enabled). Never breaks the run on failure."""
+    try:
+        if get_setting("report_enabled", "") != "1":
+            return
+        raw = (get_setting("report_numbers", "") or "").replace("\n", ",")
+        nums = [n.strip() for n in raw.split(",") if n.strip()]
+        if not nums:
+            return
+        import whatsapp, links
+        today = datetime.now().strftime("%Y-%m-%d")
+        when = datetime.now().strftime("%d %b, %I:%M %p")
+        url = links.report_url(today)
+        same = max(0, stats.get("checked", 0) - stats.get("changed", 0))
+        params = [
+            f"{group_label} - {when}",
+            str(stats.get("confirmed", 0)),
+            str(stats.get("required", 0)),
+            str(stats.get("error", 0)),
+            str(same),
+            str(stats.get("checked", 0)),
+            url,
+        ]
+        sent, errs = whatsapp.send_report_to_all(nums, params)
+        logger.info(f"Run report: sent to {sent}/{len(nums)} admin(s)."
+                    + (" errors: " + "; ".join(errs) if errs else ""))
+    except Exception as e:
+        logger.warning(f"Run report skipped: {e}")
 
 def _finish(conn, run_id, ch, cg, fl, status):
     conn.execute("UPDATE run_logs SET total_checked=?, total_changed=?, total_failed=?, status=? WHERE id=?",

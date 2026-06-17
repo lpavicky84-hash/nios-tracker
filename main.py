@@ -809,6 +809,25 @@ function applySidebarPref(){
           <div id="iv-status" style="margin-top:12px;font-size:13px"></div>
         </div>
         <div class="card">
+          <h3>📲 Run Report on WhatsApp</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+            After every run (manual or automatic) get a WhatsApp summary — how many Confirmed, Document Required,
+            Error/Unknown and unchanged — plus a link to download the full <b>Excel</b> (Confirmed / Required / Error lists).
+            Add up to 10 numbers; the report goes to all of them.</p>
+          <label style="display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;margin-bottom:14px;cursor:pointer">
+            <input type="checkbox" id="rep-enabled" style="width:18px;height:18px"> Send report after each run
+          </label>
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">WhatsApp numbers (one per line, or comma-separated)</label>
+          <textarea id="rep-numbers" rows="3" placeholder="9876543210&#10;9123456789&#10;9988776655"
+            style="width:100%;padding:11px 13px;border:2px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;resize:vertical"></textarea>
+          <div style="font-size:11px;color:var(--muted);margin:6px 0 14px">10-digit Indian numbers (country code 91 added automatically). Report template must be set up in AiSensy (campaign <b>AISENSY_CAMPAIGN_REPORT</b>).</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" onclick="saveReportSettings()">Save</button>
+            <button class="btn btn-outline btn-sm" onclick="testReport(this)">Send test report now</button>
+          </div>
+          <div id="rep-status" style="margin-top:12px;font-size:13px"></div>
+        </div>
+        <div class="card">
           <div class="card-head">
             <h3>&#128465; Deleted Students (Trash)</h3>
             <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="loadTrash()">Refresh</button>
@@ -1204,7 +1223,7 @@ function nav(page){
   if(page==="failed")loadFailed(1);
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
-  if(page==="settings"){loadIntervals();loadWa();loadTrash();}
+  if(page==="settings"){loadIntervals();loadWa();loadTrash();loadReportSettings();}
   if(page==="upload")loadUploadSource();
   updateNavCounts();
 }
@@ -2093,6 +2112,35 @@ async function purgeStudent(rk,name){
     showToast("Permanently deleted "+name);loadTrash();}
   catch(e){showToast(""+e.message);}
 }
+async function loadReportSettings(){
+  try{
+    const d=await api("/api/report-settings");
+    const cb=document.getElementById("rep-enabled");if(cb)cb.checked=!!d.enabled;
+    const ta=document.getElementById("rep-numbers");if(ta)ta.value=(d.numbers||"").split(",").filter(Boolean).join(String.fromCharCode(10));
+    if(!d.campaign_set){const s=document.getElementById("rep-status");if(s)s.innerHTML='<span style="color:var(--warn)">Note: AISENSY_CAMPAIGN_REPORT env var not set on Railway — report will not send until it is added.</span>';}
+  }catch(e){}
+}
+async function saveReportSettings(){
+  const enabled=document.getElementById("rep-enabled").checked;
+  const numbers=document.getElementById("rep-numbers").value;
+  const s=document.getElementById("rep-status");
+  try{
+    const r=await api("/api/report-settings","POST",{enabled:enabled,numbers:numbers});
+    s.innerHTML='<span style="color:var(--success)">Saved — '+r.count+' number(s). '+(r.enabled?"Reports ON.":"Reports OFF.")+'</span>';
+    const ta=document.getElementById("rep-numbers");if(ta)ta.value=(r.numbers||"").split(",").filter(Boolean).join(String.fromCharCode(10));
+  }catch(e){s.innerHTML='<span style="color:var(--danger)">Error: '+e.message+'</span>';}
+}
+async function testReport(btn){
+  const s=document.getElementById("rep-status");
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  s.innerHTML='<span style="color:var(--muted)">Sending test report…</span>';
+  try{
+    const r=await api("/api/report-test","POST");
+    s.innerHTML='<span style="color:var(--success)">Test sent to '+r.sent+'/'+r.total+' number(s).</span>'+
+      (r.errors&&r.errors.length?'<div style="color:var(--danger);font-size:12px;margin-top:6px">'+r.errors.join("<br>")+'</div>':"");
+  }catch(e){s.innerHTML='<span style="color:var(--danger)">Error: '+e.message+'</span>';}
+  finally{if(btn){btn.disabled=false;btn.style.opacity="";}}
+}
 async function saveIntervals(){
   const rm=ivToMin("regular"),pm=ivToMin("public");
   if(rm<15||pm<15){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
@@ -2854,6 +2902,52 @@ def _valid_group(g):
         raise HTTPException(status_code=400, detail="group must be 'regular' or 'public'")
     return g
 
+@app.get("/api/report-settings")
+async def get_report_settings(user=Depends(verify_token)):
+    return {
+        "enabled": get_setting("report_enabled", "") == "1",
+        "numbers": get_setting("report_numbers", ""),
+        "campaign_set": bool(os.environ.get("AISENSY_CAMPAIGN_REPORT", "").strip()),
+    }
+
+@app.post("/api/report-settings")
+async def save_report_settings(body: dict, user=Depends(verify_token)):
+    enabled = "1" if body.get("enabled") else ""
+    raw = str(body.get("numbers", "") or "")
+    # Keep only valid-ish numbers (digits, 10–13 long after cleaning), comma-joined.
+    import re as _re
+    cleaned = []
+    for part in raw.replace("\n", ",").split(","):
+        d = _re.sub(r"\D", "", part)
+        if 10 <= len(d) <= 13:
+            cleaned.append(d)
+    if len(cleaned) > 10:
+        cleaned = cleaned[:10]
+    set_setting("report_enabled", enabled)
+    set_setting("report_numbers", ",".join(cleaned))
+    return {"enabled": enabled == "1", "numbers": ",".join(cleaned), "count": len(cleaned)}
+
+@app.post("/api/report-test")
+async def report_test(user=Depends(verify_token)):
+    """Send a sample report right now to the configured numbers, to verify setup."""
+    import whatsapp, links
+    raw = (get_setting("report_numbers", "") or "").replace("\n", ",")
+    nums = [n.strip() for n in raw.split(",") if n.strip()]
+    if not nums:
+        raise HTTPException(status_code=400, detail="Add at least one WhatsApp number first")
+    today = datetime.now().strftime("%Y-%m-%d")
+    when = datetime.now().strftime("%d %b, %I:%M %p")
+    url = links.report_url(today)
+    # live current counts for a realistic test
+    conn = get_db(); ND = "COALESCE(deleted,0)=0"
+    conf = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1").fetchone()[0]
+    req = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Document Required'").fetchone()[0]
+    err = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status IN ('Unknown','Fetch Error')").fetchone()[0]
+    conn.close()
+    params = [f"TEST report - {when}", str(conf), str(req), str(err), "0", str(conf + req + err), url]
+    sent, errs = whatsapp.send_report_to_all(nums, params)
+    return {"sent": sent, "total": len(nums), "errors": errs}
+
 @app.post("/api/intervals-pause")
 async def intervals_pause(body: dict, user=Depends(verify_token)):
     """Freeze ONE group's auto-run timer (regular OR public): capture how long is left,
@@ -3068,6 +3162,74 @@ async def debug_login_endpoint(ref: str, dob: str, action: str = "", user=Depend
         return result
     except Exception as e:
         return {"error": str(e)}
+
+def build_report_excel(path):
+    """Build the run-report Excel: a Summary sheet plus Confirmed / Document Required /
+    Error & Unknown student lists (current actionable state). Returns the counts."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    conn = get_db()
+    ND = "COALESCE(deleted,0)=0"
+    NF = "COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0"
+    cols = ("student_name, reference_no, enrollment_no, session, mobile, email, "
+            "current_status, COALESCE(NULLIF(login_remark,''),NULLIF(remark,'')) as remark, last_checked")
+    def rows(where):
+        return conn.execute(f"SELECT {cols} FROM student_status WHERE {ND} AND {where} "
+                            f"ORDER BY student_name").fetchall()
+    confirmed = rows(f"is_confirmed=1 AND {NF}")
+    required = rows(f"current_status='Document Required' AND {NF}")
+    error = rows("(current_status IN ('Unknown','Fetch Error') "
+                 "OR COALESCE(check_failed,0)=1 OR COALESCE(login_failed,0)=1)")
+    conn.close()
+
+    wb = Workbook()
+    hfill = PatternFill("solid", fgColor="4F46E5"); hfont = Font(bold=True, color="FFFFFF")
+    ws = wb.active; ws.title = "Summary"
+    ws.append(["NIOS Status Tracker — Run Report"]); ws["A1"].font = Font(bold=True, size=14)
+    ws.append(["Generated", datetime.now().strftime("%d %b %Y, %I:%M %p")])
+    ws.append([])
+    ws.append(["Category", "Count"])
+    for c in ("A4", "B4"):
+        ws[c].fill = hfill; ws[c].font = hfont
+    ws.append(["Confirmed", len(confirmed)])
+    ws.append(["Document Required", len(required)])
+    ws.append(["Error / Unknown", len(error)])
+    ws.column_dimensions["A"].width = 26; ws.column_dimensions["B"].width = 12
+
+    def sheet(title, data):
+        s = wb.create_sheet(title)
+        hdr = ["Name", "Reference No", "Enrollment No", "Session", "Mobile", "Email",
+               "Status", "Remark", "Last Checked"]
+        s.append(hdr)
+        for i in range(1, len(hdr) + 1):
+            cell = s.cell(row=1, column=i); cell.fill = hfill; cell.font = hfont
+        for r in data:
+            s.append([r["student_name"], r["reference_no"], r["enrollment_no"], r["session"],
+                      r["mobile"], r["email"], r["current_status"], r["remark"], r["last_checked"]])
+        widths = [22, 15, 16, 16, 13, 24, 20, 30, 18]
+        for i, w in enumerate(widths, 1):
+            s.column_dimensions[chr(64 + i)].width = w
+        s.freeze_panes = "A2"
+    sheet("Confirmed", confirmed)
+    sheet("Document Required", required)
+    sheet("Error & Unknown", error)
+    wb.save(path)
+    return {"confirmed": len(confirmed), "required": len(required), "error": len(error)}
+
+@app.get("/report-excel/{token}")
+async def report_excel(token: str):
+    """Serve the run-report Excel for a signed link (admins open it straight from
+    WhatsApp — no login). The signature is the security; data reflects the latest state."""
+    from links import verify_report_token
+    from fastapi.responses import FileResponse
+    day = verify_report_token(token)
+    if not day:
+        raise HTTPException(status_code=404, detail="Invalid or expired report link")
+    import tempfile
+    path = os.path.join(tempfile.gettempdir(), f"nios_report_{day}.xlsx")
+    build_report_excel(path)
+    return FileResponse(path, filename=f"NIOS_Report_{day}.xlsx",
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.get("/api/download-doc")
 async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)):

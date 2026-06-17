@@ -100,6 +100,52 @@ def _post(campaign, phone, name, params):
         return False, f"error: {e}"
 
 
+def send_report(phone, params, media_url=None, filename="NIOS_Report.xlsx"):
+    """Send the run report to ONE admin number via the report campaign
+    (env AISENSY_CAMPAIGN_REPORT). If media_url is given and the template has a
+    document header, the Excel is attached; otherwise the link is passed in params."""
+    key = _api_key()
+    campaign = os.environ.get("AISENSY_CAMPAIGN_REPORT", "").strip()
+    if not key:
+        return False, "AISENSY_API_KEY not set"
+    if not campaign:
+        return False, "AISENSY_CAMPAIGN_REPORT not set (Railway env var)"
+    dest = normalize_number(phone)
+    if len(dest) < 11:
+        return False, f"bad number: {phone}"
+    payload = {
+        "apiKey": key,
+        "campaignName": campaign,
+        "destination": dest,
+        "userName": "MVS Admin",
+        "templateParams": [str(p) for p in params],
+    }
+    if media_url:
+        payload["media"] = {"url": media_url, "filename": filename}
+    try:
+        r = requests.post(AISENSY_URL, json=payload, timeout=40)
+        if r.status_code in (200, 201):
+            return True, "sent"
+        return False, f"HTTP {r.status_code}: {r.text[:160]}"
+    except Exception as e:
+        return False, f"error: {e}"
+
+
+def send_report_to_all(numbers, params, media_url=None, filename="NIOS_Report.xlsx"):
+    """Send the report to every admin number. Returns (sent_count, [errors])."""
+    sent, errs = 0, []
+    for num in numbers:
+        num = (num or "").strip()
+        if not num:
+            continue
+        ok, msg = send_report(num, params, media_url=media_url, filename=filename)
+        if ok:
+            sent += 1
+        else:
+            errs.append(f"{num}: {msg}")
+    return sent, errs
+
+
 def send_for_student(student):
     """Send the right template for this student's session group.
     student: dict with row_key, student_name, mobile, session, reference_no, dob.

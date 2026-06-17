@@ -47,6 +47,29 @@ def make_doc_token(row_key: str) -> str:
     return payload + "." + _sign(payload)
 
 
+def make_report_token(day: str) -> str:
+    """Signed token for the WhatsApp run-report Excel. Tied to a day string (YYYY-MM-DD)
+    so the link is unguessable and naturally stops working after that day's window."""
+    payload = _b64e(("report:" + day).encode())
+    return payload + "." + _sign(payload)
+
+
+def verify_report_token(token: str):
+    """Return the day string if the report token is valid, else None."""
+    try:
+        payload, sig = token.split(".", 1)
+        if not hmac.compare_digest(sig, _sign(payload)):
+            return None
+        val = _b64d(payload).decode("utf-8", "ignore")
+        return val.split("report:", 1)[1] if val.startswith("report:") else None
+    except Exception:
+        return None
+
+
+def report_url(day: str) -> str:
+    return f"{PUBLIC_BASE_URL}/report-excel/{make_report_token(day)}"
+
+
 def verify_doc_token(token: str):
     """Return the original row_key if the token is valid, else None."""
     try:
