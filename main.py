@@ -167,6 +167,24 @@ PORTAL_HTML = """<!DOCTYPE html>
   .card{background:var(--card);border:1px solid var(--border);border-radius:14px;
     padding:22px;box-shadow:var(--shadow);margin-bottom:20px}
   .card h3{font-size:15px;margin-bottom:16px;font-weight:700}
+  /* Settings — professional card headers with icon chips */
+  .set-head{display:flex;align-items:flex-start;gap:13px;margin-bottom:18px}
+  .set-ico{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;
+    justify-content:center;color:#fff;flex-shrink:0;box-shadow:0 3px 9px rgba(15,23,42,.12)}
+  .set-ico svg{width:20px;height:20px}
+  .set-head .set-tt{flex:1;min-width:0}
+  .set-head h3{font-size:15.5px;font-weight:700;margin:0;line-height:1.3}
+  .set-head .set-sub{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.5}
+  .set-head .set-act{margin-left:auto;flex-shrink:0}
+  .iv-row{display:flex;gap:12px;align-items:center;margin-bottom:11px;flex-wrap:wrap}
+  .iv-row .iv-lbl{width:250px;display:flex;align-items:center;gap:11px;font-weight:600;font-size:14px}
+  .iv-row .iv-dot{width:11px;height:11px;border-radius:4px;flex-shrink:0}
+  .iv-row input,.iv-row select{padding:10px 12px;border:2px solid var(--border);
+    border-radius:10px;font-size:14px;background:var(--card);color:var(--text)}
+  .iv-row input{width:84px}
+  .iv-row input:focus,.iv-row select:focus{outline:none;border-color:var(--primary)}
+  .set-note{font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.5}
+  .set-foot{margin-top:18px;padding-top:16px;border-top:1px solid var(--border)}
 
   .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px;margin-bottom:22px}
   .stat{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;
@@ -870,47 +888,45 @@ function applySidebarPref(){
 
       <section id="sec-settings" class="page-section">
         <div class="card">
-          <h3>⏱ Recheck Intervals</h3>
-          <p style="color:var(--muted);font-size:13px;margin-bottom:18px">
-            Set separate intervals for each group. Confirmed students are skipped automatically.</p>
-          <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-            <span style="width:280px;font-weight:600">📗 On Demand</span>
-            <input type="number" id="iv-ondemand" min="1" max="43200" value="6"
-              style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-            <select id="iv-ondemand-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-              <option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
+          <div class="set-head">
+            <span class="set-ico" style="background:linear-gradient(135deg,#4F46E5,#7C3AED)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></span>
+            <div class="set-tt"><h3>Recheck Intervals</h3>
+            <div class="set-sub">Set a separate auto-run interval for each group. Confirmed students are skipped automatically.</div></div>
           </div>
-          <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-            <span style="width:280px;font-weight:600">📙 Stream 2</span>
-            <input type="number" id="iv-stream2" min="1" max="43200" value="6"
-              style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-            <select id="iv-stream2-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-              <option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
+          <div class="iv-row">
+            <span class="iv-lbl"><span class="iv-dot" style="background:#0EA5E9"></span>On Demand</span>
+            <input type="number" id="iv-ondemand" min="1" max="43200" value="6">
+            <select id="iv-ondemand-unit"><option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
           </div>
-          <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
-            <span style="width:280px;font-weight:600">📘 Public Exam (April / October + any year)</span>
-            <input type="number" id="iv-public" min="1" max="43200" value="12"
-              style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-            <select id="iv-public-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-              <option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
+          <div class="iv-row">
+            <span class="iv-lbl"><span class="iv-dot" style="background:#F59E0B"></span>Stream 2</span>
+            <input type="number" id="iv-stream2" min="1" max="43200" value="6">
+            <select id="iv-stream2-unit"><option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
           </div>
-          <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
-          <div style="font-size:11px;color:var(--muted);margin-top:8px">Range: 15 minutes up to 30 days (use the <b>days</b> unit to run every few days). Tip: shorter intervals use more CapSolver credits.</div>
-          <div id="iv-status" style="margin-top:12px;font-size:13px"></div>
+          <div class="iv-row">
+            <span class="iv-lbl"><span class="iv-dot" style="background:#7C3AED"></span>Public Exam <span style="font-weight:400;color:var(--muted);font-size:12px">(April / Oct)</span></span>
+            <input type="number" id="iv-public" min="1" max="43200" value="12">
+            <select id="iv-public-unit"><option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
+          </div>
+          <div class="set-foot">
+            <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
+            <div class="set-note">Range: 15 minutes to 30 days (use the <b>days</b> unit to run every few days). Shorter intervals use more CapSolver credits.</div>
+            <div id="iv-status" style="margin-top:10px;font-size:13px"></div>
+          </div>
         </div>
         <div class="card">
-          <h3>📲 Run Report on WhatsApp</h3>
-          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            After every run (manual or automatic) get a WhatsApp summary — how many Confirmed, Document Required,
-            Error/Unknown and unchanged — plus a link to download the full <b>Excel</b> (Confirmed / Required / Error lists).
-            Add up to 10 numbers; the report goes to all of them.</p>
-          <label style="display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;margin-bottom:14px;cursor:pointer">
+          <div class="set-head">
+            <span class="set-ico" style="background:linear-gradient(135deg,#10B981,#059669)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
+            <div class="set-tt"><h3>Run Report on WhatsApp</h3>
+            <div class="set-sub">After every run, get a WhatsApp summary (Confirmed, Document Required, Error and unchanged counts) plus a link to download the full Excel. Sent to up to 10 numbers.</div></div>
+          </div>
+          <label style="display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;margin-bottom:16px;cursor:pointer">
             <input type="checkbox" id="rep-enabled" style="width:18px;height:18px"> Send report after each run
           </label>
-          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">WhatsApp numbers (one per line, or comma-separated)</label>
+          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">WhatsApp numbers <span style="font-weight:400;color:var(--muted)">(one per line or comma-separated)</span></label>
           <textarea id="rep-numbers" rows="3" placeholder="9876543210&#10;9123456789&#10;9988776655"
-            style="width:100%;padding:11px 13px;border:2px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;resize:vertical"></textarea>
-          <div style="font-size:11px;color:var(--muted);margin:6px 0 14px">10-digit Indian numbers (country code 91 added automatically). Report template must be set up in AiSensy (campaign <b>AISENSY_CAMPAIGN_REPORT</b>).</div>
+            style="width:100%;padding:11px 13px;border:2px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;resize:vertical;background:var(--card);color:var(--text)"></textarea>
+          <div class="set-note" style="margin-bottom:16px">10-digit Indian numbers (country code 91 added automatically). Report template must be set up in AiSensy (campaign <b>AISENSY_CAMPAIGN_REPORT</b>).</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn btn-primary btn-sm" onclick="saveReportSettings()">Save</button>
             <button class="btn btn-outline btn-sm" onclick="testReport(this)">Send test report now</button>
@@ -918,22 +934,23 @@ function applySidebarPref(){
           <div id="rep-status" style="margin-top:12px;font-size:13px"></div>
         </div>
         <div class="card">
-          <div class="card-head">
-            <h3>&#128465; Deleted Students (Trash)</h3>
-            <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="loadTrash()">Refresh</button>
+          <div class="set-head">
+            <span class="set-ico" style="background:linear-gradient(135deg,#EF4444,#DC2626)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>
+            <div class="set-tt"><h3>Deleted Students (Trash)</h3>
+            <div class="set-sub">Removed students land here. <b>Restore</b> brings them back; <b>Delete permanently</b> cannot be undone.</div></div>
+            <div class="set-act"><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="loadTrash()">Refresh</button></div>
           </div>
-          <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
-            Students removed from the portal land here. <b>Restore</b> brings them back; <b>Delete permanently</b> cannot be undone.</p>
           <div style="overflow-x:auto"><table>
             <thead><tr><th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Deleted At</th><th>Action</th></tr></thead>
             <tbody id="trash-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
           </table></div>
         </div>
         <div class="card">
-          <h3>&#128172; WhatsApp Auto-Send</h3>
-          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            When a student's status becomes <b>Admission Confirmed</b>, their documents are
-            automatically sent to their WhatsApp as secure links (each student receives this <b>only once</b>).</p>
+          <div class="set-head">
+            <span class="set-ico" style="background:linear-gradient(135deg,#22C55E,#16A34A)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
+            <div class="set-tt"><h3>WhatsApp Auto-Send</h3>
+            <div class="set-sub">When a student becomes <b>Admission Confirmed</b>, their documents are auto-sent to their WhatsApp as secure links (each student receives this <b>only once</b>).</div></div>
+          </div>
           <div id="wa-config" style="font-size:13px;margin-bottom:14px;color:var(--muted)">Loading…</div>
           <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:18px">
             <input type="checkbox" id="wa-enabled" onchange="saveWa()" style="width:18px;height:18px;cursor:pointer">
@@ -957,7 +974,11 @@ function applySidebarPref(){
           <div id="wa-status" style="margin-top:12px;font-size:13px"></div>
         </div>
         <div class="card">
-          <h3>Status Colour Legend</h3>
+          <div class="set-head">
+            <span class="set-ico" style="background:linear-gradient(135deg,#F59E0B,#D97706)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2a10 10 0 1 0 0 20 1.5 1.5 0 0 0 1-2.6 1.5 1.5 0 0 1 1-2.6h2A5.6 5.6 0 0 0 22 11 10 10 0 0 0 12 2z"/></svg></span>
+            <div class="set-tt"><h3>Status Colour Legend</h3>
+            <div class="set-sub">What each status colour means across the portal.</div></div>
+          </div>
           <div class="legend-grid">
             <div class="legend-item b-pending"><div class="nm">Pending</div><div class="ds">Awaiting review</div></div>
             <div class="legend-item b-docs"><div class="nm">Documents Verification In Progress</div><div class="ds">Under review</div></div>
@@ -970,10 +991,11 @@ function applySidebarPref(){
           </div>
         </div>
         <div class="card">
-          <h3>Phase 2 — Test Login & Find Download Links</h3>
-          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            Enter a <b>confirmed student's</b> Reference No + DOB. This logs in and finds the download links on the dashboard.
-            (Used to verify how the links appear.)</p>
+          <div class="set-head">
+            <span class="set-ico" style="background:linear-gradient(135deg,#64748B,#475569)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
+            <div class="set-tt"><h3>Test Login &amp; Find Download Links</h3>
+            <div class="set-sub">Enter a <b>confirmed student's</b> Reference No + DOB to log in and locate their document download links (for verification).</div></div>
+          </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
             <input type="text" id="dbg-ref" placeholder="Reference No (e.g. D0026300046)"
               style="flex:1;min-width:180px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:14px">
