@@ -3471,7 +3471,30 @@ def build_report_excel(path):
     docsprog = rows(f"current_status='Documents Verification In Progress' AND {NF}")
     error = rows("(current_status IN ('Unknown','Fetch Error') "
                  "OR COALESCE(check_failed,0)=1 OR COALESCE(login_failed,0)=1)")
+    # Session-wise breakdown (same definitions as the dashboard) for the Summary sheet.
+    sess_raw = conn.execute(
+        f"SELECT session, COUNT(*) as cnt, "
+        f"SUM(CASE WHEN is_confirmed=1 THEN 1 ELSE 0 END) as confirmed, "
+        f"SUM(CASE WHEN COALESCE(is_confirmed,0)=0 AND current_status='Verified' THEN 1 ELSE 0 END) as verified, "
+        f"SUM(CASE WHEN COALESCE(is_confirmed,0)=0 AND current_status='Documents Verification In Progress' THEN 1 ELSE 0 END) as docsv, "
+        f"SUM(CASE WHEN current_status='Document Required' THEN 1 ELSE 0 END) as req, "
+        f"SUM(CASE WHEN COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
+        f"         AND (session IS NULL OR session NOT LIKE '%syc%') THEN 1 ELSE 0 END) as active "
+        f"FROM student_status WHERE {ND} AND {NF} AND session != '' GROUP BY session"
+    ).fetchall()
     conn.close()
+
+    sess_agg = {}
+    for r in sess_raw:
+        norm = normalize_session(r["session"])
+        if not norm:
+            continue
+        d = sess_agg.setdefault(norm, {"total": 0, "confirmed": 0, "verified": 0,
+                                       "docsv": 0, "active": 0, "req": 0})
+        d["total"] += r["cnt"] or 0
+        for k in ("confirmed", "verified", "docsv", "active", "req"):
+            d[k] += r[k] or 0
+    sess_list = sorted(sess_agg.items(), key=lambda kv: kv[1]["total"], reverse=True)
 
     wb = Workbook()
     hfill = PatternFill("solid", fgColor="4F46E5"); hfont = Font(bold=True, color="FFFFFF")
@@ -3488,7 +3511,19 @@ def build_report_excel(path):
     ws.append(["Documents Verification In Progress", len(docsprog)])
     ws.append(["Document Required", len(required)])
     ws.append(["Error / Unknown", len(error)])
-    ws.column_dimensions["A"].width = 34; ws.column_dimensions["B"].width = 12
+
+    # Session-wise breakdown table
+    ws.append([])
+    ws.append(["Session-wise Breakdown"]); ws[f"A{ws.max_row}"].font = Font(bold=True, size=12)
+    shdr = ["Session", "Total", "Confirmed", "Verified", "Docs Verification", "Active", "Required"]
+    ws.append(shdr)
+    hr = ws.max_row
+    for ci in range(1, len(shdr) + 1):
+        cell = ws.cell(row=hr, column=ci); cell.fill = hfill; cell.font = hfont
+    for name, d in sess_list:
+        ws.append([name, d["total"], d["confirmed"], d["verified"], d["docsv"], d["active"], d["req"]])
+    for col, w in zip("ABCDEFG", [34, 9, 11, 10, 17, 9, 10]):
+        ws.column_dimensions[col].width = w
 
     def sheet(title, data):
         s = wb.create_sheet(title)
@@ -3507,7 +3542,6 @@ def build_report_excel(path):
     sheet("Confirmed Today", confirmed_today)
     sheet("Confirmed (Total)", confirmed)
     sheet("Admission Verified", verified)
-    sheet("Docs Verification In Progress", docsprog)
     sheet("Document Required", required)
     sheet("Error & Unknown", error)
     wb.save(path)
