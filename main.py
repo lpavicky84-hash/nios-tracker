@@ -437,21 +437,36 @@ function applySidebarPref(){
             <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Now
             <svg id="run-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="margin-left:5px;transition:transform .15s"><polyline points="6 9 12 15 18 9"/></svg></button>
           <div id="run-menu" style="display:none">
-            <div class="rm-head">Run a status check</div>
+            <div class="rm-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Run a status check</div>
             <button class="run-menu-item rmi-all" onclick="runChoice('all')">
               <span class="rmi-ic"><svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
               <span class="rmi-txt"><span class="rmi-main">Run all data</span>
-              <span class="rmi-sub">MVS Tracker + MVS Portal</span></span></button>
-            <div class="rm-sec"><span class="rm-sq" style="background:#0EA5E9"></span>MVS Tracker</div>
-            <button class="run-menu-item trk" onclick="runChoice('tracker','ondemand')"><span class="rmi-dot"></span><span class="rmi-main">On Demand</span></button>
-            <button class="run-menu-item trk" onclick="runChoice('tracker','stream2')"><span class="rmi-dot"></span><span class="rmi-main">Stream 2</span></button>
-            <button class="run-menu-item trk" onclick="runChoice('tracker','public')"><span class="rmi-dot"></span><span class="rmi-main">Public</span></button>
-            <button class="run-menu-item trk" onclick="runChoice('tracker','all')"><span class="rmi-dot"></span><span class="rmi-main">All Tracker</span><span class="rmi-tag">all</span></button>
-            <div class="rm-sec"><span class="rm-sq" style="background:#7C3AED"></span>MVS Portal</div>
-            <button class="run-menu-item por" onclick="runChoice('portal','ondemand')"><span class="rmi-dot"></span><span class="rmi-main">On Demand</span></button>
-            <button class="run-menu-item por" onclick="runChoice('portal','stream2')"><span class="rmi-dot"></span><span class="rmi-main">Stream 2</span></button>
-            <button class="run-menu-item por" onclick="runChoice('portal','public')"><span class="rmi-dot"></span><span class="rmi-main">Public</span></button>
-            <button class="run-menu-item por" onclick="runChoice('portal','all')"><span class="rmi-dot"></span><span class="rmi-main">All Portal</span><span class="rmi-tag">all</span></button>
+              <span class="rmi-sub">MVS Tracker + MVS Portal together</span></span>
+              <span class="rmi-go">&rsaquo;</span></button>
+
+            <div class="rm-group trk">
+              <div class="rm-ghead">
+                <span class="rm-gic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="10" x2="9" y2="20"/></svg></span>
+                <span class="rm-gname">MVS Tracker</span>
+                <span class="rm-ghint">by group</span>
+              </div>
+              <button class="run-menu-item trk" onclick="runChoice('tracker','ondemand')"><span class="rmi-dot"></span><span class="rmi-main">On Demand</span></button>
+              <button class="run-menu-item trk" onclick="runChoice('tracker','stream2')"><span class="rmi-dot"></span><span class="rmi-main">Stream 2</span></button>
+              <button class="run-menu-item trk" onclick="runChoice('tracker','public')"><span class="rmi-dot"></span><span class="rmi-main">Public</span></button>
+              <button class="run-menu-item trk" onclick="runChoice('tracker','all')"><span class="rmi-dot"></span><span class="rmi-main">All Tracker</span><span class="rmi-tag">all</span></button>
+            </div>
+
+            <div class="rm-group por">
+              <div class="rm-ghead">
+                <span class="rm-gic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18"/></svg></span>
+                <span class="rm-gname">MVS Portal</span>
+                <span class="rm-ghint">by group</span>
+              </div>
+              <button class="run-menu-item por" onclick="runChoice('portal','ondemand')"><span class="rmi-dot"></span><span class="rmi-main">On Demand</span></button>
+              <button class="run-menu-item por" onclick="runChoice('portal','stream2')"><span class="rmi-dot"></span><span class="rmi-main">Stream 2</span></button>
+              <button class="run-menu-item por" onclick="runChoice('portal','public')"><span class="rmi-dot"></span><span class="rmi-main">Public</span></button>
+              <button class="run-menu-item por" onclick="runChoice('portal','all')"><span class="rmi-dot"></span><span class="rmi-main">All Portal</span><span class="rmi-tag">all</span></button>
+            </div>
           </div>
         </div>
         <div class="bell-btn" onclick="refreshPage(this)" title="Refresh this page" style="cursor:pointer">
@@ -966,25 +981,44 @@ function applySidebarPref(){
   </div>
 </div>
 <style>.edit-inp{width:100%;margin-top:4px;padding:9px 11px;border:2px solid var(--border);border-radius:9px;font-size:14px;font-weight:400}
-#run-menu{display:none;position:absolute;right:0;top:calc(100% + 10px);background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;box-shadow:0 16px 44px rgba(15,23,42,.18),0 2px 8px rgba(15,23,42,.06);min-width:262px;z-index:900;overflow:hidden;padding:6px}
-.rm-head{padding:9px 12px 8px;font-size:10px;font-weight:800;letter-spacing:.7px;color:var(--muted);text-transform:uppercase}
-.run-menu-item{display:flex;align-items:center;width:100%;text-align:left;padding:9px 12px;border:none;background:none;cursor:pointer;border-radius:9px;transition:background .12s,box-shadow .12s}
-.run-menu-item:hover{background:var(--soft)}
+#run-menu{display:none;position:absolute;right:0;top:calc(100% + 10px);background:var(--card,#fff);border:1px solid var(--border);border-radius:16px;box-shadow:0 20px 50px rgba(15,23,42,.20),0 3px 10px rgba(15,23,42,.07);min-width:280px;z-index:900;overflow:hidden;padding:8px}
+.rm-head{display:flex;align-items:center;gap:7px;padding:7px 10px 9px;font-size:10.5px;font-weight:800;letter-spacing:.7px;color:var(--muted);text-transform:uppercase}
+.rm-head svg{color:#F59E0B}
+.run-menu-item{display:flex;align-items:center;width:100%;text-align:left;padding:9px 11px;border:none;background:none;cursor:pointer;border-radius:10px;transition:background .14s,transform .12s,box-shadow .14s}
 .run-menu-item .rmi-main{font-size:13.5px;font-weight:600;color:var(--text)}
-.run-menu-item .rmi-dot{width:7px;height:7px;border-radius:50%;margin:0 11px 0 4px;flex-shrink:0;background:var(--muted)}
-.run-menu-item .rmi-tag{margin-left:auto;font-size:10px;font-weight:700;color:var(--muted);background:var(--soft);border:1px solid var(--border);padding:1px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:.3px}
+.run-menu-item .rmi-dot{width:7px;height:7px;border-radius:50%;margin:0 11px 0 5px;flex-shrink:0;background:var(--muted);transition:transform .14s}
+.run-menu-item .rmi-tag{margin-left:auto;font-size:9.5px;font-weight:800;color:#fff;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.4px}
+
+/* Run-all hero */
+.rmi-all{margin-bottom:8px;padding:11px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(16,185,129,.04));border:1px solid rgba(16,185,129,.25)}
+.rmi-all:hover{background:linear-gradient(135deg,rgba(16,185,129,.20),rgba(16,185,129,.09));box-shadow:0 4px 14px rgba(16,185,129,.18)}
+.rmi-all .rmi-ic{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#10B981,#059669);color:#fff;margin-right:12px;flex-shrink:0;box-shadow:0 3px 8px rgba(16,185,129,.35)}
+.rmi-all .rmi-txt{display:flex;flex-direction:column;line-height:1.3}
+.rmi-all .rmi-main{font-size:14px;font-weight:800}
+.rmi-all .rmi-sub{font-size:11px;font-weight:500;color:var(--muted)}
+.rmi-all .rmi-go{margin-left:auto;font-size:22px;font-weight:700;color:#10B981;line-height:1}
+
+/* Source group cards */
+.rm-group{border-radius:13px;padding:5px;margin-bottom:7px;border:1px solid var(--border)}
+.rm-group:last-child{margin-bottom:0}
+.rm-group.trk{background:linear-gradient(180deg,rgba(14,165,233,.07),rgba(14,165,233,.02));border-color:rgba(14,165,233,.20)}
+.rm-group.por{background:linear-gradient(180deg,rgba(124,58,237,.07),rgba(124,58,237,.02));border-color:rgba(124,58,237,.20)}
+.rm-ghead{display:flex;align-items:center;gap:9px;padding:7px 9px 8px}
+.rm-gic{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;color:#fff;flex-shrink:0}
+.rm-group.trk .rm-gic{background:linear-gradient(135deg,#0EA5E9,#0284C7);box-shadow:0 2px 7px rgba(14,165,233,.32)}
+.rm-group.por .rm-gic{background:linear-gradient(135deg,#7C3AED,#6D28D9);box-shadow:0 2px 7px rgba(124,58,237,.32)}
+.rm-gname{font-size:13px;font-weight:800;letter-spacing:.2px}
+.rm-group.trk .rm-gname{color:#0369A1}
+.rm-group.por .rm-gname{color:#6D28D9}
+.rm-ghint{margin-left:auto;font-size:9.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;opacity:.75}
+.rm-group .run-menu-item{padding:8px 10px}
 .run-menu-item.trk .rmi-dot{background:#0EA5E9}
 .run-menu-item.por .rmi-dot{background:#7C3AED}
-.run-menu-item.trk:hover{background:rgba(14,165,233,.10)}
-.run-menu-item.por:hover{background:rgba(124,58,237,.10)}
-.rmi-all{margin-bottom:3px;background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(16,185,129,.04));border:1px solid rgba(16,185,129,.22)}
-.rmi-all:hover{background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(16,185,129,.08))}
-.rmi-all .rmi-ic{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:var(--success,#10B981);color:#fff;margin-right:11px;flex-shrink:0}
-.rmi-all .rmi-txt{display:flex;flex-direction:column;line-height:1.25}
-.rmi-all .rmi-main{font-size:14px;font-weight:700}
-.rmi-all .rmi-sub{font-size:11.5px;font-weight:500;color:var(--muted)}
-.rm-sec{display:flex;align-items:center;gap:8px;padding:10px 12px 5px;font-size:10.5px;font-weight:800;letter-spacing:.5px;color:var(--muted);text-transform:uppercase}
-.rm-sec .rm-sq{width:9px;height:9px;border-radius:3px;flex-shrink:0}
+.run-menu-item.trk .rmi-tag{background:#0EA5E9}
+.run-menu-item.por .rmi-tag{background:#7C3AED}
+.run-menu-item.trk:hover{background:#fff;box-shadow:0 3px 10px rgba(14,165,233,.16);transform:translateX(2px)}
+.run-menu-item.por:hover{background:#fff;box-shadow:0 3px 10px rgba(124,58,237,.16);transform:translateX(2px)}
+.run-menu-item.trk:hover .rmi-dot,.run-menu-item.por:hover .rmi-dot{transform:scale(1.45)}
 #run-now-btn.open #run-caret{transform:rotate(180deg)}</style>
 
 <script>
