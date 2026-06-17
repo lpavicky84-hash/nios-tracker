@@ -203,6 +203,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         log_group = "Uploaded sheet"
     elif scope == "selected":
         log_group = "Selected students"
+    elif scope == "required":
+        log_group = "Document Required (re-check)"
     elif source_only == "mvs_portal":
         log_group = "MVS Portal" + (f" — {_GL[group_type]}" if group_type in ("ondemand", "stream2", "public") else "")
     elif source_only == "mvs_tracker":
@@ -227,12 +229,14 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
 
     try:
         all_students = []
-        if scope == "selected":
-            # Hand-picked run: only the chosen students, using their CURRENT DB values.
+        if scope in ("selected", "required"):
+            # Hand-picked / required-only run: only the chosen students, using their
+            # CURRENT DB values. 'required' passes the keys of every Document Required
+            # student so a counsellor can re-check just those after resolving them.
             keys = set(only_keys or [])
             all_students = [s for s in _load_db_students(c) if s["row_key"] in keys]
             dup_count = 0
-            logger.info(f"Selected run: {len(all_students)} of {len(keys)} requested student(s)")
+            logger.info(f"{scope.capitalize()} run: {len(all_students)} of {len(keys)} requested student(s)")
         elif scope == "upload":
             # UPLOAD RUN: only the students in the just-uploaded sheet. No MVS fetch,
             # no DB — so pressing "Run Check Now" after an upload checks ONLY those
@@ -356,7 +360,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         conn.commit()
 
         stats = {"checked": 0, "changed": 0, "same": 0, "failed": 0,
-                 "confirmed": 0, "required": 0, "error": 0}
+                 "confirmed": 0, "required": 0, "error": 0,
+                 "verified": 0, "docs_progress": 0}
 
         # Register SYC students first (fast; no NIOS status check) with live progress.
         if syc_list:
@@ -375,6 +380,10 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 stats["confirmed"] += 1
             elif new_status == "Document Required":
                 stats["required"] += 1
+            elif new_status == "Verified":
+                stats["verified"] += 1
+            elif new_status == "Documents Verification In Progress":
+                stats["docs_progress"] += 1
             if not res.get("success") or new_status in ("Unknown", "Fetch Error"):
                 stats["error"] += 1
             new_ref = res.get("discovered_ref") or res.get("reference_no") or ""
@@ -592,6 +601,8 @@ def _send_run_report(stats, group_label):
             str(same),
             str(stats.get("checked", 0)),
             url,
+            str(stats.get("verified", 0)),
+            str(stats.get("docs_progress", 0)),
         ]
         sent, errs = whatsapp.send_report_to_all(nums, params)
         logger.info(f"Run report: sent to {sent}/{len(nums)} admin(s)."

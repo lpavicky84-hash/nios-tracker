@@ -747,7 +747,8 @@ function applySidebarPref(){
         <div class="card">
           <h3>Document Required — Action Needed</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            These need to be resolved by the counsellor. Once resolved, they return to the Active list on the next run.</p>
+            These need to be resolved by the counsellor. The exported / WhatsApp Excel includes
+            <b>DOB</b> so you can log in directly. Once resolved, hit <b>Re-check Required</b> to update only these students.</p>
           <div class="filter-bar">
             <input type="text" id="r-search" placeholder="Search name / reference / email..." oninput="debounceRequired()">
             <select id="r-status" onchange="loadRequired(1)">
@@ -756,6 +757,9 @@ function applySidebarPref(){
             </select>
             <select id="r-session" onchange="loadRequired(1)"><option value="">All Sessions</option></select>
             <select id="r-source" onchange="loadRequired(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <button class="btn btn-primary btn-sm" onclick="runRequired(this)">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Re-check Required</button>
             <button class="btn btn-outline btn-sm" onclick="exportStudents('required')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
@@ -2190,6 +2194,24 @@ document.addEventListener("click",function(e){
 const RUN_EP={all:"/api/run-now",tracker:"/api/run-now-tracker",portal:"/api/run-now-portal"};
 const RUN_LBL={all:"all students",tracker:"MVS Tracker students",portal:"MVS Portal students"};
 const PORTAL_GRP_LBL={ondemand:"On Demand",stream2:"Stream 2",public:"Public",all:"all MVS Portal"};
+async function runRequired(btn){
+  if(btn&&btn.dataset.busy==="1")return;
+  if(btn){btn.dataset.busy="1";btn.style.opacity="0.6";btn.style.pointerEvents="none";}
+  try{
+    const r=await api("/api/run-required","POST");
+    if((r.count||0)===0){showToast("No Document Required students to run.");}
+    else{
+      showToast(r.message+" — running in the background");
+      const box=document.getElementById("run-progress");
+      if(box){box.style.display="block";document.getElementById("pb-pct").textContent="0%";
+        document.getElementById("pb-fill").style.width="0%";
+        document.getElementById("pb-sub").textContent="Starting…";
+        document.getElementById("pb-label").textContent="Re-checking Document Required students…";}
+      startProgressPoll();
+    }
+  }catch(e){showToast("Error: "+e.message);}
+  finally{ setTimeout(()=>{if(btn){btn.dataset.busy="";btn.style.opacity="";btn.style.pointerEvents="";}},4000); }
+}
 async function runChoice(kind,group){
   const m=document.getElementById("run-menu");if(m)m.style.display="none";
   const btn=document.getElementById("run-now-btn");if(btn)btn.classList.remove("open");
@@ -2975,6 +2997,23 @@ async def run_now_tracker(background_tasks: BackgroundTasks, group: str = "all",
     label = {"ondemand": "On Demand", "stream2": "Stream 2", "public": "Public", "all": "all"}[g]
     return {"message": f"Run triggered for MVS Tracker — {label} students!"}
 
+@app.post("/api/run-required")
+async def run_now_required(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Manual run: ONLY the students whose status is 'Document Required'. Lets a
+    counsellor re-check just those after resolving their documents — so a fixed
+    student moves out of the Required list without re-running everyone."""
+    conn = get_db()
+    ND = "COALESCE(deleted,0)=0 AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0"
+    rows = conn.execute(
+        f"SELECT row_key FROM student_status WHERE {ND} AND current_status='Document Required'"
+    ).fetchall()
+    conn.close()
+    keys = [r["row_key"] for r in rows if r["row_key"]]
+    if not keys:
+        return {"message": "No Document Required students to run.", "count": 0}
+    background_tasks.add_task(run_status_check, "all", None, "required", keys)
+    return {"message": f"Re-checking {len(keys)} Document Required student(s)!", "count": len(keys)}
+
 @app.post("/api/run-now-portal")
 async def run_now_portal(background_tasks: BackgroundTasks, group: str = "all", user=Depends(verify_token)):
     """Manual run: MVS Portal data, optionally limited to ONE session group so a
@@ -3138,9 +3177,12 @@ async def report_test(user=Depends(verify_token)):
     conn = get_db(); ND = "COALESCE(deleted,0)=0"
     conf = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1").fetchone()[0]
     req = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Document Required'").fetchone()[0]
+    ver = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Verified'").fetchone()[0]
+    dvp = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Documents Verification In Progress'").fetchone()[0]
     err = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status IN ('Unknown','Fetch Error')").fetchone()[0]
     conn.close()
-    params = [f"TEST report - {when}", str(conf), str(req), str(err), "0", str(conf + req + err), url]
+    params = [f"TEST report - {when}", str(conf), str(req), str(err), "0",
+              str(conf + req + err), url, str(ver), str(dvp)]
     sent, errs = whatsapp.send_report_to_all(nums, params)
     return {"sent": sent, "total": len(nums), "errors": errs}
 
@@ -3394,7 +3436,7 @@ def build_report_excel(path):
     conn = get_db()
     ND = "COALESCE(deleted,0)=0"
     NF = "COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0"
-    cols = ("student_name, reference_no, enrollment_no, session, mobile, email, "
+    cols = ("student_name, reference_no, enrollment_no, dob, session, mobile, email, "
             "current_status, COALESCE(NULLIF(login_remark,''),NULLIF(remark,'')) as remark, last_checked")
     def rows(where):
         return conn.execute(f"SELECT {cols} FROM student_status WHERE {ND} AND {where} "
@@ -3403,6 +3445,8 @@ def build_report_excel(path):
     today = datetime.now().strftime("%Y-%m-%d")
     confirmed_today = rows(f"is_confirmed=1 AND {NF} AND last_changed LIKE '{today}%'")
     required = rows(f"current_status='Document Required' AND {NF}")
+    verified = rows(f"current_status='Verified' AND {NF}")
+    docsprog = rows(f"current_status='Documents Verification In Progress' AND {NF}")
     error = rows("(current_status IN ('Unknown','Fetch Error') "
                  "OR COALESCE(check_failed,0)=1 OR COALESCE(login_failed,0)=1)")
     conn.close()
@@ -3418,30 +3462,35 @@ def build_report_excel(path):
         ws[c].fill = hfill; ws[c].font = hfont
     ws.append(["Confirmed Today", len(confirmed_today)])
     ws.append(["Confirmed (Total)", len(confirmed)])
+    ws.append(["Admission Verified", len(verified)])
+    ws.append(["Documents Verification In Progress", len(docsprog)])
     ws.append(["Document Required", len(required)])
     ws.append(["Error / Unknown", len(error)])
-    ws.column_dimensions["A"].width = 26; ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["A"].width = 34; ws.column_dimensions["B"].width = 12
 
     def sheet(title, data):
         s = wb.create_sheet(title)
-        hdr = ["Name", "Reference No", "Enrollment No", "Session", "Mobile", "Email",
+        hdr = ["Name", "Reference No", "Enrollment No", "DOB", "Session", "Mobile", "Email",
                "Status", "Remark", "Last Checked"]
         s.append(hdr)
         for i in range(1, len(hdr) + 1):
             cell = s.cell(row=1, column=i); cell.fill = hfill; cell.font = hfont
         for r in data:
-            s.append([r["student_name"], r["reference_no"], r["enrollment_no"], r["session"],
+            s.append([r["student_name"], r["reference_no"], r["enrollment_no"], r["dob"], r["session"],
                       r["mobile"], r["email"], r["current_status"], r["remark"], r["last_checked"]])
-        widths = [22, 15, 16, 16, 13, 24, 20, 30, 18]
+        widths = [22, 15, 16, 13, 15, 13, 24, 20, 30, 18]
         for i, w in enumerate(widths, 1):
             s.column_dimensions[chr(64 + i)].width = w
         s.freeze_panes = "A2"
     sheet("Confirmed Today", confirmed_today)
     sheet("Confirmed (Total)", confirmed)
+    sheet("Admission Verified", verified)
+    sheet("Docs Verification In Progress", docsprog)
     sheet("Document Required", required)
     sheet("Error & Unknown", error)
     wb.save(path)
     return {"confirmed": len(confirmed), "confirmed_today": len(confirmed_today),
+            "verified": len(verified), "docs_progress": len(docsprog),
             "required": len(required), "error": len(error)}
 
 @app.get("/report-excel/{token}")
