@@ -525,7 +525,7 @@ function applySidebarPref(){
               <option value="">All Statuses</option>
               <option>Pending</option><option>Documents Verification In Progress</option>
               <option>Document Required</option><option>Verified</option>
-              <option>Approved</option><option>Rejected</option><option>Fetch Error</option>
+              <option>Approved</option><option>Rejected</option><option>Fetch Error</option><option>Unknown</option>
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
@@ -698,6 +698,7 @@ function applySidebarPref(){
               <option>Admission Confirmed</option><option>Verified</option>
               <option>Documents Verification In Progress</option><option>Document Required</option>
               <option>Approved</option><option>Rejected</option>
+              <option>Unknown</option><option>Fetch Error</option>
             </select>
             <select id="h-source" onchange="loadHistory(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <input id="h-search" type="text" placeholder="Search name / reference / email…" oninput="histSearchDebounced()"
@@ -1226,7 +1227,7 @@ async function loadDashboard(){
     const rrLim=rrSel?parseInt(rrSel.value):10;
     try{const rr=await api("/api/run-logs?limit="+rrLim);renderRuns(rr,"recent-runs");}
     catch(e){renderRuns(d.recent_runs,"recent-runs");}
-    renderBell(d.notifications||[],d.dup_notifications||[]);
+    renderBell(d.notifications||[],d.dup_notifications||[],d.unknown_notifications||[]);
   updateFailedBadge();
   }catch(e){showToast("Error: "+e.message);}
 }
@@ -1325,10 +1326,10 @@ async function cancelRun(rid){
 
 function toggleBell(e){e.stopPropagation();document.getElementById("bell-dropdown").classList.toggle("open");}
 document.addEventListener("click",()=>document.getElementById("bell-dropdown").classList.remove("open"));
-async function refreshBell(){try{const d=await api("/api/dashboard");renderBell(d.notifications||[],d.dup_notifications||[]);}catch(e){}}
-function renderBell(notifs,dups){
-  dups=dups||[];
-  const n=notifs.length, total=n+dups.length;
+async function refreshBell(){try{const d=await api("/api/dashboard");renderBell(d.notifications||[],d.dup_notifications||[],d.unknown_notifications||[]);}catch(e){}}
+function renderBell(notifs,dups,unknowns){
+  dups=dups||[];unknowns=unknowns||[];
+  const n=notifs.length, total=n+dups.length+unknowns.length;
   const badge=document.getElementById("bell-badge");
   const navB=document.getElementById("nav-required-badge");
   badge.textContent=total;badge.style.display=total?"flex":"none";
@@ -1340,6 +1341,13 @@ function renderBell(notifs,dups){
     '<div class="nm">'+(x.student_name||"—")+'</div>'+
     '<div class="rf">'+(x.reference_no||"No ref")+'</div>'+
     (x.remark?'<div class="rk">'+x.remark+'</div>':"")+'</div></div>').join("");}
+  if(unknowns.length){
+    html+='<div style="padding:7px 14px;font-size:11px;font-weight:800;color:#991B1B;background:#FEE2E2;border-top:1px solid var(--border)">&#9888; STATUS NOT FOUND — re-check needed</div>';
+    html+=unknowns.map(x=>'<div class="notif-item"><div class="dot" style="background:#DC2626"></div><div>'+
+      '<div class="nm">'+(x.student_name||"—")+'</div>'+
+      '<div class="rf">'+(x.reference_no||x.enrollment_no||"—")+'</div>'+
+      '<div class="rk">'+(x.current_status||"Unknown")+' — '+(x.remark||"NIOS didn\'t return a readable status. Re-check this student.")+'</div></div></div>').join("");
+  }
   if(dups.length){
     html+='<div style="padding:7px 14px;font-size:11px;font-weight:800;color:#5B21B6;background:#EDE9FE;border-top:1px solid var(--border)">&#9888; DUPLICATE — kept as MVS Portal</div>';
     html+=dups.map(x=>'<div class="notif-item"><div class="dot" style="background:#7C3AED"></div><div>'+
@@ -1347,7 +1355,7 @@ function renderBell(notifs,dups){
       '<div class="rf">'+(x.reference_no||x.enrollment_no||"—")+'</div>'+
       '<div class="rk">Same student in MVS Portal &amp; MVS Tracker → kept once as MVS Portal</div></div></div>').join("");
   }
-  list.innerHTML=html||'<div class="notif-empty">No pending documents</div>';
+  list.innerHTML=html||'<div class="notif-empty">No pending items</div>';
 }
 
 let stTimer,cTimer,rTimer;
@@ -2363,6 +2371,16 @@ async def dashboard(user=Depends(verify_token)):
         f"ORDER BY student_name LIMIT 100"
     ).fetchall()
 
+    # Status not found (Unknown / Fetch Error): NIOS didn't return a readable status —
+    # likely an error or wrong reference. Surfaced in the bell with a remark so the
+    # counsellor can re-check, since these are easy to miss in Active Students.
+    unknown_notifs = conn.execute(
+        f"SELECT student_name, reference_no, enrollment_no, current_status, "
+        f"COALESCE(NULLIF(login_remark,''), NULLIF(remark,''), '') as remark "
+        f"FROM student_status WHERE {ND} AND current_status IN ('Unknown','Fetch Error') "
+        f"ORDER BY last_changed DESC LIMIT 100"
+    ).fetchall()
+
     # Session-wise totals
     sess_counts = conn.execute(
         f"SELECT session, COUNT(*) as cnt FROM student_status WHERE {ND} AND session != '' GROUP BY session ORDER BY cnt DESC"
@@ -2382,6 +2400,7 @@ async def dashboard(user=Depends(verify_token)):
         },
         "notifications": [dict(n) for n in notifs],
         "dup_notifications": [dict(d) for d in dup_notifs],
+        "unknown_notifications": [dict(u) for u in unknown_notifs],
         "login_issues": [dict(li) for li in login_issues],
         "session_counts": _normalized_session_counts(sess_counts),
     }
