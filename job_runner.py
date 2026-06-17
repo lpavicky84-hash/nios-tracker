@@ -48,7 +48,16 @@ def is_syc_session(session):
     return "syc" in (session or "").lower()
 
 def session_group(session):
-    return "public" if is_public_session(session) else "regular"
+    """Classify a session into its run group: 'ondemand', 'stream2' or 'public'.
+    On Demand and Stream 2 are now separate groups (own interval + manual run)."""
+    s = (session or "").lower()
+    if "stream 2" in s or "stream2" in s or "stream-2" in s:
+        return "stream2"
+    if "on demand" in s or "ondemand" in s or "on-demand" in s:
+        return "ondemand"
+    if ("april" in s) or ("october" in s) or ("public" in s):
+        return "public"
+    return "ondemand"   # safe default
 
 def _load_db_students(c):
     """Re-check source of truth: every student already in the DB. This makes runs
@@ -187,13 +196,15 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         conn.commit()
         logger.info(f"Auto-cancelled {len(prev)} previous running run(s)")
     run_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_group = group_type
+    _GL = {"all": "All", "regular": "On Demand + Stream 2", "ondemand": "On Demand",
+           "stream2": "Stream 2", "public": "Public"}
+    log_group = _GL.get(group_type, group_type)
     if scope == "upload":
         log_group = "Uploaded sheet"
     elif scope == "selected":
         log_group = "Selected students"
     elif source_only == "mvs_portal":
-        log_group = "MVS Portal"
+        log_group = "MVS Portal" + (f" — {_GL[group_type]}" if group_type in ("ondemand", "stream2", "public") else "")
     elif source_only == "mvs_tracker":
         log_group = "MVS Tracker"
     c.execute("INSERT INTO run_logs (run_at, group_type, status) VALUES (?,?, 'running')",
@@ -310,8 +321,12 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                             (s["row_key"],)).fetchone()
             if row and row["is_confirmed"] == 1:
                 continue                              # confirmed -> never re-check
-            grp = session_group(s["session"])
-            if group_type == "regular" and grp != "regular":
+            grp = session_group(s["session"])   # 'ondemand' | 'stream2' | 'public'
+            if group_type == "regular" and grp not in ("ondemand", "stream2"):
+                continue
+            if group_type == "ondemand" and grp != "ondemand":
+                continue
+            if group_type == "stream2" and grp != "stream2":
                 continue
             if group_type == "public" and grp != "public":
                 continue

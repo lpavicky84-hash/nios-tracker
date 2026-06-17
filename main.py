@@ -440,12 +440,32 @@ function applySidebarPref(){
             <button class="run-menu-item" onclick="runChoice('all')">
               <span class="rmi-main">Run all data</span>
               <span class="rmi-sub">MVS Tracker + MVS Portal</span></button>
-            <button class="run-menu-item" onclick="runChoice('tracker')">
+            <div style="padding:6px 12px 3px;font-size:10.5px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">MVS Tracker — by group</div>
+            <button class="run-menu-item" onclick="runChoice('tracker','ondemand')">
               <span class="rmi-dot" style="background:#0EA5E9"></span>
-              <span class="rmi-main">MVS Tracker only</span></button>
-            <button class="run-menu-item" onclick="runChoice('portal')">
+              <span class="rmi-main">On Demand only</span></button>
+            <button class="run-menu-item" onclick="runChoice('tracker','stream2')">
+              <span class="rmi-dot" style="background:#0EA5E9"></span>
+              <span class="rmi-main">Stream 2 only</span></button>
+            <button class="run-menu-item" onclick="runChoice('tracker','public')">
+              <span class="rmi-dot" style="background:#0EA5E9"></span>
+              <span class="rmi-main">Public only</span></button>
+            <button class="run-menu-item" onclick="runChoice('tracker','all')">
+              <span class="rmi-dot" style="background:#0EA5E9"></span>
+              <span class="rmi-main">All MVS Tracker</span></button>
+            <div style="padding:6px 12px 3px;font-size:10.5px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">MVS Portal — by group</div>
+            <button class="run-menu-item" onclick="runChoice('portal','ondemand')">
               <span class="rmi-dot" style="background:#7C3AED"></span>
-              <span class="rmi-main">MVS Portal only</span></button>
+              <span class="rmi-main">On Demand only</span></button>
+            <button class="run-menu-item" onclick="runChoice('portal','stream2')">
+              <span class="rmi-dot" style="background:#7C3AED"></span>
+              <span class="rmi-main">Stream 2 only</span></button>
+            <button class="run-menu-item" onclick="runChoice('portal','public')">
+              <span class="rmi-dot" style="background:#7C3AED"></span>
+              <span class="rmi-main">Public only</span></button>
+            <button class="run-menu-item" onclick="runChoice('portal','all')">
+              <span class="rmi-dot" style="background:#7C3AED"></span>
+              <span class="rmi-main">All MVS Portal</span></button>
           </div>
         </div>
         <div class="bell-btn" onclick="refreshPage(this)" title="Refresh this page" style="cursor:pointer">
@@ -791,10 +811,17 @@ function applySidebarPref(){
           <p style="color:var(--muted);font-size:13px;margin-bottom:18px">
             Set separate intervals for each group. Confirmed students are skipped automatically.</p>
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-            <span style="width:280px;font-weight:600">📗 Regular (On Demand + Stream 2)</span>
-            <input type="number" id="iv-regular" min="1" max="43200" value="6"
+            <span style="width:280px;font-weight:600">📗 On Demand</span>
+            <input type="number" id="iv-ondemand" min="1" max="43200" value="6"
               style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
-            <select id="iv-regular-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
+            <select id="iv-ondemand-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
+              <option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+            <span style="width:280px;font-weight:600">📙 Stream 2</span>
+            <input type="number" id="iv-stream2" min="1" max="43200" value="6"
+              style="width:90px;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
+            <select id="iv-stream2-unit" style="padding:11px;border:2px solid var(--border);border-radius:10px;font-size:15px">
               <option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
           </div>
           <div style="display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
@@ -1129,7 +1156,7 @@ async function pollProgress(){
         sw.style.display=(mv.total>0||tk.total>0)?"block":"none";
         setSrcRow("mvs",mv);setSrcRow("trk",tk);
       }
-      const g=d.group_type==="public"?"Public (April / October)":(d.group_type==="regular"?"On Demand + Stream 2":"all");
+      const g=d.group_type||"all";
       document.getElementById("pb-label").textContent="Checking "+g+" students…";
       updateNavCounts();   // live badge updates as students move between tabs
       // live filtering: refresh whatever view the counsellor is on, as it happens
@@ -2025,19 +2052,26 @@ document.addEventListener("click",function(e){
 });
 const RUN_EP={all:"/api/run-now",tracker:"/api/run-now-tracker",portal:"/api/run-now-portal"};
 const RUN_LBL={all:"all students",tracker:"MVS Tracker students",portal:"MVS Portal students"};
-async function runChoice(kind){
+const PORTAL_GRP_LBL={ondemand:"On Demand",stream2:"Stream 2",public:"Public",all:"all MVS Portal"};
+async function runChoice(kind,group){
   const m=document.getElementById("run-menu");if(m)m.style.display="none";
   const btn=document.getElementById("run-now-btn");if(btn)btn.classList.remove("open");
   if(btn&&btn.dataset.busy==="1")return;
   if(btn){btn.dataset.busy="1";btn.style.opacity="0.6";btn.style.pointerEvents="none";}
   try{
-    const r=await api(RUN_EP[kind]||RUN_EP.all,"POST");
+    let ep=RUN_EP[kind]||RUN_EP.all;
+    if((kind==="portal"||kind==="tracker")&&group)ep=RUN_EP[kind]+"?group="+encodeURIComponent(group);
+    const r=await api(ep,"POST");
     showToast(r.message+" — running in the background");
+    let lbl=RUN_LBL[kind]||"students";
+    if((kind==="portal"||kind==="tracker")&&group){
+      lbl=(kind==="portal"?"MVS Portal":"MVS Tracker")+" — "+(PORTAL_GRP_LBL[group]||group)+" students";
+    }
     const box=document.getElementById("run-progress");
     if(box){box.style.display="block";document.getElementById("pb-pct").textContent="0%";
       document.getElementById("pb-fill").style.width="0%";
       document.getElementById("pb-sub").textContent="Starting…";
-      document.getElementById("pb-label").textContent="Checking "+(RUN_LBL[kind]||"students")+"…";}
+      document.getElementById("pb-label").textContent="Checking "+lbl+"…";}
     startProgressPoll();
   }catch(e){showToast("Error: "+e.message);}
   finally{ setTimeout(()=>{if(btn){btn.dataset.busy="";btn.style.opacity="";btn.style.pointerEvents="";}},4000); }
@@ -2079,7 +2113,8 @@ function ivToMin(which){
 }
 async function loadIntervals(){
   try{const r=await api("/api/intervals");
-    setIvField("regular",r.regular_min);
+    setIvField("ondemand",r.ondemand_min);
+    setIvField("stream2",r.stream2_min);
     setIvField("public",r.public_min);}catch(e){}
 }
 async function loadTrash(){
@@ -2142,13 +2177,14 @@ async function testReport(btn){
   finally{if(btn){btn.disabled=false;btn.style.opacity="";}}
 }
 async function saveIntervals(){
-  const rm=ivToMin("regular"),pm=ivToMin("public");
-  if(rm<15||pm<15){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
-  if(rm>43200||pm>43200){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">Maximum interval is 30 days</span>';return;}
-  try{const r=await api("/api/intervals","POST",{regular_min:rm,public_min:pm});
-    document.getElementById("iv-status").innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
-    showToast("Intervals saved!");}
-  catch(e){document.getElementById("iv-status").innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
+  const od=ivToMin("ondemand"),st=ivToMin("stream2"),pm=ivToMin("public");
+  const S=document.getElementById("iv-status");
+  if(od<15||st<15||pm<15){S.innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
+  if(od>43200||st>43200||pm>43200){S.innerHTML='<span style="color:var(--danger)">Maximum interval is 30 days</span>';return;}
+  try{const r=await api("/api/intervals","POST",{ondemand_min:od,stream2_min:st,public_min:pm});
+    S.innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
+    showToast("Intervals saved!");try{loadNextRuns();}catch(e){}}
+  catch(e){S.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
 
 async function loadWa(){
@@ -2277,11 +2313,13 @@ def verify_token(creds: HTTPAuthorizationCredentials = Depends(bearer)):
 scheduler = BackgroundScheduler()
 
 def _last_run_time(group_type):
-    """Most recent completed run for this group (or a manual 'all' run)."""
+    """Most recent completed run for this group (or a manual 'All' run)."""
+    pat = {"ondemand": "%On Demand%", "stream2": "%Stream 2%",
+           "public": "%Public%"}.get(group_type, f"%{group_type}%")
     conn = get_db()
     row = conn.execute(
-        "SELECT run_at FROM run_logs WHERE group_type IN (?, 'all') AND status='completed' "
-        "ORDER BY id DESC LIMIT 1", (group_type,)).fetchone()
+        "SELECT run_at FROM run_logs WHERE (group_type LIKE ? OR group_type IN ('All','all')) "
+        "AND status LIKE 'completed%' ORDER BY id DESC LIMIT 1", (pat,)).fetchone()
     conn.close()
     if row and row["run_at"]:
         try:
@@ -2291,14 +2329,22 @@ def _last_run_time(group_type):
     return None
 
 def _interval_minutes(grp, default_h):
-    """Interval in MINUTES. Prefers the new *_min setting; falls back to the
-    legacy hour setting (×60) so older configs keep working."""
+    """Interval in MINUTES. Prefers the group's own *_min setting; On Demand & Stream 2
+    fall back to the old combined 'regular' interval (so existing setups keep working
+    until they're set separately). Legacy hour setting (×60) honoured last."""
     m = get_setting(f"interval_{grp}_min", "")
     if m:
         try:
             return max(15, int(m))
         except Exception:
             pass
+    if grp in ("ondemand", "stream2"):
+        rm = get_setting("interval_regular_min", "")
+        if rm:
+            try:
+                return max(15, int(rm))
+            except Exception:
+                pass
     try:
         return int(get_setting(f"interval_{grp}", str(default_h))) * 60
     except Exception:
@@ -2311,21 +2357,24 @@ def _mvs_enabled():
     except Exception:
         return False
 
+# Run groups — each has its own interval, dashboard timer, pause/resume + manual run.
+# (job id, default hours)
+RUN_GROUPS = [("ondemand", "job_ondemand", 6), ("stream2", "job_stream2", 6),
+              ("public", "job_public", 12)]
+
 def reschedule_jobs():
-    """Two interval jobs. BOTH data sources (MVS Portal + MVS Tracker) run together
-    on the same interval; the split is by session group only:
-        regular -> On Demand + Stream 2,  public -> April / October.
-    Automatic runs happen ONLY at the set interval. We never fire a 'catch-up' run
-    right after a restart / redeploy / upload — if a run is needed sooner, the user
-    presses Run Now. So next run is always at least one full interval away."""
-    reg = _interval_minutes("regular", 6)
-    pub = _interval_minutes("public", 12)
+    """One interval job per group (On Demand / Stream 2 / Public). Both data sources
+    (MVS Portal + MVS Tracker) run together; the split is by session group only.
+    Automatic runs happen ONLY at the set interval — never a 'catch-up' burst after a
+    restart/redeploy/upload (next run is always at least one full interval away)."""
     now = datetime.now()
-    try:
-        scheduler.remove_job("job_mvs")     # drop the old separate MVS Portal job
-    except Exception:
-        pass
-    for jid, grp, mins in [("job_regular", "regular", reg), ("job_public", "public", pub)]:
+    for old in ("job_mvs", "job_regular"):     # drop legacy combined jobs
+        try:
+            scheduler.remove_job(old)
+        except Exception:
+            pass
+    for grp, jid, dh in RUN_GROUPS:
+        mins = _interval_minutes(grp, dh)
         # If THIS group is paused, keep it off (across restarts too) and skip scheduling.
         if get_setting(f"paused_{grp}", "") == "1":
             try:
@@ -2337,8 +2386,6 @@ def reschedule_jobs():
         last = _last_run_time(grp)
         nxt = last + timedelta(minutes=mins) if last else now + timedelta(minutes=mins)
         if nxt <= now:
-            # Overdue (e.g. app was restarted after a long gap). Do NOT burst-run —
-            # wait a full interval from now so an upload/redeploy never auto-triggers.
             nxt = now + timedelta(minutes=mins)
         scheduler.add_job(lambda g=grp: run_status_check(g),
                           trigger=IntervalTrigger(minutes=mins),
@@ -2435,8 +2482,9 @@ async def dashboard(user=Depends(verify_token)):
     ).fetchall()
 
     conn.close()
-    jr = scheduler.get_job("job_regular")
-    next_run = str(jr.next_run_time) if jr and jr.next_run_time else "Not scheduled"
+    _nexts = [j.next_run_time for j in (scheduler.get_job(jid) for _g, jid, _d in RUN_GROUPS)
+              if j and j.next_run_time]
+    next_run = str(min(_nexts)) if _nexts else "Not scheduled"
     return {
         "total_students": total, "next_run": next_run,
         "status_distribution": [dict(r) for r in dist],
@@ -2781,16 +2829,24 @@ async def run_now(background_tasks: BackgroundTasks, user=Depends(verify_token))
     return {"message": "Run triggered for ALL students (Tracker + Portal)!"}
 
 @app.post("/api/run-now-tracker")
-async def run_now_tracker(background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    """Manual run: ONLY MVS Tracker data (all non-confirmed)."""
-    background_tasks.add_task(run_status_check, "all", "mvs_tracker")
-    return {"message": "Run triggered for MVS Tracker students!"}
+async def run_now_tracker(background_tasks: BackgroundTasks, group: str = "all", user=Depends(verify_token)):
+    """Manual run: MVS Tracker data, optionally limited to ONE session group so a
+    counsellor can run just On Demand / Stream 2 / Public instead of every tracker
+    student (saves CapSolver credits)."""
+    g = group if group in ("ondemand", "stream2", "public") else "all"
+    background_tasks.add_task(run_status_check, g, "mvs_tracker")
+    label = {"ondemand": "On Demand", "stream2": "Stream 2", "public": "Public", "all": "all"}[g]
+    return {"message": f"Run triggered for MVS Tracker — {label} students!"}
 
 @app.post("/api/run-now-portal")
-async def run_now_portal(background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    """Manual run: ONLY MVS Portal data (all non-confirmed)."""
-    background_tasks.add_task(run_status_check, "all", "mvs_portal")
-    return {"message": "Run triggered for MVS Portal students!"}
+async def run_now_portal(background_tasks: BackgroundTasks, group: str = "all", user=Depends(verify_token)):
+    """Manual run: MVS Portal data, optionally limited to ONE session group so a
+    counsellor can run just On Demand / Stream 2 / Public instead of every verification
+    student (saves CapSolver credits)."""
+    g = group if group in ("ondemand", "stream2", "public") else "all"
+    background_tasks.add_task(run_status_check, g, "mvs_portal")
+    label = {"ondemand": "On Demand", "stream2": "Stream 2", "public": "Public", "all": "all"}[g]
+    return {"message": f"Run triggered for MVS Portal — {label} students!"}
 
 @app.post("/api/run-now-upload")
 async def run_now_upload(background_tasks: BackgroundTasks, user=Depends(verify_token)):
@@ -2865,7 +2921,10 @@ async def run_progress(user=Depends(verify_token)):
             "mvs": {"done": dm, "total": tm, "percent": int(dm*100/tm) if tm else 0},
             "trk": {"done": dt, "total": tt, "percent": int(dt*100/tt) if tt else 0}}
 
-GROUP_LABELS = {"regular": "On Demand + Stream 2", "public": "Public (April / October)"}
+GROUP_LABELS = {"ondemand": "On Demand", "stream2": "Stream 2",
+                "public": "Public (April / October)"}
+_GROUP_JID = {"ondemand": "job_ondemand", "stream2": "job_stream2", "public": "job_public"}
+_GROUP_DH = {"ondemand": 6, "stream2": 6, "public": 12}
 
 def _job_remaining_sec(jid):
     """Seconds until a scheduled job's next run (None if not scheduled)."""
@@ -2884,7 +2943,7 @@ async def next_runs(user=Depends(verify_token)):
     """Seconds remaining until the next automatic run of each group, plus that group's
     own paused flag (each group can be paused independently)."""
     out = []
-    for grp, jid in [("regular", "job_regular"), ("public", "job_public")]:
+    for grp, jid, _dh in RUN_GROUPS:
         paused = get_setting(f"paused_{grp}", "") == "1"
         if paused:
             try:
@@ -2898,8 +2957,8 @@ async def next_runs(user=Depends(verify_token)):
     return {"runs": out}
 
 def _valid_group(g):
-    if g not in ("regular", "public"):
-        raise HTTPException(status_code=400, detail="group must be 'regular' or 'public'")
+    if g not in ("ondemand", "stream2", "public"):
+        raise HTTPException(status_code=400, detail="group must be 'ondemand', 'stream2' or 'public'")
     return g
 
 @app.get("/api/report-settings")
@@ -2953,8 +3012,8 @@ async def intervals_pause(body: dict, user=Depends(verify_token)):
     """Freeze ONE group's auto-run timer (regular OR public): capture how long is left,
     then stop just that group's schedule. Resuming continues from this remaining time."""
     grp = _valid_group((body or {}).get("group", ""))
-    jid = "job_regular" if grp == "regular" else "job_public"
-    dh = 6 if grp == "regular" else 12
+    jid = _GROUP_JID[grp]
+    dh = _GROUP_DH[grp]
     rem = _job_remaining_sec(jid)
     if rem is None:
         rem = _interval_minutes(grp, dh) * 60
@@ -2972,8 +3031,8 @@ async def intervals_resume(body: dict, user=Depends(verify_token)):
     """Resume ONE group: re-schedule it to fire after its FROZEN remaining time, so the
     countdown picks up exactly where it was paused (not reset to a full interval)."""
     grp = _valid_group((body or {}).get("group", ""))
-    jid = "job_regular" if grp == "regular" else "job_public"
-    dh = 6 if grp == "regular" else 12
+    jid = _GROUP_JID[grp]
+    dh = _GROUP_DH[grp]
     mins = _interval_minutes(grp, dh)
     try:
         rem = int(get_setting(f"pause_remaining_{grp}_sec", "") or 0)
@@ -3111,21 +3170,25 @@ async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
 
 @app.get("/api/intervals")
 async def get_intervals(user=Depends(verify_token)):
-    return {"regular_min": _interval_minutes("regular", 6),
+    return {"ondemand_min": _interval_minutes("ondemand", 6),
+            "stream2_min": _interval_minutes("stream2", 6),
             "public_min": _interval_minutes("public", 12)}
 
 @app.post("/api/intervals")
 async def set_intervals(body: dict, user=Depends(verify_token)):
-    reg = int(body.get("regular_min", 360))
+    od = int(body.get("ondemand_min", 360))
+    st = int(body.get("stream2_min", 360))
     pub = int(body.get("public_min", 720))
     MAX_MIN = 43200   # 30 days — lets counsellors run every few days, not just hours
-    for v in (reg, pub):
+    for v in (od, st, pub):
         if not (15 <= v <= MAX_MIN):
             raise HTTPException(status_code=400, detail="Interval must be between 15 minutes and 30 days")
-    set_setting("interval_regular_min", reg)
+    set_setting("interval_ondemand_min", od)
+    set_setting("interval_stream2_min", st)
     set_setting("interval_public_min", pub)
+    set_setting("interval_regular_min", "")   # retire the old combined setting
     # Saving new intervals restarts the timers fresh, so clear any paused state.
-    for grp in ("regular", "public"):
+    for grp in ("ondemand", "stream2", "public"):
         set_setting(f"paused_{grp}", "")
         set_setting(f"pause_remaining_{grp}_sec", "")
     reschedule_jobs()
@@ -3138,8 +3201,8 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
         if m < 60:
             return f"{m}m"
         return f"{m//60}h {m%60}m"
-    return {"message": f"On Demand + Stream 2: every {_fmt(reg)}, Public: every {_fmt(pub)}",
-            "regular_min": reg, "public_min": pub}
+    return {"message": f"On Demand: every {_fmt(od)}, Stream 2: every {_fmt(st)}, Public: every {_fmt(pub)}",
+            "ondemand_min": od, "stream2_min": st, "public_min": pub}
 
 @app.get("/api/source-override")
 async def get_source_override(user=Depends(verify_token)):
