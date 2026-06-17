@@ -1415,11 +1415,20 @@ async function loadDashboard(){
 function renderSessionCounts(arr){
   const el=document.getElementById("session-counts");
   if(!arr.length){el.innerHTML='<div class="empty">No data yet</div>';return;}
-  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">'+
-    arr.map(s=>'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;'+
-      'background:var(--soft);border:1px solid var(--border);border-radius:11px">'+
-      '<span style="font-size:13px;font-weight:600">'+(s.session||"—")+'</span>'+
-      '<span style="font-size:18px;font-weight:800;color:var(--primary)">'+s.cnt+'</span></div>').join("")+'</div>';
+  const cell=(label,val,color)=>'<div style="text-align:center;flex:1;min-width:0">'+
+    '<div style="font-size:17px;font-weight:800;color:'+color+';line-height:1.1">'+(val||0)+'</div>'+
+    '<div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">'+label+'</div></div>';
+  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px">'+
+    arr.map(s=>'<div style="padding:15px 16px;background:var(--soft);border:1px solid var(--border);border-radius:13px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
+        '<span style="font-size:14.5px;font-weight:700">'+(s.session||"—")+'</span>'+
+        '<span style="font-size:12.5px;color:var(--muted);font-weight:600">Total&nbsp;<b style="color:var(--text);font-size:17px">'+s.cnt+'</b></span></div>'+
+      '<div style="display:flex;gap:4px;padding-top:11px;border-top:1px solid var(--border)">'+
+        cell("Confirmed",s.confirmed,"#16A34A")+
+        cell("Verified",s.verified,"#2563EB")+
+        cell("Active",s.active,"#7C3AED")+
+        cell("Required",s.required,"#EA580C")+
+      '</div></div>').join("")+'</div>';
 }
 function statCard(lbl,val,svg,col){
   return '<div class="stat"><div class="ic" style="background:'+col+'1A;color:'+col+'">'+svg+
@@ -2635,9 +2644,17 @@ async def dashboard(user=Depends(verify_token)):
         f"ORDER BY last_changed DESC LIMIT 100"
     ).fetchall()
 
-    # Session-wise totals
+    # Session-wise totals WITH a per-session status breakdown (same definitions the
+    # nav tabs use), so a counsellor can see, per session, how many are still pending.
+    NFAIL = "COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0"
     sess_counts = conn.execute(
-        f"SELECT session, COUNT(*) as cnt FROM student_status WHERE {ND} AND session != '' GROUP BY session ORDER BY cnt DESC"
+        f"SELECT session, COUNT(*) as cnt, "
+        f"SUM(CASE WHEN is_confirmed=1 THEN 1 ELSE 0 END) as confirmed, "
+        f"SUM(CASE WHEN COALESCE(is_confirmed,0)=0 AND current_status='Verified' THEN 1 ELSE 0 END) as verified, "
+        f"SUM(CASE WHEN current_status='Document Required' THEN 1 ELSE 0 END) as required, "
+        f"SUM(CASE WHEN COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
+        f"         AND (session IS NULL OR session NOT LIKE '%syc%') THEN 1 ELSE 0 END) as active "
+        f"FROM student_status WHERE {ND} AND {NFAIL} AND session != '' GROUP BY session ORDER BY cnt DESC"
     ).fetchall()
 
     conn.close()
@@ -2662,14 +2679,19 @@ async def dashboard(user=Depends(verify_token)):
 
 def _normalized_session_counts(raw_rows):
     """Collapse raw session rows into the normalized categories (On Demand, Stream 2,
-    Public, SYC) so the dashboard shows ONE row per real category. Ordered by count desc."""
+    Public, SYC) so the dashboard shows ONE row per real category, each with a
+    per-session breakdown (total / confirmed / verified / active / required)."""
     agg = {}
     for r in raw_rows:
         norm = normalize_session(r["session"])
         if not norm:
             continue
-        agg[norm] = agg.get(norm, 0) + (r["cnt"] or 0)
-    out = [{"session": k, "cnt": v} for k, v in agg.items()]
+        d = agg.setdefault(norm, {"session": norm, "cnt": 0, "confirmed": 0,
+                                  "verified": 0, "active": 0, "required": 0})
+        d["cnt"] += (r["cnt"] or 0)
+        for k in ("confirmed", "verified", "active", "required"):
+            d[k] += (r[k] or 0) if k in r.keys() else 0
+    out = list(agg.values())
     out.sort(key=lambda x: x["cnt"], reverse=True)
     return out
 
