@@ -1,4 +1,5 @@
 import openpyxl
+import re
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import logging
@@ -105,12 +106,22 @@ def read_students_from_excel(filepath):
         enroll = cell(row, enroll_col)
         if not ref and not email and not enroll:
             continue
-        if email:
-            rk = f"email:{email.lower()}"
+        # Stable unique key. A REAL email keeps its existing "email:" key (so students
+        # already tracked are never re-keyed). But placeholder emails like "temp"/"na"
+        # must NOT become the key — those fall back to the reference / enrollment number
+        # (NIOS's true unique IDs), so students sharing a placeholder are no longer
+        # collapsed into one "duplicate".
+        _em = (email or "").strip().lower()
+        _real_email = ("@" in _em and "." in _em.split("@")[-1]
+                       and _em not in ("temp", "na", "none", "nil", "-", "null", "n/a"))
+        if _real_email:
+            rk = f"email:{_em}"
         elif ref:
             rk = f"ref:{ref}"
-        else:
+        elif enroll:
             rk = f"enr:{enroll}"
+        else:
+            rk = f"row:{source}:{row}"   # last resort: unique per row, never merged
         students.append({
             "row_index":    row,
             "reference_no": ref,
@@ -126,7 +137,18 @@ def read_students_from_excel(filepath):
             "row_key":      rk,
         })
     wb.close()
-    logger.info(f"Read {len(students)} students from Excel")
+    # Secondary source signal: the MVS student portal exports DOB as a JavaScript
+    # Date string ("Wed Aug 08 2007 12:30:00 GMT+0530 (India Standard Time)").
+    # If the header style didn't flag the sheet but the DOBs look like that, it's
+    # portal data — reclassify the whole sheet.
+    if source != "mvs_portal":
+        _jsd = re.compile(r"^[A-Za-z]{3}\s+[A-Za-z]{3}\s+\d{1,2}\s+\d{4}\b")
+        if any(("gmt" in str(st.get("dob", "")).lower()) or _jsd.match(str(st.get("dob", "")))
+               for st in students):
+            source = "mvs_portal"
+            for st in students:
+                st["source"] = "mvs_portal"
+    logger.info(f"Read {len(students)} students from Excel (source={source})")
     return students
 
 def dedupe_students(students):

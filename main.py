@@ -321,6 +321,10 @@ PORTAL_HTML = """<!DOCTYPE html>
     padding:2px 9px;border-radius:10px}
   .new-tag{display:inline-block;background:#DCFCE7;color:#15803D;font-size:11px;font-weight:700;
     padding:2px 9px;border-radius:10px}
+  .sim-tag{display:inline-block;background:#FEF9C3;color:#854D0E;font-size:11px;font-weight:700;
+    padding:2px 9px;border-radius:10px}
+  .up-stat.sim{border-left:4px solid #CA8A04}
+  .up-stat.sim .us-val{color:#CA8A04}
   .up-prog{background:var(--soft);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
   .up-prog-top{display:flex;justify-content:space-between;font-weight:700;font-size:13px;margin-bottom:8px}
   .up-track{height:8px;background:var(--chip);border-radius:5px;overflow:hidden}
@@ -2075,28 +2079,34 @@ function fmtBytes(b){if(b<1024)return b+" B";if(b<1048576)return (b/1024).toFixe
 function fmtEta(s){s=Math.ceil(s);if(s<1)return "0s";if(s<60)return s+"s";const m=Math.floor(s/60),ss=s%60;return m+"m "+ss+"s";}
 function renderUploadSummary(d){
   const sm=document.getElementById("upload-summary");
+  const sim=d.similar||0;
   sm.innerHTML='<div class="up-stats">'+
     '<div class="up-stat"><div class="us-lbl">Total in list</div><div class="us-val">'+(d.total||0)+'</div></div>'+
-    '<div class="up-stat dup"><div class="us-lbl">Already in system</div><div class="us-val">'+(d.duplicates||0)+'</div></div>'+
     '<div class="up-stat new"><div class="us-lbl">New students</div><div class="us-val">'+(d.unique||0)+'</div></div>'+
+    '<div class="up-stat dup"><div class="us-lbl">Already tracked</div><div class="us-val">'+(d.duplicates||0)+'</div></div>'+
+    (sim>0?'<div class="up-stat sim"><div class="us-lbl">Similar (will run)</div><div class="us-val">'+sim+'</div></div>':'')+
     '</div>'+
-    (d.duplicates>0?'<div style="font-size:12px;color:var(--muted);margin-top:8px">'+
-      d.duplicates+' student(s) already tracked (matched by reference / email / name+phone) — '+
-      'these will not be added again, only their status will be updated. '+(d.unique||0)+' new student(s) will be added.</div>':
-      '<div style="font-size:12px;color:var(--success);margin-top:8px">Sabhi '+(d.unique||0)+' students new hain.</div>');
+    '<div style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.6">'+
+      '<b>'+(d.unique||0)+'</b> new student(s) will be added. '+
+      ((d.duplicates||0)>0?'<b>'+d.duplicates+'</b> already tracked (same reference / enrollment / email) — these are re-checked, <b>not</b> removed. ':'')+
+      (sim>0?'<b>'+sim+'</b> share a mobile with another record but have a <b>different reference</b>, so they are treated as separate students and <b>will run</b>. ':'')+
+      'Nothing is deleted on upload.</div>';
 }
 function renderUploadPreview(rows){
   const pv=document.getElementById("upload-preview");
   if(!rows.length){pv.innerHTML="";return;}
-  const head='<tr><th>#</th><th>Name</th><th>Reference</th><th>Email</th><th>Class</th><th>Session</th><th>Status</th></tr>';
-  const body=rows.map((s,i)=>'<tr'+(s.dup?' style="background:var(--dup-bg)"':'')+'>'+
+  const head='<tr><th>#</th><th>Name</th><th>Reference</th><th>Mobile</th><th>Session</th><th>Status</th></tr>';
+  const body=rows.map((s,i)=>'<tr'+(s.dup?' style="background:var(--dup-bg)"':(s.similar?' style="background:#FEF9E7"':''))+'>'+
     '<td style="color:var(--muted)">'+(i+1)+'</td>'+
     '<td>'+(s.student_name||"—")+'</td>'+
     '<td><span class="ref-tag">'+(s.reference_no||s.enrollment_no||"—")+'</span></td>'+
-    '<td style="font-size:12px">'+(s.email||"—")+'</td>'+
-    '<td>'+(s.class_level||"—")+'</td>'+
+    '<td style="font-size:12px">'+(s.mobile||"—")+'</td>'+
     '<td style="font-size:12px">'+(s.session||"—")+'</td>'+
-    '<td>'+(s.dup?'<span class="dup-tag">Duplicate</span>':'<span class="new-tag">New</span>')+'</td></tr>').join("");
+    '<td>'+(s.dup
+        ?'<span class="dup-tag" title="Already tracked — matched by '+(s.dup_basis||"unique id")+'. Will be re-checked, not removed.">Duplicate &middot; '+(s.dup_basis||"")+'</span>'
+        :(s.similar
+          ?'<span class="sim-tag" title="Different reference but same '+s.similar+' — treated as a separate student and WILL run.">Similar &middot; '+s.similar+'</span>'
+          :'<span class="new-tag">New</span>'))+'</td></tr>').join("");
   pv.innerHTML='<div class="prev-head">Preview — '+rows.length+' rows (scroll to see all)</div>'+
     '<div class="prev-box"><table>'+head+body+'</table></div>';
 }
@@ -3196,43 +3206,64 @@ async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token))
         def _norm(v):
             return str(v or "").strip().lower()
 
-        # Build sets of keys already in the system
+        def _real_email(e):
+            e = _norm(e)
+            return ("@" in e and "." in e.split("@")[-1]
+                    and e not in ("temp", "na", "none", "nil", "-", "null", "n/a"))
+
+        def _valid_mobile(m):
+            d = "".join(ch for ch in str(m or "") if ch.isdigit())
+            return d if len(d) >= 10 else ""
+
+        def _rowkey(ref, enroll, email):
+            # EXACT same rule the importer uses, so the preview never lies about
+            # what will actually be merged.
+            if _real_email(email):
+                return "email:" + _norm(email), "Email"
+            if ref:
+                return "ref:" + ref.strip(), "Reference No"
+            if enroll:
+                return "enr:" + enroll.strip(), "Enrollment No"
+            return "", ""
+
+        # Existing students keyed exactly as stored (row_key is the DB primary key).
         conn = get_db()
-        existing_ref, existing_email, existing_nm, existing_enroll = set(), set(), set(), set()
-        for r in conn.execute("SELECT reference_no, email, student_name, mobile, enrollment_no FROM student_status").fetchall():
-            if r["reference_no"]:
-                existing_ref.add(_norm(r["reference_no"]))
-            if r["email"]:
-                existing_email.add(_norm(r["email"]))
-            if r["enrollment_no"]:
-                existing_enroll.add(_norm(r["enrollment_no"]))
-            if r["student_name"] and r["mobile"]:
-                existing_nm.add(_norm(r["student_name"]) + "|" + _norm(r["mobile"]))
+        existing_keys, existing_mob = set(), set()
+        for r in conn.execute("SELECT row_key, mobile FROM student_status").fetchall():
+            if r["row_key"]:
+                existing_keys.add(r["row_key"])
+            mb = _valid_mobile(r["mobile"])
+            if mb:
+                existing_mob.add(mb)
         conn.close()
 
         students = read_students_from_excel(EXCEL_PATH)
-        seen_ref, seen_email, seen_nm, seen_enroll = set(), set(), set(), set()
+        seen_keys, seen_mob = set(), set()
         preview = []
         dups = 0
+        sims = 0
         for s in students:
-            ref = _norm(s.get("reference_no"))
-            email = _norm(s.get("email"))
-            enroll = _norm(s.get("enrollment_no"))
-            nm = (_norm(s.get("student_name")) + "|" + _norm(s.get("mobile"))) \
-                if s.get("student_name") and s.get("mobile") else ""
-            # duplicate if seen earlier in file OR already present in the DB
-            is_dup = (
-                (ref and (ref in seen_ref or ref in existing_ref)) or
-                (email and (email in seen_email or email in existing_email)) or
-                (enroll and (enroll in seen_enroll or enroll in existing_enroll)) or
-                (nm and (nm in seen_nm or nm in existing_nm))
-            )
-            if ref: seen_ref.add(ref)
-            if email: seen_email.add(email)
-            if enroll: seen_enroll.add(enroll)
-            if nm: seen_nm.add(nm)
-            if is_dup:
+            ref = str(s.get("reference_no") or "")
+            enroll = str(s.get("enrollment_no") or "")
+            email = str(s.get("email") or "")
+            mob = _valid_mobile(s.get("mobile"))
+            rk, basis = _rowkey(ref, enroll, email)
+            # HARD duplicate: same unique key (reference / enrollment / real email).
+            # This is the genuine same student — at import it is merged & re-checked.
+            hard = bool(rk) and (rk in seen_keys or rk in existing_keys)
+            # SOFT "similar": a different student (different reference) who happens to
+            # share a mobile number. These are NOT removed — they will still run.
+            similar = ""
+            if not hard and mob and (mob in seen_mob or mob in existing_mob):
+                similar = "Mobile No"
+            if rk:
+                seen_keys.add(rk)
+            if mob:
+                seen_mob.add(mob)
+            if hard:
                 dups += 1
+            elif similar:
+                sims += 1
             preview.append({
                 "student_name": s.get("student_name", ""),
                 "reference_no": s.get("reference_no", ""),
@@ -3242,11 +3273,13 @@ async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token))
                 "session": s.get("session", ""),
                 "dob": s.get("dob", ""),
                 "mobile": s.get("mobile", ""),
-                "dup": is_dup,
+                "dup": hard,
+                "dup_basis": basis if hard else "",
+                "similar": similar,
             })
         total = len(students)
-        resp.update({"total": total, "duplicates": dups, "unique": total - dups,
-                     "preview": preview[:2000]})
+        resp.update({"total": total, "duplicates": dups, "similar": sims,
+                     "unique": total - dups - sims, "preview": preview[:2000]})
     except Exception as e:
         resp["parse_error"] = str(e)[:200]
     return resp
