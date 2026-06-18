@@ -4007,12 +4007,16 @@ async def wa_test(body: dict, user=Depends(verify_token)):
     ok, info = whatsapp.send_test(number, name, group)
     return {"ok": ok, "info": info}
 
-def _wa_send_one(row_key):
-    """Verify the NIOS login, then (re)send the documents for ONE confirmed student.
-    Opens its own DB connection so it is safe to run as a background task. Updates the
-    student row and returns (ok, info, login_failed). Never raises."""
+def _wa_send_one(row_key, verify=False):
+    """(Re)send the documents for ONE confirmed student. Opens its own DB connection so it
+    is safe to run as a background task. Returns (ok, info, login_failed). Never raises.
+
+    verify=False (default, FAST): the student is already CONFIRMED — their Reference/DOB were
+    already proven valid when the status was confirmed, and the WhatsApp message only carries
+    signed links (the document is fetched live when the student taps it). So we skip the slow
+    NIOS re-login (CapSolver reCAPTCHA, ~15-40s each) and send straight away (~1-2s each).
+    verify=True: re-verify the NIOS login first (slow) — used only if explicitly requested."""
     import whatsapp
-    from nios_login import verify_login
     try:
         conn = get_db()
         row = conn.execute("SELECT row_key, student_name, mobile, session, reference_no, dob, enrollment_no "
@@ -4020,14 +4024,16 @@ def _wa_send_one(row_key):
         if not row:
             conn.close()
             return False, "student not found", False
-        ok_login, lmsg = verify_login(row["reference_no"], row["dob"], row["enrollment_no"] or "")
-        if not ok_login:
-            conn.execute("UPDATE student_status SET login_failed=1, login_remark=?, whatsapp_info=?, "
-                         "whatsapp_sent=0, whatsapp_attempts=COALESCE(whatsapp_attempts,0)+1 WHERE row_key=?",
-                         (lmsg[:240], ("Not sent — " + lmsg)[:180], row_key))
-            conn.commit(); conn.close()
-            return False, lmsg, True
-        conn.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
+        if verify:
+            from nios_login import verify_login
+            ok_login, lmsg = verify_login(row["reference_no"], row["dob"], row["enrollment_no"] or "")
+            if not ok_login:
+                conn.execute("UPDATE student_status SET login_failed=1, login_remark=?, whatsapp_info=?, "
+                             "whatsapp_sent=0, whatsapp_attempts=COALESCE(whatsapp_attempts,0)+1 WHERE row_key=?",
+                             (lmsg[:240], ("Not sent — " + lmsg)[:180], row_key))
+                conn.commit(); conn.close()
+                return False, lmsg, True
+            conn.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
         ok, info = whatsapp.send_for_student(dict(row))
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if ok:
