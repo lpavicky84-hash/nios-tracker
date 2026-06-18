@@ -504,8 +504,9 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                         })
                         # Only mark as sent on success; failures retry next run.
                         if ok:
-                            c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
-                                      (str(info)[:180], row_key))
+                            c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=?, "
+                                      "whatsapp_sent_at=?, whatsapp_delivery='' WHERE row_key=?",
+                                      (str(info)[:180], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row_key))
                         else:
                             c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
                                       (str(info)[:180], row_key))

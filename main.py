@@ -988,6 +988,17 @@ function applySidebarPref(){
             </div>
           </div>
           <div id="wa-status" style="margin-top:12px;font-size:13px"></div>
+          <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px">
+            <div style="font-weight:700;font-size:13.5px;margin-bottom:6px">Delivery confirmation (recommended)</div>
+            <p style="color:var(--muted);font-size:12.5px;line-height:1.6;margin-bottom:10px">
+              AiSensy accepting a message does <b>not</b> guarantee the student received it. Paste this
+              <b>Webhook URL</b> into AiSensy (Manage → API/Webhooks → Delivery/Status webhook). Then the
+              Confirmed list shows a real <b>Delivered &#10003;</b> or <b>Delivery FAILED</b> per student.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <input type="text" id="wh-url" readonly style="flex:1;min-width:220px;padding:10px 12px;border:2px solid var(--border);border-radius:10px;font-size:12.5px;background:var(--soft);color:var(--text)">
+              <button class="btn btn-outline btn-sm" onclick="copyWebhook(this)">Copy</button>
+            </div>
+          </div>
         </div>
         <div class="card">
           <div class="set-head">
@@ -1599,7 +1610,20 @@ function waBtn(s){
   if(isLoginFailed(s))
     return '<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">WhatsApp: FAILED (login error — not sent)</div>';
   const sent=(s.whatsapp_sent==1);
-  return '<button class="btn-dl" style="background:#16A34A;color:#fff;border-color:#16A34A;margin-top:4px" '+
+  const dv=(s.whatsapp_delivery||"");
+  const at=(s.whatsapp_sent_at||"");
+  let badge="";
+  if(dv==="delivered"){
+    badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#15803D">&#10003; Delivered on WhatsApp'+(s.whatsapp_delivery_at?' &middot; '+s.whatsapp_delivery_at:'')+'</div>';
+  }else if(dv==="failed"){
+    badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">&#9888; Delivery FAILED — please resend</div>';
+  }else if(sent){
+    badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:#B45309">Sent to WhatsApp'+(at?' &middot; '+at:'')+' <span style="font-weight:400;color:var(--muted)">(delivery not yet confirmed)</span></div>';
+  }else{
+    badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:var(--muted)">Not sent yet</div>';
+  }
+  const bc=(dv==="failed")?'#DC2626':'#16A34A';
+  return badge+'<button class="btn-dl" style="background:'+bc+';color:#fff;border-color:'+bc+';margin-top:4px" '+
     'onclick="resendWa(&quot;'+s.row_key+'&quot;,this)">'+(sent?'Resend WhatsApp':'Send WhatsApp')+'</button>';
 }
 async function resendWa(rowKey,btn){
@@ -2369,6 +2393,13 @@ async function loadWa(){
         row("On Demand",c.ondemand)+row("Stream 2",c.stream2)+row("Public",c.public)+row("SYC",c.syc);
     }
   }catch(e){}
+  try{const w=await api("/api/webhook-url");const el=document.getElementById("wh-url");if(el)el.value=w.url||"";}catch(e){}
+}
+function copyWebhook(btn){
+  const el=document.getElementById("wh-url");if(!el)return;
+  el.select();el.setSelectionRange(0,99999);
+  try{navigator.clipboard.writeText(el.value);}catch(e){try{document.execCommand("copy");}catch(_){}}
+  if(btn){const o=btn.textContent;btn.textContent="Copied!";setTimeout(()=>{btn.textContent=o;},1500);}
 }
 async function saveWa(){
   const en=document.getElementById("wa-enabled").checked;
@@ -3564,6 +3595,55 @@ async def report_excel(token: str):
     return FileResponse(path, filename=f"NIOS_Report_{day}.xlsx",
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+def whatsapp_webhook_token():
+    """Unguessable, stable token for the AiSensy delivery webhook URL."""
+    import hmac as _h, hashlib as _hh
+    return _h.new(SECRET_KEY.encode(), b"aisensy-delivery-webhook", _hh.sha256).hexdigest()[:20]
+
+@app.get("/api/webhook-url")
+async def get_webhook_url(user=Depends(verify_token)):
+    base = os.environ.get("PUBLIC_BASE_URL", "https://status.mvsfoundation.in").rstrip("/")
+    return {"url": f"{base}/webhook/whatsapp/{whatsapp_webhook_token()}"}
+
+@app.post("/webhook/whatsapp/{token}")
+async def whatsapp_delivery_webhook(token: str, request):
+    """Receives WhatsApp delivery status from AiSensy and records whether a confirmed
+    student's documents were actually DELIVERED (not just accepted by the gateway).
+    Parsed defensively so it works across AiSensy payload shapes. Matched by mobile."""
+    from fastapi import Request as _Req  # noqa
+    if token != whatsapp_webhook_token():
+        raise HTTPException(status_code=404, detail="not found")
+    try:
+        raw = await request.body()
+        text = raw.decode("utf-8", "ignore").lower()
+    except Exception:
+        text = ""
+    if not text:
+        return {"ok": True, "matched": 0}
+    # Map the event to a delivery state (ignore plain "sent"/"accepted" — already known)
+    if "undelivered" in text or "failed" in text:
+        state = "failed"
+    elif "read" in text or "delivered" in text:
+        state = "delivered"
+    else:
+        return {"ok": True, "matched": 0}
+    import re as _re
+    nums = _re.findall(r"\d{10,15}", text)
+    phone10 = nums[0][-10:] if nums else ""
+    if not phone10:
+        return {"ok": True, "matched": 0}
+    conn = get_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    matched = 0
+    for r in conn.execute("SELECT row_key, mobile FROM student_status WHERE whatsapp_sent=1").fetchall():
+        m = "".join(ch for ch in (r["mobile"] or "") if ch.isdigit())
+        if m and m[-10:] == phone10:
+            conn.execute("UPDATE student_status SET whatsapp_delivery=?, whatsapp_delivery_at=? WHERE row_key=?",
+                         (state, now, r["row_key"]))
+            matched += 1
+    conn.commit(); conn.close()
+    return {"ok": True, "matched": matched, "state": state}
+
 @app.get("/api/download-doc")
 async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)):
     """Login as the student and return their document (PDF or print-ready HTML)."""
@@ -3834,8 +3914,9 @@ async def wa_resend(body: dict, user=Depends(verify_token)):
     conn.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
     ok, info = whatsapp.send_for_student(dict(row))
     if ok:
-        conn.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
-                     (str(info)[:180], row_key))
+        conn.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=?, "
+                     "whatsapp_sent_at=?, whatsapp_delivery='' WHERE row_key=?",
+                     (str(info)[:180], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row_key))
     else:
         conn.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
                      (str(info)[:180], row_key))

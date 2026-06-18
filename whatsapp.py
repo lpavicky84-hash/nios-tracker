@@ -93,9 +93,15 @@ def _post(campaign, phone, name, params):
     }
     try:
         r = requests.post(AISENSY_URL, json=payload, timeout=40)
+        body = (r.text or "")[:200]
         if r.status_code in (200, 201):
-            return True, "sent"
-        return False, f"HTTP {r.status_code}: {r.text[:160]}"
+            # HTTP 200 = AiSensy ACCEPTED the message into its queue, NOT that WhatsApp
+            # delivered it. Real delivery is confirmed later via the delivery webhook.
+            low = body.replace(" ", "").lower()
+            if '"success":false' in low or '"error"' in low or "errormessage" in low:
+                return False, f"gateway rejected: {body}"
+            return True, "accepted by WhatsApp gateway (delivery pending)"
+        return False, f"HTTP {r.status_code}: {body}"
     except Exception as e:
         return False, f"error: {e}"
 
@@ -124,9 +130,15 @@ def send_report(phone, params, media_url=None, filename="NIOS_Report.xlsx"):
         payload["media"] = {"url": media_url, "filename": filename}
     try:
         r = requests.post(AISENSY_URL, json=payload, timeout=40)
+        body = (r.text or "")[:200]
         if r.status_code in (200, 201):
-            return True, "sent"
-        return False, f"HTTP {r.status_code}: {r.text[:160]}"
+            # HTTP 200 = AiSensy ACCEPTED the message into its queue, NOT that WhatsApp
+            # delivered it. Real delivery is confirmed later via the delivery webhook.
+            low = body.replace(" ", "").lower()
+            if '"success":false' in low or '"error"' in low or "errormessage" in low:
+                return False, f"gateway rejected: {body}"
+            return True, "accepted by WhatsApp gateway (delivery pending)"
+        return False, f"HTTP {r.status_code}: {body}"
     except Exception as e:
         return False, f"error: {e}"
 
