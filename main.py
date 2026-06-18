@@ -1776,7 +1776,7 @@ async function loadConfirmed(page){
       :'<tr><td colspan="9" class="empty">No confirmed students yet</td></tr>';
     const sa=document.getElementById("c-selall");if(sa)sa.checked=false;
     renderPg("c-pg",page,d.pages,"loadConfirmed");
-    if(!WA_POLL){pollWaOnce().then(p=>{if(p&&p.running)startWaProgressPoll();});}
+    if(!WA_POLL){pollWaOnce().then(p=>{if(p&&p.running){renderWaProgress(p);startWaProgressPoll();}else{setWaBox(false);}});}
   }catch(e){showToast(""+e.message);}
 }
 const CONF_SEL=new Set();
@@ -1813,12 +1813,8 @@ async function autoSendNow(btn){
   }catch(e){showToast("Error: "+e.message);}
   finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},2000);}
 }
-let WA_POLL=null;
-function showWaProgress(p){
-  const box=document.getElementById("wa-progress");if(!box)return;
-  const has=(p.total>0)||p.running;
-  box.style.display=has?"block":"none";
-  if(!has)return;
+let WA_POLL=null, WA_SEEN_RUNNING=false;
+function renderWaProgress(p){
   document.getElementById("wap-title").textContent=(p.label||"Sending WhatsApp")+(p.running?"":" — done");
   document.getElementById("wap-pct").textContent=p.pct||0;
   document.getElementById("wap-bar").style.width=(p.pct||0)+"%";
@@ -1827,21 +1823,29 @@ function showWaProgress(p){
   document.getElementById("wap-remaining").textContent=p.remaining||0;
   document.getElementById("wap-failed").textContent=p.failed||0;
 }
+function setWaBox(show){const b=document.getElementById("wa-progress");if(b)b.style.display=show?"block":"none";}
 async function pollWaOnce(){
-  try{const p=await api("/api/wa-progress");showWaProgress(p);return p;}catch(e){return null;}
+  try{return await api("/api/wa-progress");}catch(e){return null;}
 }
 function startWaProgressPoll(){
   if(WA_POLL)clearInterval(WA_POLL);
-  pollWaOnce();
-  WA_POLL=setInterval(async()=>{
+  WA_SEEN_RUNNING=false;
+  let ticks=0;
+  setWaBox(true);
+  const tick=async()=>{
+    ticks++;
     const p=await pollWaOnce();
-    if(p&&!p.running){
-      clearInterval(WA_POLL);WA_POLL=null;
-      try{loadConfirmed(1);}catch(e){}
-      // keep the finished bar visible briefly, then hide
-      setTimeout(()=>{const b=document.getElementById("wa-progress");if(b&&!WA_POLL)b.style.display="none";},8000);
-    }
-  },1500);
+    if(!p)return;
+    renderWaProgress(p);
+    if(p.running){WA_SEEN_RUNNING=true;setWaBox(true);return;}
+    if(!WA_SEEN_RUNNING && ticks<6){return;}        // give the background task a moment to start
+    clearInterval(WA_POLL);WA_POLL=null;
+    setWaBox(true);                                  // show the final 100% state…
+    try{loadConfirmed(1);}catch(e){}
+    setTimeout(()=>{if(!WA_POLL)setWaBox(false);},6000);   // …then auto-hide it
+  };
+  tick();
+  WA_POLL=setInterval(tick,1500);
 }
 
 let sycTimer;
