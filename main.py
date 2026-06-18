@@ -684,12 +684,20 @@ function applySidebarPref(){
         <div class="card">
           <h3>Admission Confirmed Students</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            Their admission is confirmed. Document download links appear here.</p>
+            Their admission is confirmed. Documents are sent to WhatsApp <b>automatically in the background</b> —
+            you do not need to click Resend. Use the <b>WhatsApp</b> filter below to see who is still pending.</p>
           <div class="filter-bar">
             <input type="text" id="c-search" placeholder="Search name / reference / email..." oninput="debounceConfirmed()">
             <select id="c-status" onchange="loadConfirmed(1)">
               <option value="">All Statuses</option>
               <option>Admission Confirmed</option><option>Admitted</option>
+            </select>
+            <select id="c-wa" onchange="loadConfirmed(1)">
+              <option value="">All WhatsApp</option>
+              <option value="delivered">Delivered</option>
+              <option value="sent">Sent (pending delivery)</option>
+              <option value="notsent">Not sent yet</option>
+              <option value="failed">Failed</option>
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
@@ -701,9 +709,15 @@ function applySidebarPref(){
               <option value="7d">Last 7 days</option>
               <option value="custom">Custom range…</option>
             </select>
+            <button class="btn btn-primary btn-sm" onclick="autoSendNow(this)" title="Send WhatsApp now to all pending confirmed students">Send all pending now</button>
             <button class="btn btn-outline btn-sm" onclick="exportStudents('confirmed')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
+          </div>
+          <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
+            <span style="font-weight:700;font-size:13px"><span id="c-selcount">0</span> selected</span>
+            <button class="btn btn-primary btn-sm" onclick="resendSelected(this)">Resend WhatsApp to selected</button>
+            <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="clearConfSel()">Clear</button>
           </div>
           <div class="filter-bar" id="c-daterow" style="display:none">
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
@@ -715,6 +729,7 @@ function applySidebarPref(){
           <div id="c-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
+              <th style="width:34px"><input type="checkbox" id="c-selall" onclick="toggleConfAll(this)" title="Select all on this page"></th>
               <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
               <th>Status</th><th>Downloads</th><th>Confirmed On</th><th>Action</th>
             </tr></thead><tbody id="c-body"></tbody></table>
@@ -1630,15 +1645,12 @@ async function resendWa(rowKey,btn){
   if(btn&&btn.dataset.busy==="1")return;
   if(!confirm("Send the documents to this student on WhatsApp?"))return;
   let orig="";
-  if(btn){btn.dataset.busy="1";orig=btn.innerHTML;btn.innerHTML="Sending...";}
+  if(btn){btn.dataset.busy="1";orig=btn.innerHTML;btn.innerHTML="Queued…";}
   try{const r=await api("/api/wa-resend","POST",{row_key:rowKey});
-    if(r.ok){showToast("WhatsApp sent successfully");}
-    else{
-      showToast((r.login_failed?"Login failed — not sent. Edit & fix the data.":"Failed: "+(r.info||"error")));
-      try{loadConfirmed(1);}catch(e){}try{loadStudents(1);}catch(e){}try{loadDashboard();}catch(e){}
-    }}
-  catch(e){showToast("Error: "+e.message);}
-  finally{if(btn){btn.innerHTML=orig;btn.dataset.busy="";}}
+    showToast("Resend started in background — status will update shortly");
+    setTimeout(()=>{try{loadConfirmed(1);}catch(e){}try{loadStudents(1);}catch(e){}},6000);
+  }catch(e){showToast("Error: "+e.message);}
+  finally{if(btn){setTimeout(()=>{btn.innerHTML=orig;btn.dataset.busy="";},3000);}}
 }
 async function downloadDoc(btn,ref,dob,kind,name){
   if(btn&&btn.dataset.busy==="1")return;          // already running -> ignore extra clicks
@@ -1730,6 +1742,7 @@ async function loadConfirmed(page){
   const q=new URLSearchParams({page:page,per_page:perPage,view:"confirmed",
     search:document.getElementById("c-search").value,
     status_filter:(document.getElementById("c-status")?document.getElementById("c-status").value:""),
+    wa_status:fval("c-wa"),
     session_filter:document.getElementById("c-session").value,
     class_filter:fval("c-class"),source_filter:fval("c-source"),date_from:dr.from,date_to:dr.to});
   try{
@@ -1738,15 +1751,51 @@ async function loadConfirmed(page){
     document.getElementById("c-count").textContent=d.total+" confirmed students";
     const b=document.getElementById("c-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
+      '<td><input type="checkbox" class="c-selbox" value="'+s.row_key+'" onchange="onConfSel(this)"'+(CONF_SEL.has(s.row_key)?' checked':'')+'></td>'+
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td>'+badge(s.current_status)+loginWarn(s)+'</td><td style="font-size:12px">'+dlLinks(s)+waBtn(s)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_changed||"—")+'</td>'+
       '<td>'+delBtn(s)+'</td></tr>').join("")
-      :'<tr><td colspan="8" class="empty">No confirmed students yet</td></tr>';
+      :'<tr><td colspan="9" class="empty">No confirmed students yet</td></tr>';
+    const sa=document.getElementById("c-selall");if(sa)sa.checked=false;
     renderPg("c-pg",page,d.pages,"loadConfirmed");
   }catch(e){showToast(""+e.message);}
+}
+const CONF_SEL=new Set();
+function updateConfBar(){
+  const bar=document.getElementById("c-bulkbar");const n=CONF_SEL.size;
+  if(bar)bar.style.display=n?"flex":"none";
+  const c=document.getElementById("c-selcount");if(c)c.textContent=n;
+}
+function onConfSel(cb){ if(cb.checked)CONF_SEL.add(cb.value); else CONF_SEL.delete(cb.value); updateConfBar(); }
+function toggleConfAll(cb){
+  document.querySelectorAll(".c-selbox").forEach(b=>{b.checked=cb.checked; if(cb.checked)CONF_SEL.add(b.value); else CONF_SEL.delete(b.value);});
+  updateConfBar();
+}
+function clearConfSel(){ CONF_SEL.clear(); document.querySelectorAll(".c-selbox").forEach(b=>b.checked=false); const sa=document.getElementById("c-selall");if(sa)sa.checked=false; updateConfBar(); }
+async function resendSelected(btn){
+  if(!CONF_SEL.size)return;
+  const keys=Array.from(CONF_SEL);
+  if(!confirm("Resend WhatsApp documents to "+keys.length+" selected student(s)?"))return;
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    const r=await api("/api/wa-resend-bulk","POST",{row_keys:keys});
+    showToast(r.message||("Resending "+keys.length+" student(s)"));
+    clearConfSel();
+    setTimeout(()=>{try{loadConfirmed(1);}catch(e){}},6000);
+  }catch(e){showToast("Error: "+e.message);}
+  finally{if(btn){btn.disabled=false;btn.style.opacity="";}}
+}
+async function autoSendNow(btn){
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    const r=await api("/api/wa-autosend-now","POST");
+    showToast(r.message||"Auto-send started for pending students");
+    setTimeout(()=>{try{loadConfirmed(1);}catch(e){}},8000);
+  }catch(e){showToast("Error: "+e.message);}
+  finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},3000);}
 }
 
 let sycTimer;
@@ -2595,6 +2644,15 @@ def reschedule_jobs():
 async def startup():
     init_db()
     reschedule_jobs()
+    # Auto-send WhatsApp documents to confirmed students that still haven't received
+    # them — every 10 minutes, in small batches, so nothing stays "Not sent".
+    try:
+        from apscheduler.triggers.interval import IntervalTrigger as _IT
+        scheduler.add_job(auto_send_pending_whatsapp, trigger=_IT(minutes=10),
+                          id="job_wa_autosend", replace_existing=True,
+                          next_run_time=datetime.now() + timedelta(minutes=2))
+    except Exception as e:
+        logger.warning(f"WhatsApp auto-send job not scheduled: {e}")
     scheduler.start()
     logger.info("Scheduler started")
 
@@ -2769,7 +2827,8 @@ def _session_clause(cat):
     return "session = ?", [cat]
 
 def _build_student_where(view, search, status_filter, session_filter,
-                         class_filter="", date_from="", date_to="", source_filter=""):
+                         class_filter="", date_from="", date_to="", source_filter="",
+                         wa_status=""):
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
@@ -2794,6 +2853,15 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append(clause); params += sp
     if source_filter:                      # mvs_portal | mvs_tracker (Data Type)
         wc.append("COALESCE(source,'mvs_tracker') = ?"); params.append(source_filter)
+    if wa_status:                          # WhatsApp delivery filter (Confirmed view)
+        if wa_status == "delivered":
+            wc.append("whatsapp_delivery = 'delivered'")
+        elif wa_status == "failed":
+            wc.append("(whatsapp_delivery = 'failed' OR COALESCE(login_failed,0)=1)")
+        elif wa_status == "sent":
+            wc.append("COALESCE(whatsapp_sent,0)=1 AND COALESCE(whatsapp_delivery,'')=''")
+        elif wa_status == "notsent":
+            wc.append("COALESCE(whatsapp_sent,0)=0")
     if class_filter:                       # "10" matches 10/10TH, "12" matches 12/12TH
         wc.append("class_level LIKE ?"); params.append(f"{class_filter}%")
     # Date/time filter on when the status last changed; fall back to last_checked so a
@@ -2816,11 +2884,13 @@ def _build_student_where(view, search, status_filter, session_filter,
 async def get_students(page: int=1, per_page: int=50, search: str="",
                        status_filter: str="", session_filter: str="",
                        class_filter: str="", date_from: str="", date_to: str="",
-                       source_filter: str="", view: str="normal", user=Depends(verify_token)):
+                       source_filter: str="", view: str="normal", wa_status: str="",
+                       user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
     where, params = _build_student_where(view, search, status_filter, session_filter,
-                                         class_filter, date_from, date_to, source_filter)
+                                         class_filter, date_from, date_to, source_filter,
+                                         wa_status)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
@@ -3891,38 +3961,100 @@ async def wa_test(body: dict, user=Depends(verify_token)):
     ok, info = whatsapp.send_test(number, name, group)
     return {"ok": ok, "info": info}
 
-@app.post("/api/wa-resend")
-async def wa_resend(body: dict, user=Depends(verify_token)):
-    """Manually (re)send documents to one student. VERIFIES the NIOS login first so a
-    broken link (wrong DOB/Reference) is never shared — it's marked failed instead."""
+def _wa_send_one(row_key):
+    """Verify the NIOS login, then (re)send the documents for ONE confirmed student.
+    Opens its own DB connection so it is safe to run as a background task. Updates the
+    student row and returns (ok, info, login_failed). Never raises."""
     import whatsapp
     from nios_login import verify_login
-    row_key = body.get("row_key", "")
-    conn = get_db()
-    row = conn.execute("SELECT row_key, student_name, mobile, session, reference_no, dob, enrollment_no "
-                       "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="student not found")
-    ok_login, lmsg = verify_login(row["reference_no"], row["dob"], row["enrollment_no"] or "")
-    if not ok_login:
-        conn.execute("UPDATE student_status SET login_failed=1, login_remark=?, "
-                     "whatsapp_info=?, whatsapp_sent=0 WHERE row_key=?",
-                     (lmsg[:240], ("Not sent — " + lmsg)[:180], row_key))
+    try:
+        conn = get_db()
+        row = conn.execute("SELECT row_key, student_name, mobile, session, reference_no, dob, enrollment_no "
+                           "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+        if not row:
+            conn.close()
+            return False, "student not found", False
+        ok_login, lmsg = verify_login(row["reference_no"], row["dob"], row["enrollment_no"] or "")
+        if not ok_login:
+            conn.execute("UPDATE student_status SET login_failed=1, login_remark=?, whatsapp_info=?, "
+                         "whatsapp_sent=0, whatsapp_attempts=COALESCE(whatsapp_attempts,0)+1 WHERE row_key=?",
+                         (lmsg[:240], ("Not sent — " + lmsg)[:180], row_key))
+            conn.commit(); conn.close()
+            return False, lmsg, True
+        conn.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
+        ok, info = whatsapp.send_for_student(dict(row))
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if ok:
+            conn.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=?, "
+                         "whatsapp_sent_at=?, whatsapp_delivery='' WHERE row_key=?",
+                         (str(info)[:180], now, row_key))
+        else:
+            conn.execute("UPDATE student_status SET whatsapp_info=?, "
+                         "whatsapp_attempts=COALESCE(whatsapp_attempts,0)+1 WHERE row_key=?",
+                         (str(info)[:180], row_key))
         conn.commit(); conn.close()
-        return {"ok": False, "info": lmsg, "login_failed": True}
-    conn.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
-    ok, info = whatsapp.send_for_student(dict(row))
-    if ok:
-        conn.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=?, "
-                     "whatsapp_sent_at=?, whatsapp_delivery='' WHERE row_key=?",
-                     (str(info)[:180], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row_key))
-    else:
-        conn.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
-                     (str(info)[:180], row_key))
-    conn.commit()
+        return ok, info, False
+    except Exception as e:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False, f"error: {e}", False
+
+def auto_send_pending_whatsapp(batch=12):
+    """Background sweep: for every CONFIRMED student whose documents have not been sent
+    on WhatsApp yet, send them automatically — so the counsellor never has to click
+    'Resend' for each one. Runs in small batches; gives up on a student after several
+    failed attempts (then it shows as 'Send failed' for manual review)."""
+    if get_setting("wa_enabled", "0") != "1":
+        return {"sent": 0, "checked": 0}
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT row_key FROM student_status WHERE is_confirmed=1 "
+        "AND COALESCE(whatsapp_sent,0)=0 AND COALESCE(login_failed,0)=0 "
+        "AND COALESCE(deleted,0)=0 AND COALESCE(whatsapp_attempts,0) < 8 "
+        "AND mobile IS NOT NULL AND TRIM(mobile) != '' "
+        "ORDER BY COALESCE(whatsapp_attempts,0) ASC, last_changed DESC LIMIT ?", (batch,)).fetchall()
     conn.close()
-    return {"ok": ok, "info": info}
+    keys = [r["row_key"] for r in rows]
+    sent = 0
+    for rk in keys:
+        ok, info, _lf = _wa_send_one(rk)
+        if ok:
+            sent += 1
+    if keys:
+        logger.info(f"Auto WhatsApp sweep: sent {sent}/{len(keys)} pending confirmed student(s)")
+    return {"sent": sent, "checked": len(keys)}
+
+@app.post("/api/wa-resend")
+async def wa_resend(body: dict, background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Manual (re)send for ONE student — runs in the BACKGROUND so the UI never freezes
+    and the counsellor can keep working. The Confirmed list updates on its own."""
+    row_key = body.get("row_key", "")
+    if not row_key:
+        raise HTTPException(status_code=400, detail="row_key required")
+    background_tasks.add_task(_wa_send_one, row_key)
+    return {"ok": True, "queued": True, "message": "Resend started — status will update shortly"}
+
+@app.post("/api/wa-resend-bulk")
+async def wa_resend_bulk(body: dict, background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Resend WhatsApp to MANY selected students at once (all in the background)."""
+    keys = body.get("row_keys", []) or []
+    keys = [k for k in keys if k][:200]
+    if not keys:
+        raise HTTPException(status_code=400, detail="no students selected")
+    def _run(klist):
+        for rk in klist:
+            _wa_send_one(rk)
+    background_tasks.add_task(_run, keys)
+    return {"ok": True, "queued": len(keys),
+            "message": f"Resending to {len(keys)} student(s) in the background"}
+
+@app.post("/api/wa-autosend-now")
+async def wa_autosend_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Kick the auto-sweep right now (sends a batch of pending confirmed students)."""
+    background_tasks.add_task(auto_send_pending_whatsapp, 25)
+    return {"ok": True, "message": "Auto-send started for pending students"}
 
 @app.get("/api/debug-doc")
 async def debug_doc(ref: str, dob: str, kind: str = "app_form", user=Depends(verify_token)):

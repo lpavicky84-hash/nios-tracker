@@ -108,6 +108,7 @@ def init_db():
     # Safe migration for older DBs missing the WhatsApp / enrollment / source columns
     for col, decl in (("whatsapp_sent", "INTEGER DEFAULT 0"), ("whatsapp_info", "TEXT"),
                       ("whatsapp_sent_at", "TEXT"),
+                      ("whatsapp_attempts", "INTEGER DEFAULT 0"),
                       ("whatsapp_delivery", "TEXT DEFAULT ''"),
                       ("whatsapp_delivery_at", "TEXT"),
                       ("enrollment_no", "TEXT"),
