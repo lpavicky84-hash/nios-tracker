@@ -106,6 +106,18 @@ def _post(campaign, phone, name, params):
         return False, f"error: {e}"
 
 
+def make_report_params(label, confirmed, required, error, unchanged, total, url):
+    """The ONE fixed order of the 7 report variables — matches the original, proven
+    WhatsApp report template. NEVER reorder these; the template depends on this exact order:
+      {{1}} run label + time   {{2}} confirmed records   {{3}} documents required
+      {{4}} error records       {{5}} unchanged records   {{6}} total records checked
+      {{7}} excel report link
+    (Admission-Verified and Docs-Verification counts stay in the Excel report, which has
+     the full breakdown — the WhatsApp text is a quick summary.)"""
+    return [str(label), str(confirmed), str(required), str(error),
+            str(unchanged), str(total), str(url)]
+
+
 def send_report(phone, params, media_url=None, filename="NIOS_Report.xlsx"):
     """Send the run report to ONE admin number via the report campaign
     (env AISENSY_CAMPAIGN_REPORT). If media_url is given and the template has a

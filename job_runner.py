@@ -601,17 +601,9 @@ def _send_run_report(stats, group_label):
         when = datetime.now().strftime("%d %b, %I:%M %p")
         url = links.report_url(today)
         same = max(0, stats.get("checked", 0) - stats.get("changed", 0))
-        params = [
-            f"{group_label} - {when}",
-            str(stats.get("confirmed", 0)),
-            str(stats.get("required", 0)),
-            str(stats.get("error", 0)),
-            str(same),
-            str(stats.get("checked", 0)),
-            url,
-            str(stats.get("verified", 0)),
-            str(stats.get("docs_progress", 0)),
-        ]
+        params = whatsapp.make_report_params(
+            f"{group_label} - {when}", stats.get("confirmed", 0), stats.get("required", 0),
+            stats.get("error", 0), same, stats.get("checked", 0), url)
         sent, errs = whatsapp.send_report_to_all(nums, params)
         stamp = datetime.now().strftime("%d %b %I:%M %p")
         if sent:

@@ -3372,8 +3372,8 @@ async def report_test(user=Depends(verify_token)):
     dvp = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Documents Verification In Progress'").fetchone()[0]
     err = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status IN ('Unknown','Fetch Error')").fetchone()[0]
     conn.close()
-    params = [f"TEST report - {when}", str(conf), str(req), str(err), "0",
-              str(conf + req + err), url, str(ver), str(dvp)]
+    params = whatsapp.make_report_params(f"TEST report - {when}", conf, req, err, 0,
+                                         conf + req + err + ver + dvp, url)
     sent, errs = whatsapp.send_report_to_all(nums, params)
     return {"sent": sent, "total": len(nums), "errors": errs}
 
@@ -3402,8 +3402,8 @@ async def send_latest_report(user=Depends(verify_token)):
     when = datetime.now().strftime("%d %b, %I:%M %p")
     label = (last["group_type"].title() + " run" if last and last["group_type"] else "Latest run")
     url = links.report_url(today)
-    params = [f"{label} - {when}", str(conf), str(req), str(err), "0",
-              str(conf + req + err), url, str(ver), str(dvp)]
+    params = whatsapp.make_report_params(f"{label} - {when}", conf, req, err, 0,
+                                         conf + req + err + ver + dvp, url)
     sent, errs = whatsapp.send_report_to_all(nums, params)
     stamp = datetime.now().strftime("%d %b %I:%M %p")
     set_setting("report_last_status",
