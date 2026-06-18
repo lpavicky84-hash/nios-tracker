@@ -719,6 +719,21 @@ function applySidebarPref(){
             <button class="btn btn-primary btn-sm" onclick="resendSelected(this)">Resend WhatsApp to selected</button>
             <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="clearConfSel()">Clear</button>
           </div>
+          <div id="wa-progress" style="display:none;background:linear-gradient(135deg,#ECFDF5,#F0FDF4);border:1px solid #BBF7D0;border-radius:12px;padding:14px 16px;margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:9px">
+              <span style="font-weight:700;font-size:13.5px;color:#065F46"><span id="wap-title">Sending WhatsApp to pending students</span></span>
+              <span style="font-weight:800;font-size:15px;color:#047857"><span id="wap-pct">0</span>%</span>
+            </div>
+            <div style="height:10px;background:#D1FAE5;border-radius:6px;overflow:hidden">
+              <div id="wap-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#10B981,#059669);transition:width .4s"></div>
+            </div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;font-weight:600">
+              <span style="color:#047857">Sending: <span id="wap-total">0</span></span>
+              <span style="color:#059669">&#10003; Sent this run: <span id="wap-sent">0</span></span>
+              <span style="color:#B45309">Remaining: <span id="wap-remaining">0</span></span>
+              <span style="color:#B91C1C">Failed (auto-retry): <span id="wap-failed">0</span></span>
+            </div>
+          </div>
           <div class="filter-bar" id="c-daterow" style="display:none">
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
               <input type="datetime-local" id="c-from"></label>
@@ -1761,6 +1776,7 @@ async function loadConfirmed(page){
       :'<tr><td colspan="9" class="empty">No confirmed students yet</td></tr>';
     const sa=document.getElementById("c-selall");if(sa)sa.checked=false;
     renderPg("c-pg",page,d.pages,"loadConfirmed");
+    if(!WA_POLL){pollWaOnce().then(p=>{if(p&&p.running)startWaProgressPoll();});}
   }catch(e){showToast(""+e.message);}
 }
 const CONF_SEL=new Set();
@@ -1792,10 +1808,40 @@ async function autoSendNow(btn){
   if(btn){btn.disabled=true;btn.style.opacity="0.6";}
   try{
     const r=await api("/api/wa-autosend-now","POST");
-    showToast(r.message||"Auto-send started for pending students");
-    setTimeout(()=>{try{loadConfirmed(1);}catch(e){}},8000);
+    showToast(r.already_running?"A send is already running":"Sending to all pending students…");
+    startWaProgressPoll();
   }catch(e){showToast("Error: "+e.message);}
-  finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},3000);}
+  finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},2000);}
+}
+let WA_POLL=null;
+function showWaProgress(p){
+  const box=document.getElementById("wa-progress");if(!box)return;
+  const has=(p.total>0)||p.running;
+  box.style.display=has?"block":"none";
+  if(!has)return;
+  document.getElementById("wap-title").textContent=(p.label||"Sending WhatsApp")+(p.running?"":" — done");
+  document.getElementById("wap-pct").textContent=p.pct||0;
+  document.getElementById("wap-bar").style.width=(p.pct||0)+"%";
+  document.getElementById("wap-total").textContent=p.total||0;
+  document.getElementById("wap-sent").textContent=p.sent||0;
+  document.getElementById("wap-remaining").textContent=p.remaining||0;
+  document.getElementById("wap-failed").textContent=p.failed||0;
+}
+async function pollWaOnce(){
+  try{const p=await api("/api/wa-progress");showWaProgress(p);return p;}catch(e){return null;}
+}
+function startWaProgressPoll(){
+  if(WA_POLL)clearInterval(WA_POLL);
+  pollWaOnce();
+  WA_POLL=setInterval(async()=>{
+    const p=await pollWaOnce();
+    if(p&&!p.running){
+      clearInterval(WA_POLL);WA_POLL=null;
+      try{loadConfirmed(1);}catch(e){}
+      // keep the finished bar visible briefly, then hide
+      setTimeout(()=>{const b=document.getElementById("wa-progress");if(b&&!WA_POLL)b.style.display="none";},8000);
+    }
+  },1500);
 }
 
 let sycTimer;
@@ -4001,29 +4047,46 @@ def _wa_send_one(row_key):
             pass
         return False, f"error: {e}", False
 
-def auto_send_pending_whatsapp(batch=12):
+WA_PROGRESS = {"running": False, "total": 0, "done": 0, "sent": 0, "failed": 0,
+               "started_at": "", "finished_at": "", "label": ""}
+
+def auto_send_pending_whatsapp(batch=None, label="Auto sweep"):
     """Background sweep: for every CONFIRMED student whose documents have not been sent
     on WhatsApp yet, send them automatically — so the counsellor never has to click
-    'Resend' for each one. Runs in small batches; gives up on a student after several
-    failed attempts (then it shows as 'Send failed' for manual review)."""
+    'Resend' for each one. Tracks live progress (WA_PROGRESS) so the UI can show a
+    percentage bar. Gives up on a student after several failed attempts."""
     if get_setting("wa_enabled", "0") != "1":
         return {"sent": 0, "checked": 0}
+    if WA_PROGRESS["running"]:
+        return {"skipped": "already running"}
     conn = get_db()
-    rows = conn.execute(
-        "SELECT row_key FROM student_status WHERE is_confirmed=1 "
-        "AND COALESCE(whatsapp_sent,0)=0 AND COALESCE(login_failed,0)=0 "
-        "AND COALESCE(deleted,0)=0 AND COALESCE(whatsapp_attempts,0) < 8 "
-        "AND mobile IS NOT NULL AND TRIM(mobile) != '' "
-        "ORDER BY COALESCE(whatsapp_attempts,0) ASC, last_changed DESC LIMIT ?", (batch,)).fetchall()
+    q = ("SELECT row_key FROM student_status WHERE is_confirmed=1 "
+         "AND COALESCE(whatsapp_sent,0)=0 AND COALESCE(login_failed,0)=0 "
+         "AND COALESCE(deleted,0)=0 AND COALESCE(whatsapp_attempts,0) < 8 "
+         "AND mobile IS NOT NULL AND TRIM(mobile) != '' "
+         "ORDER BY COALESCE(whatsapp_attempts,0) ASC, last_changed DESC")
+    if batch:
+        q += f" LIMIT {int(batch)}"
+    rows = conn.execute(q).fetchall()
     conn.close()
     keys = [r["row_key"] for r in rows]
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    WA_PROGRESS.update({"running": True, "total": len(keys), "done": 0, "sent": 0,
+                        "failed": 0, "started_at": now, "finished_at": "", "label": label})
     sent = 0
-    for rk in keys:
-        ok, info, _lf = _wa_send_one(rk)
-        if ok:
-            sent += 1
+    try:
+        for rk in keys:
+            ok, info, _lf = _wa_send_one(rk)
+            WA_PROGRESS["done"] += 1
+            if ok:
+                WA_PROGRESS["sent"] += 1; sent += 1
+            else:
+                WA_PROGRESS["failed"] += 1
+    finally:
+        WA_PROGRESS["running"] = False
+        WA_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if keys:
-        logger.info(f"Auto WhatsApp sweep: sent {sent}/{len(keys)} pending confirmed student(s)")
+        logger.info(f"WhatsApp {label}: sent {sent}/{len(keys)} pending confirmed student(s)")
     return {"sent": sent, "checked": len(keys)}
 
 @app.post("/api/wa-resend")
@@ -4052,9 +4115,20 @@ async def wa_resend_bulk(body: dict, background_tasks: BackgroundTasks, user=Dep
 
 @app.post("/api/wa-autosend-now")
 async def wa_autosend_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    """Kick the auto-sweep right now (sends a batch of pending confirmed students)."""
-    background_tasks.add_task(auto_send_pending_whatsapp, 25)
-    return {"ok": True, "message": "Auto-send started for pending students"}
+    """'Send all pending' — sends to ALL confirmed students that are still 'Not sent yet'
+    (in the background, with live progress shown on the Confirmed page)."""
+    if WA_PROGRESS["running"]:
+        return {"ok": True, "already_running": True, "message": "A send is already running"}
+    background_tasks.add_task(auto_send_pending_whatsapp, None, "Send all pending")
+    return {"ok": True, "message": "Sending to all pending students…"}
+
+@app.get("/api/wa-progress")
+async def wa_progress(user=Depends(verify_token)):
+    """Live progress of the WhatsApp 'send all pending' / auto-sweep run."""
+    p = dict(WA_PROGRESS)
+    p["remaining"] = max(0, p.get("total", 0) - p.get("done", 0))
+    p["pct"] = int(round(100 * p.get("done", 0) / p["total"])) if p.get("total") else (100 if p.get("finished_at") else 0)
+    return p
 
 @app.get("/api/debug-doc")
 async def debug_doc(ref: str, dob: str, kind: str = "app_form", user=Depends(verify_token)):
