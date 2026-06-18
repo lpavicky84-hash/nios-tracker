@@ -975,9 +975,11 @@ function applySidebarPref(){
           <div class="set-note" style="margin-bottom:16px">10-digit Indian numbers (country code 91 added automatically). Report template must be set up in AiSensy (campaign <b>AISENSY_CAMPAIGN_REPORT</b>).</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn btn-primary btn-sm" onclick="saveReportSettings()">Save</button>
+            <button class="btn btn-primary btn-sm" style="background:#16A34A;border-color:#16A34A" onclick="sendLatestReport(this)">Send latest run report to all</button>
             <button class="btn btn-outline btn-sm" onclick="testReport(this)">Send test report now</button>
           </div>
-          <div id="rep-status" style="margin-top:12px;font-size:13px"></div>
+          <div id="rep-last" style="margin-top:12px;font-size:12.5px;color:var(--muted)"></div>
+          <div id="rep-status" style="margin-top:8px;font-size:13px"></div>
         </div>
         <div class="card">
           <div class="set-head">
@@ -2443,8 +2445,23 @@ async function loadReportSettings(){
     const d=await api("/api/report-settings");
     const cb=document.getElementById("rep-enabled");if(cb)cb.checked=!!d.enabled;
     const ta=document.getElementById("rep-numbers");if(ta)ta.value=(d.numbers||"").split(",").filter(Boolean).join(String.fromCharCode(10));
+    const last=document.getElementById("rep-last");
+    if(last)last.innerHTML=d.last_status?('Last report: '+d.last_status):'';
     if(!d.campaign_set){const s=document.getElementById("rep-status");if(s)s.innerHTML='<span style="color:var(--warn)">Note: AISENSY_CAMPAIGN_REPORT env var not set on Railway — report will not send until it is added.</span>';}
   }catch(e){}
+}
+async function sendLatestReport(btn){
+  const s=document.getElementById("rep-status");
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  s.innerHTML='<span style="color:var(--muted)">Sending latest run report to all numbers…</span>';
+  try{
+    const r=await api("/api/send-latest-report","POST");
+    if(r.sent){s.innerHTML='<span style="color:var(--success)">Report sent to '+r.sent+'/'+r.total+' management number(s).</span>';}
+    else{s.innerHTML='<span style="color:var(--danger)">Could not send to anyone.</span>';}
+    if(r.errors&&r.errors.length)s.innerHTML+='<div style="color:var(--danger);font-size:12px;margin-top:6px">'+r.errors.join("<br>")+'</div>';
+    try{loadReportSettings();}catch(e){}
+  }catch(e){s.innerHTML='<span style="color:var(--danger)">Error: '+e.message+'</span>';}
+  finally{if(btn){btn.disabled=false;btn.style.opacity="";}}
 }
 async function saveReportSettings(){
   const enabled=document.getElementById("rep-enabled").checked;
@@ -3316,6 +3333,7 @@ async def get_report_settings(user=Depends(verify_token)):
         "enabled": get_setting("report_enabled", "") == "1",
         "numbers": get_setting("report_numbers", ""),
         "campaign_set": bool(os.environ.get("AISENSY_CAMPAIGN_REPORT", "").strip()),
+        "last_status": get_setting("report_last_status", ""),
     }
 
 @app.post("/api/report-settings")
@@ -3357,6 +3375,40 @@ async def report_test(user=Depends(verify_token)):
     params = [f"TEST report - {when}", str(conf), str(req), str(err), "0",
               str(conf + req + err), url, str(ver), str(dvp)]
     sent, errs = whatsapp.send_report_to_all(nums, params)
+    return {"sent": sent, "total": len(nums), "errors": errs}
+
+@app.post("/api/send-latest-report")
+async def send_latest_report(user=Depends(verify_token)):
+    """Push the latest run report to ALL configured management numbers right now —
+    a manual safety net for when the auto-report did not reach everyone."""
+    import whatsapp, links
+    raw = (get_setting("report_numbers", "") or "").replace("\n", ",")
+    nums = [n.strip() for n in raw.split(",") if n.strip()]
+    if not nums:
+        raise HTTPException(status_code=400, detail="Add at least one management WhatsApp number in Settings first")
+    if not os.environ.get("AISENSY_CAMPAIGN_REPORT", "").strip():
+        raise HTTPException(status_code=400, detail="AISENSY_CAMPAIGN_REPORT env var is not set on Railway — add it, then redeploy")
+    conn = get_db(); ND = "COALESCE(deleted,0)=0"
+    last = conn.execute("SELECT group_type, run_at FROM run_logs "
+                        "WHERE status LIKE 'completed%' OR status LIKE 'done%' "
+                        "ORDER BY id DESC LIMIT 1").fetchone()
+    conf = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1").fetchone()[0]
+    req = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Document Required'").fetchone()[0]
+    ver = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Verified'").fetchone()[0]
+    dvp = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Documents Verification In Progress'").fetchone()[0]
+    err = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status IN ('Unknown','Fetch Error')").fetchone()[0]
+    conn.close()
+    today = datetime.now().strftime("%Y-%m-%d")
+    when = datetime.now().strftime("%d %b, %I:%M %p")
+    label = (last["group_type"].title() + " run" if last and last["group_type"] else "Latest run")
+    url = links.report_url(today)
+    params = [f"{label} - {when}", str(conf), str(req), str(err), "0",
+              str(conf + req + err), url, str(ver), str(dvp)]
+    sent, errs = whatsapp.send_report_to_all(nums, params)
+    stamp = datetime.now().strftime("%d %b %I:%M %p")
+    set_setting("report_last_status",
+                (f"Sent to {sent}/{len(nums)} on {stamp} (manual)." if sent
+                 else f"FAILED on {stamp}: " + ("; ".join(errs)[:200] if errs else "unknown error")))
     return {"sent": sent, "total": len(nums), "errors": errs}
 
 @app.post("/api/intervals-pause")

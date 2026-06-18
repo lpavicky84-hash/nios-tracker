@@ -7,7 +7,7 @@ try:
 except Exception:
     pass
 from datetime import datetime
-from database import get_db, get_setting
+from database import get_db, get_setting, set_setting
 from scraper import scrape_students
 from excel_handler import read_students_from_excel, write_status_to_excel, dedupe_students
 try:
@@ -581,13 +581,20 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
 
 def _send_run_report(stats, group_label):
     """After a completed run, WhatsApp a summary + Excel-report link to the admin numbers
-    set in Settings (only if reporting is enabled). Never breaks the run on failure."""
+    set in Settings (only if reporting is enabled). Never breaks the run on failure.
+    Records the outcome (report_last_status) so the counsellor can see it in Settings."""
     try:
         if get_setting("report_enabled", "") != "1":
+            set_setting("report_last_status", "Reporting is OFF — enable it in Settings to send run reports to management.")
             return
         raw = (get_setting("report_numbers", "") or "").replace("\n", ",")
         nums = [n.strip() for n in raw.split(",") if n.strip()]
         if not nums:
+            set_setting("report_last_status", "No WhatsApp numbers added — add management numbers in Settings.")
+            return
+        import os as _os
+        if not _os.environ.get("AISENSY_CAMPAIGN_REPORT", "").strip():
+            set_setting("report_last_status", "AISENSY_CAMPAIGN_REPORT env var not set on Railway — report cannot send.")
             return
         import whatsapp, links
         today = datetime.now().strftime("%Y-%m-%d")
@@ -606,9 +613,19 @@ def _send_run_report(stats, group_label):
             str(stats.get("docs_progress", 0)),
         ]
         sent, errs = whatsapp.send_report_to_all(nums, params)
+        stamp = datetime.now().strftime("%d %b %I:%M %p")
+        if sent:
+            set_setting("report_last_status", f"Sent to {sent}/{len(nums)} on {stamp}."
+                        + (" Some failed: " + "; ".join(errs)[:160] if errs else ""))
+        else:
+            set_setting("report_last_status", f"FAILED to send on {stamp}: " + ("; ".join(errs)[:200] if errs else "unknown error"))
         logger.info(f"Run report: sent to {sent}/{len(nums)} admin(s)."
                     + (" errors: " + "; ".join(errs) if errs else ""))
     except Exception as e:
+        try:
+            set_setting("report_last_status", f"Error: {str(e)[:160]}")
+        except Exception:
+            pass
         logger.warning(f"Run report skipped: {e}")
 
 def _finish(conn, run_id, ch, cg, fl, status):
