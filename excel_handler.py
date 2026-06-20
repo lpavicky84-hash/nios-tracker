@@ -109,18 +109,17 @@ def read_students_from_excel(filepath):
         enroll = cell(row, enroll_col)
         if not ref and not email and not enroll:
             continue
-        # Stable unique key. A REAL email keeps its existing "email:" key (so students
-        # already tracked are never re-keyed). But placeholder emails like "temp"/"na"
-        # must NOT become the key — those fall back to the reference / enrollment number
-        # (NIOS's true unique IDs), so students sharing a placeholder are no longer
-        # collapsed into one "duplicate".
+        # Stable unique key. Reference number is NIOS's TRUE unique id, so it decides
+        # identity FIRST — siblings who share an email/phone but have DIFFERENT reference
+        # numbers are kept separate (never merged). Email is only a fallback when there is
+        # no reference, and placeholder emails ("temp"/"na"/...) never become the key.
         _em = (email or "").strip().lower()
         _real_email = ("@" in _em and "." in _em.split("@")[-1]
                        and _em not in ("temp", "na", "none", "nil", "-", "null", "n/a"))
-        if _real_email:
-            rk = f"email:{_em}"
-        elif ref:
+        if ref:
             rk = f"ref:{ref}"
+        elif _real_email:
+            rk = f"email:{_em}"
         elif enroll:
             rk = f"enr:{enroll}"
         else:

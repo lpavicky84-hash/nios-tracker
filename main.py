@@ -2304,26 +2304,38 @@ function renderUploadSummary(d){
     '</div>'+
     '<div style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.6">'+
       '<b>'+(d.unique||0)+'</b> new student(s) will be added. '+
-      ((d.duplicates||0)>0?'<b>'+d.duplicates+'</b> already tracked (same reference / enrollment / email) — these are re-checked, <b>not</b> removed. ':'')+
-      (sim>0?'<b>'+sim+'</b> share a mobile with another record but have a <b>different reference</b>, so they are treated as separate students and <b>will run</b>. ':'')+
+      ((d.duplicates||0)>0?'<b>'+d.duplicates+'</b> true duplicate(s) (<b>same reference number</b>) — merged & re-checked, <b>not</b> removed. ':'')+
+      (sim>0?'<b>'+sim+'</b> share a phone/email with another record but have a <b>different reference</b> — so they are separate students (e.g. siblings) and <b>WILL run</b>. ':'')+
       'Nothing is deleted on upload.</div>';
 }
 function renderUploadPreview(rows){
   const pv=document.getElementById("upload-preview");
   if(!rows.length){pv.innerHTML="";return;}
-  const head='<tr><th>#</th><th>Name</th><th>Reference</th><th>Mobile</th><th>Session</th><th>Status</th></tr>';
-  const body=rows.map((s,i)=>'<tr'+(s.dup?' style="background:var(--dup-bg)"':(s.similar?' style="background:#FEF9E7"':''))+'>'+
+  const head='<tr><th>#</th><th>Name</th><th>Reference</th><th>Mobile</th><th>Session</th><th>Status / Matches</th></tr>';
+  const body=rows.map((s,i)=>{
+    var matchLine="";
+    if((s.dup||s.similar)&&(s.match_name||s.match_ref)){
+      matchLine='<div style="font-size:11px;color:var(--muted);margin-top:3px">matches: <b>'+(s.match_name||"—")+'</b>'+
+        (s.match_ref?' &middot; Ref <span style="font-family:monospace">'+s.match_ref+'</span>':'')+'</div>';
+    }
+    var tag;
+    if(s.dup){
+      tag='<span class="dup-tag" title="Same reference number as an existing student — merged & re-checked (not removed).">Duplicate &middot; '+(s.dup_basis||"")+'</span>';
+    }else if(s.similar){
+      tag='<span class="sim-tag" title="Different reference but same '+s.similar+'. Treated as a SEPARATE student and WILL run. Check the match to confirm.">Similar &middot; '+s.similar+'</span>';
+    }else{
+      tag='<span class="new-tag">New</span>';
+    }
+    return '<tr'+(s.dup?' style="background:var(--dup-bg)"':(s.similar?' style="background:#FEF9E7"':''))+'>'+
     '<td style="color:var(--muted)">'+(i+1)+'</td>'+
     '<td>'+(s.student_name||"—")+'</td>'+
     '<td><span class="ref-tag">'+(s.reference_no||s.enrollment_no||"—")+'</span></td>'+
     '<td style="font-size:12px">'+(s.mobile||"—")+'</td>'+
     '<td style="font-size:12px">'+(s.session||"—")+'</td>'+
-    '<td>'+(s.dup
-        ?'<span class="dup-tag" title="Already tracked — matched by '+(s.dup_basis||"unique id")+'. Will be re-checked, not removed.">Duplicate &middot; '+(s.dup_basis||"")+'</span>'
-        :(s.similar
-          ?'<span class="sim-tag" title="Different reference but same '+s.similar+' — treated as a separate student and WILL run.">Similar &middot; '+s.similar+'</span>'
-          :'<span class="new-tag">New</span>'))+'</td></tr>').join("");
+    '<td>'+tag+matchLine+'</td></tr>';
+  }).join("");
   pv.innerHTML='<div class="prev-head">Preview — '+rows.length+' rows (scroll to see all)</div>'+
+    '<div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px;line-height:1.5">&#9888; <b>Similar</b> rows share a phone/email with another student but have a <b>different reference number</b>, so they are <b>NOT</b> duplicates — they run as separate students (e.g. siblings). Check &ldquo;matches&rdquo; to confirm. A true <b>Duplicate</b> has the <b>same reference number</b>. To drop a real duplicate, delete it from the Students list after upload (select &rarr; Delete).</div>'+
     '<div class="prev-box"><table>'+head+body+'</table></div>';
 }
 async function downloadExcel(){
@@ -3665,56 +3677,95 @@ async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token))
             return d if len(d) >= 10 else ""
 
         def _rowkey(ref, enroll, email):
-            # EXACT same rule the importer uses, so the preview never lies about
-            # what will actually be merged.
-            if _real_email(email):
-                return "email:" + _norm(email), "Email"
+            # Reference number is NIOS's TRUE unique id, so it decides identity FIRST.
+            # (Siblings often share an email/phone but have different reference numbers —
+            # they must NOT be merged.) Email is only a fallback when there is no reference.
             if ref:
                 return "ref:" + ref.strip(), "Reference No"
+            if _real_email(email):
+                return "email:" + _norm(email), "Email"
             if enroll:
                 return "enr:" + enroll.strip(), "Enrollment No"
             return "", ""
 
-        # Existing students keyed exactly as stored (row_key is the DB primary key).
+        # Existing students: keep enough to SHOW which student a new row matches, so the
+        # counsellor can verify a real duplicate vs. a sibling sharing a phone/email.
         conn = get_db()
-        existing_keys, existing_mob = set(), set()
-        for r in conn.execute("SELECT row_key, mobile FROM student_status").fetchall():
+        existing_by_key, existing_by_ref = {}, {}
+        existing_by_mob, existing_by_email = {}, {}
+        for r in conn.execute("SELECT row_key, student_name, reference_no, enrollment_no, mobile, email "
+                              "FROM student_status WHERE COALESCE(deleted,0)=0").fetchall():
+            nm = r["student_name"] or ""
+            rf = (r["reference_no"] or r["enrollment_no"] or "").strip()
             if r["row_key"]:
-                existing_keys.add(r["row_key"])
+                existing_by_key[r["row_key"]] = (nm, rf)
+            if r["reference_no"] and r["reference_no"].strip():
+                existing_by_ref[r["reference_no"].strip()] = (nm, rf)
             mb = _valid_mobile(r["mobile"])
             if mb:
-                existing_mob.add(mb)
+                existing_by_mob.setdefault(mb, (nm, rf))
+            em = _norm(r["email"])
+            if _real_email(em):
+                existing_by_email.setdefault(em, (nm, rf))
         conn.close()
 
         students = read_students_from_excel(EXCEL_PATH)
-        seen_keys, seen_mob = set(), set()
+        seen_keys, seen_ref, seen_mob, seen_email = {}, {}, {}, {}
         preview = []
         dups = 0
         sims = 0
         for s in students:
-            ref = str(s.get("reference_no") or "")
-            enroll = str(s.get("enrollment_no") or "")
+            ref = str(s.get("reference_no") or "").strip()
+            enroll = str(s.get("enrollment_no") or "").strip()
             email = str(s.get("email") or "")
+            em = _norm(email)
             mob = _valid_mobile(s.get("mobile"))
+            nm = s.get("student_name", "")
             rk, basis = _rowkey(ref, enroll, email)
-            # HARD duplicate: same unique key (reference / enrollment / real email).
-            # This is the genuine same student — at import it is merged & re-checked.
-            hard = bool(rk) and (rk in seen_keys or rk in existing_keys)
-            # SOFT "similar": a different student (different reference) who happens to
-            # share a mobile number. These are NOT removed — they will still run.
+
+            # HARD duplicate = SAME reference (true NIOS id) or same unique key.
+            # This is genuinely the same student — at import it is merged & re-checked.
+            hard = False
+            match = None      # (name, ref) of the student this row matches
+            if ref and ref in existing_by_ref:
+                hard, basis, match = True, "Reference No", existing_by_ref[ref]
+            elif ref and ref in seen_ref:
+                hard, basis, match = True, "Reference No", seen_ref[ref]
+            elif rk and rk in existing_by_key:
+                hard, match = True, existing_by_key[rk]
+            elif rk and rk in seen_keys:
+                hard, match = True, seen_keys[rk]
+
+            # SOFT "similar" = a DIFFERENT student (different reference) who happens to
+            # share a mobile OR an email. NOT merged — both run. Shown so the counsellor
+            # can confirm (e.g. siblings) or remove a true duplicate afterwards.
             similar = ""
-            if not hard and mob and (mob in seen_mob or mob in existing_mob):
-                similar = "Mobile No"
+            if not hard:
+                if mob and mob in existing_by_mob:
+                    similar, match = "Mobile No", existing_by_mob[mob]
+                elif mob and mob in seen_mob:
+                    similar, match = "Mobile No", seen_mob[mob]
+                elif em and _real_email(em) and em in existing_by_email:
+                    similar, match = "Email", existing_by_email[em]
+                elif em and _real_email(em) and em in seen_email:
+                    similar, match = "Email", seen_email[em]
+
+            # Record this row so later rows in the same sheet can match against it.
             if rk:
-                seen_keys.add(rk)
+                seen_keys.setdefault(rk, (nm, ref or enroll))
+            if ref:
+                seen_ref.setdefault(ref, (nm, ref))
             if mob:
-                seen_mob.add(mob)
+                seen_mob.setdefault(mob, (nm, ref or enroll))
+            if em and _real_email(em):
+                seen_email.setdefault(em, (nm, ref or enroll))
+
             if hard:
                 dups += 1
             elif similar:
                 sims += 1
             preview.append({
-                "student_name": s.get("student_name", ""),
+                "student_name": nm,
                 "reference_no": s.get("reference_no", ""),
                 "enrollment_no": s.get("enrollment_no", ""),
                 "email": s.get("email", ""),
@@ -3725,6 +3776,8 @@ async def upload_excel(file: UploadFile = File(...), user=Depends(verify_token))
                 "dup": hard,
                 "dup_basis": basis if hard else "",
                 "similar": similar,
+                "match_name": (match[0] if match else ""),
+                "match_ref": (match[1] if match else ""),
             })
         total = len(students)
         resp.update({"total": total, "duplicates": dups, "similar": sims,
