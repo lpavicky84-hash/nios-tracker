@@ -4204,7 +4204,7 @@ async def students_purge_bulk(body: dict, user=Depends(verify_token)):
 async def student_get(row_key: str, user=Depends(verify_token)):
     """Fetch ONE student's editable details (for the Edit modal)."""
     conn = get_db()
-    r = conn.execute("SELECT row_key, student_name, mobile, email, dob, reference_no, "
+    r = conn.execute("SELECT row_key, student_name, mobile, alt_mobile, email, dob, reference_no, "
                      "enrollment_no, class_level, session, current_status, "
                      "COALESCE(login_failed,0) AS login_failed, "
                      "COALESCE(check_failed,0) AS check_failed, login_remark "
