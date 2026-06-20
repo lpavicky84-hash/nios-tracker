@@ -14,6 +14,10 @@ Body: { apiKey, campaignName, destination, userName, templateParams: [...] }
 
 Credentials/campaign names come from env vars (never hard-code):
   AISENSY_API_KEY, AISENSY_CAMPAIGN_ONDEMAND, AISENSY_CAMPAIGN_STREAM2, AISENSY_CAMPAIGN_PUBLIC
+
+Public (April/October) can optionally use a SEPARATE WhatsApp API so it never mixes with
+the main number: set AISENSY_API_KEY_PUBLIC (+ AISENSY_CAMPAIGN_PUBLIC on that account).
+If AISENSY_API_KEY_PUBLIC is not set, public falls back to the main AISENSY_API_KEY.
 """
 import os
 import re
@@ -34,6 +38,18 @@ _CAMPAIGN_ENV = {
 
 def _api_key() -> str:
     return os.environ.get("AISENSY_API_KEY", "").strip()
+
+
+def _api_key_for(group: str) -> str:
+    """Public (April/October) students can be sent from a SEPARATE WhatsApp API so they
+    never mix with the main number. If AISENSY_API_KEY_PUBLIC is set, the public group
+    uses it; everything else (On Demand / Stream 2 / SYC / report) uses the main key.
+    Falls back to the main key when the public key is not configured."""
+    if group == "public":
+        pub = os.environ.get("AISENSY_API_KEY_PUBLIC", "").strip()
+        if pub:
+            return pub
+    return _api_key()
 
 
 def campaign_for(group: str) -> str:
@@ -77,8 +93,8 @@ def normalize_number(num) -> str:
     return d
 
 
-def _post(campaign, phone, name, params):
-    key = _api_key()
+def _post(campaign, phone, name, params, group=None):
+    key = _api_key_for(group)
     if not key:
         return False, "AISENSY_API_KEY not set"
     if not campaign:
@@ -199,7 +215,7 @@ def send_for_student(student):
     else:  # public
         params = [name, doc_file_url(rk, "id_card")]
 
-    ok, info = _post(campaign, student.get("mobile"), name, params)
+    ok, info = _post(campaign, student.get("mobile"), name, params, group=group)
     return ok, info
 
 
@@ -216,4 +232,4 @@ def send_test(number, name="Test Student", group="ondemand"):
         params = [name, demo, demo, "NIOS Regional Centre, Sample Address - 110001"]
     else:
         params = [name, demo]
-    return _post(campaign, number, name, params)
+    return _post(campaign, number, name, params, group=group)

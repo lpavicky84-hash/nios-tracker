@@ -574,6 +574,15 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             _finish(conn, run_id, checked, changed, failed, done_msg)
             logger.info(f"Run done | Checked:{checked} Changed:{changed} Failed:{failed} "
                         f"SYC:{len(syc_list)} Dups:{dup_count}")
+            # Save this run's report breakdown so it can be (re)sent later from Settings.
+            try:
+                import json as _json
+                when = datetime.now().strftime("%d %b, %I:%M %p")
+                conn.execute("UPDATE run_logs SET report_json=?, report_label=? WHERE id=?",
+                             (_json.dumps(stats), f"{log_group} - {when}", run_id))
+                conn.commit()
+            except Exception:
+                pass
             _send_run_report(stats, log_group)
 
     except Exception as e:

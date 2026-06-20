@@ -60,6 +60,11 @@ def init_db():
             c.execute(f"ALTER TABLE run_logs ADD COLUMN {col} INTEGER DEFAULT 0")
         except Exception:
             pass
+    for col, decl in (("report_json", "TEXT"), ("report_label", "TEXT")):
+        try:
+            c.execute(f"ALTER TABLE run_logs ADD COLUMN {col} {decl}")
+        except Exception:
+            pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS status_history (

@@ -979,7 +979,7 @@ function applySidebarPref(){
           <div class="set-note" style="margin-bottom:16px">10-digit Indian numbers (country code 91 added automatically). Report template must be set up in AiSensy (campaign <b>AISENSY_CAMPAIGN_REPORT</b>).</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn btn-primary btn-sm" onclick="saveReportSettings()">Save</button>
-            <button class="btn btn-primary btn-sm" style="background:#16A34A;border-color:#16A34A" onclick="sendLatestReport(this)">Send latest run report to all</button>
+            <button class="btn btn-primary btn-sm" style="background:#16A34A;border-color:#16A34A" onclick="sendLatestReport(this)">Send a run report to all</button>
             <button class="btn btn-outline btn-sm" onclick="testReport(this)">Send test report now</button>
           </div>
           <div id="rep-last" style="margin-top:12px;font-size:12.5px;color:var(--muted)"></div>
@@ -2547,17 +2547,39 @@ async function loadReportSettings(){
 }
 async function sendLatestReport(btn){
   const s=document.getElementById("rep-status");
-  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
-  s.innerHTML='<span style="color:var(--muted)">Sending latest run report to all numbers…</span>';
+  s.innerHTML='<span style="color:var(--muted)">Loading recent runs…</span>';
+  let runs=[];
+  try{ runs=await api("/api/recent-runs"); }catch(e){}
+  let h='<div style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:8px;background:var(--card)">';
+  h+='<div style="font-weight:700;font-size:13.5px;margin-bottom:4px">Which report do you want to send to all management numbers?</div>';
+  h+='<div style="color:var(--muted);font-size:12px;margin-bottom:10px">Pick a run below. (Automatic reports always send the latest run on their own.)</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:8px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:9px;padding:9px 11px">'
+    +'<span style="font-size:12.5px"><b>Current live snapshot</b> <span style="color:var(--muted)">— totals right now</span></span>'
+    +'<button class="btn btn-sm btn-primary" onclick="sendSnapshotReport(this)">Send</button></div>';
+  (runs||[]).forEach(r=>{
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--border);border-radius:9px;padding:9px 11px">'
+      +'<span style="font-size:12.5px">'+(r.label||"Run")+'<br><span style="color:var(--muted);font-size:11.5px">checked '+(r.checked||0)+' &middot; confirmed '+(r.confirmed||0)+' &middot; required '+(r.required||0)+'</span></span>'
+      +'<button class="btn btn-sm" style="background:#16A34A;color:#fff" onclick="sendPickedReport('+r.id+',this)">Send</button></div>';
+  });
+  if(!runs||!runs.length) h+='<div style="color:var(--muted);font-size:12px">No saved past runs yet — use Current snapshot. New runs will appear here automatically.</div>';
+  h+='</div></div>';
+  s.innerHTML=h;
+}
+async function _doReportSend(promise,btn){
+  const s=document.getElementById("rep-status");
+  if(btn){btn.disabled=true;btn.dataset.t=btn.textContent;btn.textContent="Sending…";}
   try{
-    const r=await api("/api/send-latest-report","POST");
-    if(r.sent){s.innerHTML='<span style="color:var(--success)">Report sent to '+r.sent+'/'+r.total+' management number(s).</span>';}
-    else{s.innerHTML='<span style="color:var(--danger)">Could not send to anyone.</span>';}
+    const r=await promise;
+    s.innerHTML=r.sent?'<span style="color:var(--success)">&#10003; Report sent to '+r.sent+'/'+r.total+' management number(s).</span>'
+                      :'<span style="color:var(--danger)">Could not send to anyone.</span>';
     if(r.errors&&r.errors.length)s.innerHTML+='<div style="color:var(--danger);font-size:12px;margin-top:6px">'+r.errors.join("<br>")+'</div>';
     try{loadReportSettings();}catch(e){}
-  }catch(e){s.innerHTML='<span style="color:var(--danger)">Error: '+e.message+'</span>';}
-  finally{if(btn){btn.disabled=false;btn.style.opacity="";}}
+  }catch(e){s.innerHTML='<span style="color:var(--danger)">Error: '+e.message+'</span>';
+    if(btn){btn.disabled=false;btn.textContent=btn.dataset.t||"Send";}}
 }
+function sendSnapshotReport(btn){ _doReportSend(api("/api/send-latest-report","POST"),btn); }
+function sendPickedReport(runId,btn){ _doReportSend(api("/api/send-run-report","POST",{run_id:runId}),btn); }
 async function saveReportSettings(){
   const enabled=document.getElementById("rep-enabled").checked;
   const numbers=document.getElementById("rep-numbers").value;
@@ -3477,6 +3499,60 @@ async def report_test(user=Depends(verify_token)):
     params = whatsapp.make_report_params(f"TEST report - {when}", conf, req, err, 0,
                                          conf + req + err + ver + dvp, url)
     sent, errs = whatsapp.send_report_to_all(nums, params)
+    return {"sent": sent, "total": len(nums), "errors": errs}
+
+@app.get("/api/recent-runs")
+async def recent_runs(user=Depends(verify_token)):
+    """Recent completed runs that have a saved report, for the manual 'send report' picker."""
+    import json as _json
+    conn = get_db()
+    rows = conn.execute("SELECT id, group_type, run_at, report_label, report_json, total_checked "
+                        "FROM run_logs WHERE report_json IS NOT NULL AND report_json != '' "
+                        "ORDER BY id DESC LIMIT 15").fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        try:
+            st = _json.loads(r["report_json"])
+        except Exception:
+            st = {}
+        out.append({
+            "id": r["id"],
+            "label": r["report_label"] or (r["group_type"] or "Run"),
+            "run_at": r["run_at"],
+            "confirmed": st.get("confirmed", 0),
+            "required": st.get("required", 0),
+            "checked": st.get("checked", r["total_checked"] or 0),
+        })
+    return out
+
+@app.post("/api/send-run-report")
+async def send_run_report(body: dict, user=Depends(verify_token)):
+    """Send a SPECIFIC past run's report (chosen from the picker) to all management numbers."""
+    import whatsapp, links, json as _json
+    run_id = body.get("run_id")
+    raw = (get_setting("report_numbers", "") or "").replace("\n", ",")
+    nums = [n.strip() for n in raw.split(",") if n.strip()]
+    if not nums:
+        raise HTTPException(status_code=400, detail="Add at least one management WhatsApp number in Settings first")
+    if not os.environ.get("AISENSY_CAMPAIGN_REPORT", "").strip():
+        raise HTTPException(status_code=400, detail="AISENSY_CAMPAIGN_REPORT env var is not set on Railway")
+    conn = get_db()
+    r = conn.execute("SELECT report_json, report_label FROM run_logs WHERE id=?", (run_id,)).fetchone()
+    conn.close()
+    if not r or not r["report_json"]:
+        raise HTTPException(status_code=404, detail="That run's report was not found")
+    st = _json.loads(r["report_json"])
+    label = r["report_label"] or "Run report"
+    same = max(0, st.get("checked", 0) - st.get("changed", 0))
+    url = links.report_url(datetime.now().strftime("%Y-%m-%d"))
+    params = whatsapp.make_report_params(label, st.get("confirmed", 0), st.get("required", 0),
+                                         st.get("error", 0), same, st.get("checked", 0), url)
+    sent, errs = whatsapp.send_report_to_all(nums, params)
+    stamp = datetime.now().strftime("%d %b %I:%M %p")
+    set_setting("report_last_status",
+                (f"Sent '{label}' to {sent}/{len(nums)} on {stamp}." if sent
+                 else f"FAILED on {stamp}: " + ("; ".join(errs)[:200] if errs else "unknown error")))
     return {"sent": sent, "total": len(nums), "errors": errs}
 
 @app.post("/api/send-latest-report")
