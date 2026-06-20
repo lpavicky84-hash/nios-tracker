@@ -666,6 +666,7 @@ function applySidebarPref(){
             <span style="font-weight:600;font-size:13.5px"><span id="sel-count">0</span> selected <span style="color:var(--muted);font-weight:400">(max 20)</span></span>
             <button class="btn btn-success btn-sm" id="sel-run-btn" onclick="runSelected()">
               <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Selected</button>
+            <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="deleteSelectedStudents()">&#128465; Delete selected</button>
             <button class="btn btn-sm" style="background:transparent;color:var(--muted);border:1px solid var(--border)" onclick="clearSelection()">Clear</button>
             <span style="font-size:12px;color:var(--muted)">Pick the exact students whose status you need right now — saves credits.</span>
           </div>
@@ -717,6 +718,7 @@ function applySidebarPref(){
           <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <span style="font-weight:700;font-size:13px"><span id="c-selcount">0</span> selected</span>
             <button class="btn btn-primary btn-sm" onclick="resendSelected(this)">Resend WhatsApp to selected</button>
+            <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDeleteConf()">&#128465; Delete selected</button>
             <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="clearConfSel()">Clear</button>
           </div>
           <div id="wa-progress" style="display:none;background:linear-gradient(135deg,#ECFDF5,#F0FDF4);border:1px solid #BBF7D0;border-radius:12px;padding:14px 16px;margin-bottom:14px">
@@ -795,9 +797,10 @@ function applySidebarPref(){
               Export Excel</button>
           </div>
           <div id="r-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div id="r-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="r-selcount">0</span> selected</span><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('r')">&#128465; Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('r')">Clear</button></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
-              <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th><th>RC Comment / Remark</th>
+              <th style="width:34px"><input type="checkbox" id="r-selall" onclick="selAll('r',this)" title="Select all on this page"></th><th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th><th>RC Comment / Remark</th>
             </tr></thead><tbody id="r-body"></tbody></table>
           </div>
           <div class="pg-bar" id="r-pg"></div>
@@ -818,9 +821,10 @@ function applySidebarPref(){
             <button class="btn btn-outline btn-sm" onclick="loadFailed(1)">Refresh</button>
           </div>
           <div id="f-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div id="f-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="f-selcount">0</span> selected</span><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('f')">&#128465; Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('f')">Clear</button></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
-              <th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Problem</th><th>Action</th>
+              <th style="width:34px"><input type="checkbox" id="f-selall" onclick="selAll('f',this)" title="Select all on this page"></th><th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Problem</th><th>Action</th>
             </tr></thead><tbody id="f-body"></tbody></table>
           </div>
           <div class="pg-bar" id="f-pg"></div>
@@ -1222,6 +1226,17 @@ async function runSelected(){
     startProgressPoll();
   }catch(e){showToast("Error: "+e.message);}
   finally{ setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},3000); }
+}
+async function deleteSelectedStudents(){
+  const keys=[...SELECTED];
+  if(!keys.length){showToast("Select at least 1 student");return;}
+  if(!confirm("Remove "+keys.length+" selected student(s)?\\n\\nThey move to Trash — you can restore from Settings → Deleted Students."))return;
+  try{
+    const r=await api("/api/students-delete-bulk","POST",{row_keys:keys});
+    showToast("Moved "+(r.deleted||keys.length)+" student(s) to Trash");
+    clearSelection();
+    refreshAllTables();
+  }catch(e){showToast("Error: "+e.message);}
 }
 let sessionsLoaded = false;
 
@@ -1794,6 +1809,17 @@ function toggleConfAll(cb){
   updateConfBar();
 }
 function clearConfSel(){ CONF_SEL.clear(); document.querySelectorAll(".c-selbox").forEach(b=>b.checked=false); const sa=document.getElementById("c-selall");if(sa)sa.checked=false; updateConfBar(); }
+async function bulkDeleteConf(){
+  const keys=Array.from(CONF_SEL);
+  if(!keys.length)return;
+  if(!confirm("Remove "+keys.length+" selected confirmed student(s)?\\n\\nThey move to Trash — restore from Settings → Deleted Students."))return;
+  try{
+    const r=await api("/api/students-delete-bulk","POST",{row_keys:keys});
+    showToast("Moved "+(r.deleted||keys.length)+" student(s) to Trash");
+    clearConfSel();
+    refreshAllTables();
+  }catch(e){showToast("Error: "+e.message);}
+}
 async function resendSelected(btn){
   if(!CONF_SEL.size)return;
   const keys=Array.from(CONF_SEL);
@@ -1916,6 +1942,41 @@ async function deleteStudent(rowKey,name){
     try{loadDashboard();}catch(e){}
   }catch(e){showToast(""+e.message);}
 }
+// ── Reusable multi-select + bulk delete (works on any table) ──
+const SEL={};
+function selSet(k){ if(!SEL[k])SEL[k]=new Set(); return SEL[k]; }
+function selBox(k,rowKey){
+  return '<input type="checkbox" class="selbox-'+k+'" value="'+rowKey+'" onchange="onSel(&quot;'+k+'&quot;,this)"'+(selSet(k).has(rowKey)?' checked':'')+'>';
+}
+function selHead(k){
+  return '<input type="checkbox" id="'+k+'-selall" onclick="selAll(&quot;'+k+'&quot;,this)" title="Select all on this page">';
+}
+function onSel(k,cb){ const s=selSet(k); if(cb.checked)s.add(cb.value); else s.delete(cb.value); selBar(k); }
+function selAll(k,cb){ const s=selSet(k); document.querySelectorAll(".selbox-"+k).forEach(b=>{b.checked=cb.checked; if(cb.checked)s.add(b.value); else s.delete(b.value);}); selBar(k); }
+function selClear(k){ selSet(k).clear(); document.querySelectorAll(".selbox-"+k).forEach(b=>b.checked=false); const a=document.getElementById(k+"-selall"); if(a)a.checked=false; selBar(k); }
+function selBar(k){ const bar=document.getElementById(k+"-bulkbar"); const n=selSet(k).size; if(bar)bar.style.display=n?"flex":"none"; const c=document.getElementById(k+"-selcount"); if(c)c.textContent=n; }
+function bulkBarHtml(k){
+  return '<div id="'+k+'-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px">'+
+    '<span style="font-weight:700;font-size:13px"><span id="'+k+'-selcount">0</span> selected</span>'+
+    '<button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete(&quot;'+k+'&quot;)">&#128465; Delete selected</button>'+
+    '<button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear(&quot;'+k+'&quot;)">Clear</button></div>';
+}
+async function bulkDelete(k){
+  const keys=Array.from(selSet(k));
+  if(!keys.length)return;
+  if(!confirm("Remove "+keys.length+" selected student(s)?\\n\\nThey move to Trash — you can restore from Settings → Deleted Students."))return;
+  try{
+    const r=await api("/api/students-delete-bulk","POST",{row_keys:keys});
+    showToast("Moved "+(r.deleted||keys.length)+" student(s) to Trash");
+    selClear(k);
+    refreshAllTables();
+  }catch(e){showToast("Error: "+e.message);}
+}
+function refreshAllTables(){
+  ["loadStudents","loadConfirmed","loadRequired","loadFailed"].forEach(fn=>{try{window[fn](1);}catch(e){}});
+  try{updateFailedBadge();}catch(e){}
+  try{loadDashboard();}catch(e){}
+}
 const EDIT_FIELDS=["student_name","reference_no","enrollment_no","dob","mobile","email","class_level","session"];
 async function editStudent(rowKey){
   try{
@@ -2007,12 +2068,15 @@ async function loadRequired(page){
     document.getElementById("r-count").textContent=d.total+" students need documents";
     const b=document.getElementById("r-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
+      '<td>'+selBox("r",s.row_key)+'</td>'+
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td style="font-size:13px;color:var(--warn);max-width:420px">'+(s.remark||"(no comment captured)")+'</td></tr>').join("")
-      :'<tr><td colspan="5" class="empty">No pending documents</td></tr>';
+      :'<tr><td colspan="6" class="empty">No pending documents</td></tr>';
     renderPg("r-pg",page,d.pages,"loadRequired");
+    const sa=document.getElementById("r-selall");if(sa)sa.checked=false;
+    selBar("r");
   }catch(e){showToast(""+e.message);}
 }
 
@@ -2032,6 +2096,7 @@ async function loadFailed(page){
       var nm=(s.student_name||"this student").replace(/[\\"']/g," ");
       var rm=(s.login_remark||"NIOS login failed — check Reference/Enrollment No & DOB").replace(/</g,"&lt;");
       return '<tr>'+
+        '<td>'+selBox("f",s.row_key)+'</td>'+
         '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td>'+
         '<td><span class="ref-tag">'+ref+'</span></td>'+
         '<td style="font-size:13px">'+(s.session||"—")+'</td>'+
@@ -2041,8 +2106,10 @@ async function loadFailed(page){
           '<button onclick="deleteStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">Remove</button>'+
         '</div></td></tr>';
     }).join("")
-      :'<tr><td colspan="5" class="empty" style="color:var(--success)">No failed students — all clear!</td></tr>';
+      :'<tr><td colspan="6" class="empty" style="color:var(--success)">No failed students — all clear!</td></tr>';
     renderPg("f-pg",page,d.pages,"loadFailed");
+    const sa=document.getElementById("f-selall");if(sa)sa.checked=false;
+    selBar("f");
   }catch(e){showToast(""+e.message);}
 }
 function _setNavBadge(id,n){
@@ -3939,6 +4006,22 @@ async def student_delete(row_key: str, user=Depends(verify_token)):
     conn.commit()
     conn.close()
     return {"ok": True, "name": name, "soft": True}
+
+@app.post("/api/students-delete-bulk")
+async def students_delete_bulk(body: dict, user=Depends(verify_token)):
+    """SOFT-delete MANY students at once (move to Trash). Restorable from Settings."""
+    keys = [k for k in (body.get("row_keys", []) or []) if k][:1000]
+    if not keys:
+        raise HTTPException(status_code=400, detail="no students selected")
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_db()
+    ph = ",".join("?" * len(keys))
+    cur = conn.execute(f"UPDATE student_status SET deleted=1, deleted_at=? "
+                       f"WHERE row_key IN ({ph}) AND COALESCE(deleted,0)=0", [now_s] + keys)
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return {"ok": True, "deleted": n}
 
 @app.get("/api/deleted-students")
 async def deleted_students(user=Depends(verify_token)):
