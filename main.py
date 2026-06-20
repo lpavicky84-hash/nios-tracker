@@ -2854,44 +2854,51 @@ def _normalized_session_counts(raw_rows):
 
 def normalize_session(s):
     """Merge raw session text into the real filter categories so there is ONE entry
-    per category, no matter how it's typed:
+    per category, no matter how it's typed. ONE rule, shared with the run grouping and
+    the document restrictions:
+        • any 'SYC' variant                  -> 'SYC'
         • any 'On Demand' variant            -> 'On Demand'
         • any 'Stream 2' variant             -> 'Stream 2'
         • any 'Stream 1' variant             -> 'Stream 1'
-        • April / October (with ANY year, e.g. 'April 2027', 'Public Oct 2025')
+        • EVERYTHING ELSE (April / October / 'apr-27' / 'oct-26' / Public / unknown)
                                              -> 'Public'
-        • any 'SYC' variant                  -> 'SYC'
-    Anything unrecognised is kept as-is."""
+    The 'everything else -> Public' default is what makes April/October abbreviations
+    bullet-proof: they can never be mistaken for On Demand again."""
     t = (s or "").strip().lower()
     if not t:
         return ""
     if "syc" in t:                                               return "SYC"
-    if "on demand" in t or "ondemand" in t or "on-demand" in t or "on_demand" in t:
+    if "on demand" in t or "ondemand" in t or "on-demand" in t or "on_demand" in t or "odes" in t:
         return "On Demand"
     if "stream 2" in t or "stream2" in t or "stream-2" in t or "stream ii" in t or "stream_2" in t:
         return "Stream 2"
-    if "stream 1" in t or "stream1" in t or "stream-1" in t or "stream i" in t or "stream_1" in t:
+    if "stream 1" in t or "stream1" in t or "stream-1" in t or "stream_1" in t:
         return "Stream 1"
-    if "april" in t or "october" in t or "public" in t:         return "Public"
-    return s.strip()
+    return "Public"
 
 def _session_clause(cat):
     """SQL clause + params matching ALL raw variants of a normalized session category,
-    so selecting 'On Demand' catches 'On Demand1', 'On Demand (June to Sept.)' etc.,
-    and 'Public' catches every April / October (any year)."""
+    so selecting 'On Demand' catches 'On Demand1' etc. 'Public' is defined as EVERYTHING
+    that is not On Demand / Stream 2 / Stream 1 / SYC — so it catches every April / October
+    spelling AND abbreviations like 'apr-27' / 'oct-26', exactly like the run grouping."""
     t = (cat or "").strip().lower()
     pats = {
-        "on demand": ["%on demand%", "%ondemand%", "%on-demand%", "%on_demand%"],
+        "on demand": ["%on demand%", "%ondemand%", "%on-demand%", "%on_demand%", "%odes%"],
         "stream 2":  ["%stream 2%", "%stream2%", "%stream-2%", "%stream ii%", "%stream_2%"],
         "stream 1":  ["%stream 1%", "%stream1%", "%stream-1%", "%stream_1%"],
-        "public":    ["%april%", "%october%", "%public%"],
         "april":     ["%april%"],
         "october":   ["%october%"],
         "syc":       ["%syc%"],
     }
+    if t == "public":
+        # Everything that is NOT On Demand / Stream 2 / Stream 1 / SYC.
+        neg = (pats["on demand"] + pats["stream 2"] + pats["stream 1"] + pats["syc"])
+        clause = ("(TRIM(COALESCE(session,'')) != '' AND "
+                  + " AND ".join(["LOWER(session) NOT LIKE ?"] * len(neg)) + ")")
+        return clause, neg
     if t in pats:
         p = pats[t]
-        return "(" + " OR ".join(["session LIKE ?"] * len(p)) + ")", p
+        return "(" + " OR ".join(["LOWER(session) LIKE ?"] * len(p)) + ")", p
     return "session = ?", [cat]
 
 def _build_student_where(view, search, status_filter, session_filter,
