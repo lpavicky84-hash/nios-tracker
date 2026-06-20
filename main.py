@@ -1620,8 +1620,9 @@ function dlLinks(s){
       'Links not shared (would open to an error). <div style="margin-top:5px">'+fixBtn(s)+'</div></div>';
   if(!s.reference_no||!s.dob) return '<span style="color:var(--warn);font-size:11px">ref/DOB missing</span>';
   const sess=(s.session||"").toLowerCase();
-  const isPublic=sess.includes("april")||sess.includes("october")||sess.includes("public");
   const isStream2=sess.includes("stream 2")||sess.includes("stream2")||sess.includes("stream-2")||sess.includes("stream ii");
+  const isOnDemand=sess.includes("on demand")||sess.includes("ondemand")||sess.includes("on-demand")||sess.includes("odes");
+  const isPublic=!isStream2&&!isOnDemand;   // safe default: April/October/apr-27/unknown = public (ID Card only)
   let b=[dlBtn(s,"id_card","ID Card")];
   if(isStream2){
     b.push(dlBtn(s,"app_form","App Form"));          // Stream 2: ID Card + App Form only (NO hall ticket)
@@ -3821,6 +3822,25 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
     """Login as the student and return their document (PDF or print-ready HTML)."""
     from fastapi import Response
     from nios_login import fetch_document
+    # Public-cycle students (April / October / 'apr-27') only have an ID Card. Block any
+    # other document so a stale/wrong link can never open the wrong file — matches the
+    # student-facing links. (Admins still see every document for On Demand / Stream 2.)
+    if kind != "id_card" and ref:
+        try:
+            conn = get_db()
+            srow = conn.execute("SELECT session FROM student_status WHERE COALESCE(deleted,0)=0 "
+                                "AND reference_no=? LIMIT 1", (ref,)).fetchone()
+            conn.close()
+            sess = ((srow["session"] if srow else "") or "").lower()
+            is_s2 = ("stream 2" in sess or "stream2" in sess or "stream-2" in sess)
+            is_od = ("on demand" in sess or "ondemand" in sess or "on-demand" in sess or "odes" in sess)
+            if srow is not None and not is_s2 and not is_od:   # public / unknown
+                raise HTTPException(status_code=404,
+                    detail="This document is not available for Public (April / October) admission. Only the ID Card can be opened for this student.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     content, ctype, filename = fetch_document(ref, dob, kind)
     if content is None:
         # Login/bounce failure -> flag this student as Failed to Run so it surfaces in
