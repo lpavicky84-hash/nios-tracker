@@ -4320,11 +4320,14 @@ async def public_doc_file(token: str, kind: str):
     if not row_key:
         raise HTTPException(status_code=404, detail="invalid link")
     conn = get_db()
-    row = conn.execute("SELECT reference_no, dob FROM student_status WHERE row_key=?",
+    row = conn.execute("SELECT reference_no, dob, session FROM student_status WHERE row_key=?",
                        (row_key,)).fetchone()
     conn.close()
     if not row or not row["reference_no"]:
         raise HTTPException(status_code=404, detail="student not found")
+    import whatsapp
+    if whatsapp.group_of(row["session"]) == "public" and kind != "id_card":
+        raise HTTPException(status_code=404, detail="This document is not available for Public (April / October) admission. Only the ID Card can be opened.")
     content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
     if content is None:
         raise HTTPException(status_code=404, detail=ctype)
@@ -4408,13 +4411,20 @@ def _fetch_doc_for(row_key, kind):
     try:
         from nios_login import fetch_document
         conn = get_db()
-        row = conn.execute("SELECT reference_no, enrollment_no, dob FROM student_status WHERE row_key=?",
+        row = conn.execute("SELECT reference_no, enrollment_no, dob, session FROM student_status WHERE row_key=?",
                            (row_key,)).fetchone()
         conn.close()
         ref = (row["reference_no"] if row else "") or ""
         enroll = (row["enrollment_no"] if row else "") or ""
         if not row or (not ref and not enroll):
             return None, "student not found"
+        # Public-cycle students (April / October) only have an ID Card. If an old/wrong
+        # link for another document is opened, show a clear message instead of serving the
+        # wrong document — this neutralises any links that were sent before the grouping fix.
+        import whatsapp
+        if whatsapp.group_of(row["session"]) == "public" and kind != "id_card":
+            return None, ("This document is not available for Public (April / October) admission. "
+                          "Only the ID Card can be opened for your admission type.")
         content, ctype, filename = fetch_document(ref, row["dob"], kind, enrollment_no=enroll)
         if content is None:
             return None, (ctype or "could not load document")
