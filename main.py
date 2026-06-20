@@ -992,9 +992,15 @@ function applySidebarPref(){
             <div class="set-sub">Removed students land here. <b>Restore</b> brings them back; <b>Delete permanently</b> cannot be undone.</div></div>
             <div class="set-act"><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="loadTrash()">Refresh</button></div>
           </div>
+          <div id="trash-bulkbar" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px">
+            <span style="font-weight:700;font-size:13px"><span id="trash-selcount">0</span> selected</span>
+            <button class="btn btn-sm" style="background:#16A34A;color:#fff" onclick="restoreSelected()">&#8617; Restore selected</button>
+            <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="purgeSelected()">&#128465; Permanently delete selected</button>
+            <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('trash')">Clear</button>
+          </div>
           <div style="overflow-x:auto"><table>
-            <thead><tr><th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Deleted At</th><th>Action</th></tr></thead>
-            <tbody id="trash-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+            <thead><tr><th style="width:34px"><input type="checkbox" id="trash-selall" onclick="selAll('trash',this)" title="Select all"></th><th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Deleted At</th><th>Action</th></tr></thead>
+            <tbody id="trash-body"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
           </table></div>
         </div>
         <div class="card">
@@ -2482,11 +2488,11 @@ async function loadTrash(){
   const b=document.getElementById("trash-body");if(!b)return;
   try{
     const rows=await api("/api/deleted-students");
-    if(!rows.length){b.innerHTML='<tr><td colspan="5" class="empty">Trash is empty</td></tr>';return;}
+    if(!rows.length){b.innerHTML='<tr><td colspan="6" class="empty">Trash is empty</td></tr>';selBar("trash");return;}
     b.innerHTML=rows.map(s=>{
       var nm=(s.student_name||"this student").replace(/[\\"']/g," ");
       var ref=(s.reference_no||s.enrollment_no||"—");
-      return '<tr><td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td>'+
+      return '<tr><td>'+selBox("trash",s.row_key)+'</td><td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td>'+
         '<td><span class="ref-tag">'+ref+'</span></td>'+
         '<td style="font-size:13px">'+(s.session||"—")+'</td>'+
         '<td style="font-size:12px;color:var(--muted)">'+(s.deleted_at||"—")+'</td>'+
@@ -2495,7 +2501,28 @@ async function loadTrash(){
         '<button onclick="purgeStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer">Delete permanently</button>'+
         '</div></td></tr>';
     }).join("");
-  }catch(e){b.innerHTML='<tr><td colspan="5" class="empty">'+e.message+'</td></tr>';}
+    const sa=document.getElementById("trash-selall");if(sa)sa.checked=false;
+    selBar("trash");
+  }catch(e){b.innerHTML='<tr><td colspan="6" class="empty">'+e.message+'</td></tr>';}
+}
+async function restoreSelected(){
+  const keys=Array.from(selSet("trash"));
+  if(!keys.length)return;
+  try{
+    const r=await api("/api/students-restore-bulk","POST",{row_keys:keys});
+    showToast("Restored "+(r.restored||keys.length)+" student(s)");
+    selClear("trash");loadTrash();try{loadDashboard();}catch(e){}
+  }catch(e){showToast("Error: "+e.message);}
+}
+async function purgeSelected(){
+  const keys=Array.from(selSet("trash"));
+  if(!keys.length)return;
+  if(!confirm("Permanently delete "+keys.length+" student(s)?\\n\\nThis CANNOT be undone — they will be gone forever."))return;
+  try{
+    const r=await api("/api/students-purge-bulk","POST",{row_keys:keys});
+    showToast("Permanently deleted "+(r.purged||keys.length)+" student(s)");
+    selClear("trash");loadTrash();
+  }catch(e){showToast("Error: "+e.message);}
 }
 async function restoreStudent(rk,name){
   try{await api("/api/student-restore?row_key="+encodeURIComponent(rk),"POST");
@@ -4056,6 +4083,42 @@ async def student_purge(row_key: str, user=Depends(verify_token)):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+@app.post("/api/students-restore-bulk")
+async def students_restore_bulk(body: dict, user=Depends(verify_token)):
+    """Restore MANY soft-deleted students from Trash at once."""
+    keys = [k for k in (body.get("row_keys", []) or []) if k][:2000]
+    if not keys:
+        raise HTTPException(status_code=400, detail="no students selected")
+    conn = get_db()
+    ph = ",".join("?" * len(keys))
+    cur = conn.execute(f"UPDATE student_status SET deleted=0, deleted_at=NULL WHERE row_key IN ({ph})", keys)
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return {"ok": True, "restored": n}
+
+@app.post("/api/students-purge-bulk")
+async def students_purge_bulk(body: dict, user=Depends(verify_token)):
+    """Permanently delete MANY students from Trash at once (cannot be undone)."""
+    keys = [k for k in (body.get("row_keys", []) or []) if k][:2000]
+    if not keys:
+        raise HTTPException(status_code=400, detail="no students selected")
+    conn = get_db()
+    ph = ",".join("?" * len(keys))
+    cur = conn.execute(f"DELETE FROM student_status WHERE row_key IN ({ph})", keys)
+    n = cur.rowcount
+    try:
+        conn.execute(f"DELETE FROM short_links WHERE row_key IN ({ph})", keys)
+    except Exception:
+        pass
+    try:
+        conn.execute(f"DELETE FROM status_history WHERE row_key IN ({ph})", keys)
+    except Exception:
+        pass
+    conn.commit()
+    conn.close()
+    return {"ok": True, "purged": n}
 
 @app.get("/api/student-get")
 async def student_get(row_key: str, user=Depends(verify_token)):
