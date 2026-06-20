@@ -7,7 +7,7 @@ Each NIOS session group has its OWN approved template -> its OWN API campaign:
   Stream 2   -> AISENSY_CAMPAIGN_STREAM2   (template "str2toc1")
                 params: [name, idCardLink, registrationLink, regionalCentreAddress]
   Public     -> AISENSY_CAMPAIGN_PUBLIC    (April/October; id card only)
-                params: [name, idCardLink]
+                params: [name, referenceNo, idCardLink]
 
 Endpoint: POST https://backend.aisensy.com/campaign/t1/api/v2
 Body: { apiKey, campaignName, destination, userName, templateParams: [...] }
@@ -212,8 +212,9 @@ def send_for_student(student):
         params = [name, doc_file_url(rk, "id_card"), doc_file_url(rk, "app_form"), addr]
     elif group == "syc":
         params = [name, doc_file_url(rk, "hall_ticket")]   # SYC: hall ticket only
-    else:  # public
-        params = [name, doc_file_url(rk, "id_card")]
+    else:  # public (April / October) — template: {{1}} name, {{2}} reference no, {{3}} id card link
+        ref = (str(student.get("reference_no") or "").strip())
+        params = [name, ref, doc_file_url(rk, "id_card")]
 
     ok, info = _post(campaign, student.get("mobile"), name, params, group=group)
     return ok, info
@@ -230,6 +231,8 @@ def send_test(number, name="Test Student", group="ondemand"):
         params = [name, demo, demo, demo]
     elif group == "stream2":
         params = [name, demo, demo, "NIOS Regional Centre, Sample Address - 110001"]
+    elif group == "public":
+        params = [name, "REF1234567", demo]   # {{1}} name, {{2}} reference no, {{3}} id card link
     else:
         params = [name, demo]
     return _post(campaign, number, name, params, group=group)
