@@ -49,15 +49,18 @@ def is_syc_session(session):
 
 def session_group(session):
     """Classify a session into its run group: 'ondemand', 'stream2' or 'public'.
-    On Demand and Stream 2 are now separate groups (own interval + manual run)."""
+    On Demand and Stream 2 are separate groups (own interval + manual run).
+
+    SAFETY: anything that is NOT clearly On Demand or Stream 2 — April/October public
+    cycles, abbreviations like 'apr-27' / 'oct-26', blank or unrecognised sessions — is
+    treated as PUBLIC. Public never auto-sends unless its campaign is explicitly set up,
+    so a stray/unknown session can never receive On Demand documents by mistake."""
     s = (session or "").lower()
     if "stream 2" in s or "stream2" in s or "stream-2" in s:
         return "stream2"
-    if "on demand" in s or "ondemand" in s or "on-demand" in s:
+    if "on demand" in s or "ondemand" in s or "on-demand" in s or "odes" in s:
         return "ondemand"
-    if ("april" in s) or ("october" in s) or ("public" in s):
-        return "public"
-    return "ondemand"   # safe default
+    return "public"   # safe default — never on-demand for unknown/April/October/apr-27
 
 def _load_db_students(c):
     """Re-check source of truth: every student already in the DB. This makes runs

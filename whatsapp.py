@@ -45,22 +45,24 @@ def is_configured() -> bool:
 
 
 def group_of(session) -> str:
-    """Classify a session into ondemand / stream2 / public.
+    """Classify a session into ondemand / stream2 / public (or syc).
     Priority order so extra text never confuses it:
-      - 'Stream 2'  (any extra text)        -> stream2
+      - 'SYC'                                  -> syc
+      - 'Stream 2'  (any extra text)           -> stream2
       - 'On Demand' (e.g. 'On Demand June-Sept.') -> ondemand
-      - 'April' / 'October' (with or without a year, e.g. 'April 2027') -> public
-      - anything else -> ondemand (safe default)"""
+      - EVERYTHING ELSE (April/October, 'apr-27', 'oct-26', blank, unknown) -> public
+
+    SAFETY: public is the default. Public only sends if AISENSY_CAMPAIGN_PUBLIC is set,
+    so an unrecognised session can never be mistaken for On Demand and receive the
+    On Demand documents (ID card + application form + hall ticket)."""
     s = (session or "").lower()
     if "syc" in s:
         return "syc"
     if "stream 2" in s or "stream2" in s or "stream-2" in s:
         return "stream2"
-    if "on demand" in s or "ondemand" in s or "on-demand" in s:
+    if "on demand" in s or "ondemand" in s or "on-demand" in s or "odes" in s:
         return "ondemand"
-    if "april" in s or "october" in s or "public" in s:
-        return "public"
-    return "ondemand"
+    return "public"
 
 
 def normalize_number(num) -> str:
