@@ -216,7 +216,19 @@ def send_for_student(student):
         ref = (str(student.get("reference_no") or "").strip())
         params = [name, ref, doc_file_url(rk, "id_card")]
 
-    ok, info = _post(campaign, student.get("mobile"), name, params, group=group)
+    primary = student.get("mobile")
+    ok, info = _post(campaign, primary, name, params, group=group)
+    # If the student gave an ALTERNATE number, send the same documents there too.
+    alt = str(student.get("alt_mobile") or "").strip()
+    pn, an = normalize_number(primary), normalize_number(alt)
+    if an and len(an) >= 11 and an != pn:
+        ok2, info2 = _post(campaign, alt, name, params, group=group)
+        if ok or ok2:
+            note = "Sent to 2 numbers (own + alternate)"
+            if not (ok and ok2):
+                note += " — one still pending"
+            return True, note
+        return False, f"both numbers failed: {info} | {info2}"
     return ok, info
 
 

@@ -70,7 +70,7 @@ def _load_db_students(c):
     try:
         rows = c.execute(
             "SELECT row_key, reference_no, enrollment_no, email, dob, student_name, "
-            "mobile, class_level, session, source FROM student_status "
+            "mobile, alt_mobile, class_level, session, source FROM student_status "
             "WHERE COALESCE(deleted,0)=0").fetchall()
     except Exception:
         return out
@@ -83,6 +83,7 @@ def _load_db_students(c):
             "dob":           r["dob"] or "",
             "student_name":  r["student_name"] or "",
             "mobile":        r["mobile"] or "",
+            "alt_mobile":    (r["alt_mobile"] if "alt_mobile" in r.keys() else "") or "",
             "class_level":   r["class_level"] or "",
             "session":       r["session"] or "",
             "source":        (r["source"] if "source" in r.keys() else "") or "mvs_tracker",
@@ -106,14 +107,15 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
             final_source = "mvs_portal"
             cross = 1
         c.execute("""INSERT INTO student_status
-            (row_key, reference_no, enrollment_no, email, dob, student_name, mobile, class_level,
+            (row_key, reference_no, enrollment_no, email, dob, student_name, mobile, alt_mobile, class_level,
              session, current_status, remark, is_confirmed, last_checked, last_changed,
              source, cross_dup, check_count)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
             ON CONFLICT(row_key) DO UPDATE SET
                 enrollment_no = CASE WHEN excluded.enrollment_no != '' THEN excluded.enrollment_no ELSE enrollment_no END,
                 student_name = excluded.student_name,
                 mobile = excluded.mobile,
+                alt_mobile = CASE WHEN excluded.alt_mobile != '' THEN excluded.alt_mobile ELSE alt_mobile END,
                 dob = excluded.dob,
                 session = excluded.session,
                 current_status = 'SYC',
@@ -122,7 +124,8 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
                 cross_dup = CASE WHEN excluded.cross_dup=1 THEN 1 ELSE cross_dup END,
                 check_count = check_count + 1""",
             (row_key, s.get("reference_no", ""), s.get("enrollment_no", ""), s.get("email", ""),
-             s.get("dob", ""), s.get("student_name", ""), s.get("mobile", ""), s.get("class_level", ""),
+             s.get("dob", ""), s.get("student_name", ""), s.get("mobile", ""), s.get("alt_mobile", ""),
+             s.get("class_level", ""),
              s.get("session", ""), "SYC", "", 0, now_s, now_s, final_source, cross))
         if stats is not None:
             stats["checked"] += 1
@@ -145,6 +148,7 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
                         "row_key": row_key,
                         "student_name": s.get("student_name", ""),
                         "mobile": phone,
+                        "alt_mobile": s.get("alt_mobile", ""),
                         "session": s.get("session", ""),
                         "reference_no": s.get("reference_no", ""),
                         "enrollment_no": s.get("enrollment_no", ""),
@@ -284,6 +288,7 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         # Map each student's row_key to the data source (mvs_portal = MVS portal/
         # detected, mvs_tracker = manual upload).
         src_by_key = {s["row_key"]: s.get("source", "mvs_tracker") for s in all_students}
+        alt_by_key = {s["row_key"]: (s.get("alt_mobile") or "") for s in all_students}
         # Manual override (set in the Upload section) wins over auto-detection.
         override = get_setting("source_override", "")
         if override in ("mvs_portal", "mvs_tracker"):
@@ -417,16 +422,17 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 stats["same"] += 1
 
             c.execute("""INSERT INTO student_status
-                (row_key, reference_no, enrollment_no, email, dob, student_name, mobile, class_level,
+                (row_key, reference_no, enrollment_no, email, dob, student_name, mobile, alt_mobile, class_level,
                  session, current_status, remark, is_confirmed, last_checked, last_changed,
                  source, cross_dup, check_count)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
                 ON CONFLICT(row_key) DO UPDATE SET
                     reference_no = CASE WHEN excluded.reference_no != '' THEN excluded.reference_no ELSE reference_no END,
                     enrollment_no = CASE WHEN excluded.enrollment_no != '' THEN excluded.enrollment_no ELSE enrollment_no END,
                     dob = CASE WHEN excluded.dob != '' THEN excluded.dob ELSE dob END,
                     student_name = CASE WHEN excluded.student_name != '' THEN excluded.student_name ELSE student_name END,
                     mobile = CASE WHEN excluded.mobile != '' THEN excluded.mobile ELSE mobile END,
+                    alt_mobile = CASE WHEN excluded.alt_mobile != '' THEN excluded.alt_mobile ELSE alt_mobile END,
                     email = CASE WHEN excluded.email != '' THEN excluded.email ELSE email END,
                     class_level = CASE WHEN excluded.class_level != '' THEN excluded.class_level ELSE class_level END,
                     session = CASE WHEN excluded.session != '' THEN excluded.session ELSE session END,
@@ -440,7 +446,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                     cross_dup = CASE WHEN excluded.cross_dup=1 THEN 1 ELSE cross_dup END,
                     check_count = check_count + 1""",
                 (row_key, new_ref, res.get("enrollment_no", ""), res.get("email", ""), res.get("dob", ""),
-                 res.get("student_name", ""), res.get("mobile", ""), res.get("class_level", ""),
+                 res.get("student_name", ""), res.get("mobile", ""), alt_by_key.get(row_key, ""),
+                 res.get("class_level", ""),
                  res.get("session", ""), new_status, res.get("remark", ""), is_conf, now_s, now_s,
                  final_source, cross))
 
@@ -501,6 +508,7 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                             "row_key": row_key,
                             "student_name": res.get("student_name", ""),
                             "mobile": phone,
+                            "alt_mobile": alt_by_key.get(row_key, ""),
                             "session": res.get("session", ""),
                             "reference_no": new_ref,
                             "dob": res.get("dob", ""),
@@ -710,6 +718,7 @@ def recheck_one(row_key):
                     ok, info = whatsapp.send_for_student({
                         "row_key": row_key, "student_name": student["student_name"],
                         "mobile": phone, "session": student["session"],
+                        "alt_mobile": (student["alt_mobile"] if "alt_mobile" in student.keys() else ""),
                         "reference_no": new_ref, "dob": student["dob"]})
                     if ok:
                         c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",

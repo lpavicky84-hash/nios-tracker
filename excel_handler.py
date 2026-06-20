@@ -61,6 +61,9 @@ def read_students_from_excel(filepath):
     ref_col     = _find_col(hc, ["reference number", "reference no", "ref no", "refno", "reference"])
     name_col    = _find_col(hc, ["student name", "name"])
     mobile_col  = _find_col(hc, ["mobile no", "mobile", "phone no", "phone"])
+    alt_col     = _find_col(hc, ["alternate number", "alternate mobile", "alternate no",
+                                 "alternate phone", "alt number", "alt mobile", "alt no",
+                                 "second number", "2nd number", "other number", "whatsapp number"])
     class_col   = _find_col(hc, ["class"])
     email_col   = _find_col(hc, ["email"])
     dob_col     = _find_col(hc, ["date of birth", "dob", "d o b", "birth"])
@@ -130,6 +133,7 @@ def read_students_from_excel(filepath):
             "dob":          cell(row, dob_col),
             "student_name": cell(row, name_col),
             "mobile":       cell(row, mobile_col),
+            "alt_mobile":   cell(row, alt_col),
             "class_level":  cell(row, class_col),
             "session":      session_cell(row, session_col),
             "source":       source,

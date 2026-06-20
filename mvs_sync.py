@@ -53,6 +53,8 @@ def fetch_students_for_tracker(session=None, include_done=False):
             "row_index": 0, "reference_no": ref, "enrollment_no": enr, "email": email,
             "dob": str(s.get("dob") or "").strip(), "student_name": str(s.get("name") or "").strip(),
             "mobile": str(s.get("mobile") or "").strip(), "class_level": str(s.get("class") or "").strip(),
+            "alt_mobile": str(s.get("alternateMobile") or s.get("alternateNumber") or s.get("altMobile")
+                              or s.get("whatsappNumber") or s.get("alternate_number") or "").strip(),
             "session": str(s.get("examSession") or "").strip(), "row_key": rk,
             "student_id": str(s.get("studentId") or "").strip(),
         })

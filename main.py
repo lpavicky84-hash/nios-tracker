@@ -1119,6 +1119,7 @@ function applySidebarPref(){
         <label style="font-size:12px;font-weight:600">Enrollment No<input id="edit-enrollment_no" class="edit-inp"></label>
         <label style="font-size:12px;font-weight:600">Date of Birth<input id="edit-dob" class="edit-inp" placeholder="DD-MM-YYYY"></label>
         <label style="font-size:12px;font-weight:600">Mobile No<input id="edit-mobile" class="edit-inp"></label>
+        <label style="font-size:12px;font-weight:600">Alternate No <span style="color:var(--muted);font-weight:400">(optional — WhatsApp goes to both)</span><input id="edit-alt_mobile" class="edit-inp" placeholder="2nd number (optional)"></label>
         <label style="font-size:12px;font-weight:600;grid-column:1/3">Email<input id="edit-email" class="edit-inp"></label>
         <label style="font-size:12px;font-weight:600">Class<input id="edit-class_level" class="edit-inp"></label>
         <label style="font-size:12px;font-weight:600">Session<input id="edit-session" class="edit-inp"></label>
@@ -1676,6 +1677,9 @@ function waBtn(s){
   }else{
     badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:var(--muted)">Not sent yet</div>';
   }
+  if((s.whatsapp_info||"").indexOf("2 numbers")>=0){
+    badge+='<div style="margin-top:3px;font-size:11px;font-weight:700;color:#7C3AED">&#128241; Sent to 2 numbers (own + alternate)</div>';
+  }
   const bc=(dv==="failed")?'#DC2626':'#16A34A';
   return badge+'<button class="btn-dl" style="background:'+bc+';color:#fff;border-color:'+bc+';margin-top:4px" '+
     'onclick="resendWa(&quot;'+s.row_key+'&quot;,this)">'+(sent?'Resend WhatsApp':'Send WhatsApp')+'</button>';
@@ -1983,7 +1987,7 @@ function refreshAllTables(){
   try{updateFailedBadge();}catch(e){}
   try{loadDashboard();}catch(e){}
 }
-const EDIT_FIELDS=["student_name","reference_no","enrollment_no","dob","mobile","email","class_level","session"];
+const EDIT_FIELDS=["student_name","reference_no","enrollment_no","dob","mobile","alt_mobile","email","class_level","session"];
 async function editStudent(rowKey){
   try{
     const s=await api("/api/student-get?row_key="+encodeURIComponent(rowKey));
@@ -3746,20 +3750,20 @@ async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Students"
-    headers = ["STUDENT NAME", "MOBILE NO", "CLASS", "REFERENCE NUMBER", "Enrol No", "Email",
+    headers = ["STUDENT NAME", "MOBILE NO", "ALTERNATE NUMBER (optional)", "CLASS", "REFERENCE NUMBER", "Enrol No", "Email",
                "Date of Birth", "ADMISSION SESSION", "ADMISSION STATUS", "REMARKS",
                "DOWNLOAD ID CARD", "DOWNLOAD APPLICATION FORM", "HALL TICKET"]
     ws.append(headers)
     if type == "syc":
         rows = [
-            ["AYUSH KUMAR", "9876543210", "12TH", "", "220004253089", "", "19-06-2006", "SYC"],
-            ["PETER RANA", "7428240153", "12TH", "", "50258253204", "peter@example.com", "17-05-2001", "SYC"],
+            ["AYUSH KUMAR", "9876543210", "9988776655", "12TH", "", "220004253089", "", "19-06-2006", "SYC"],
+            ["PETER RANA", "7428240153", "", "12TH", "", "50258253204", "peter@example.com", "17-05-2001", "SYC"],
         ]
     else:
         rows = [
-            ["SABBA NOOR", "6205148930", "12TH", "D1026300062", "", "", "05-02-2010", "On Demand"],
-            ["DEVRAJ JAT", "7737485139", "10TH", "B0926200020", "", "", "01-07-2004", "Stream 2"],
-            ["SANA PARWEEN", "9523534252", "12TH", "A1026300040", "", "sana@example.com", "28-02-2009", "April"],
+            ["SABBA NOOR", "6205148930", "8123456789", "12TH", "D1026300062", "", "", "05-02-2010", "On Demand"],
+            ["DEVRAJ JAT", "7737485139", "", "10TH", "B0926200020", "", "", "01-07-2004", "Stream 2"],
+            ["SANA PARWEEN", "9523534252", "9012345678", "12TH", "A1026300040", "", "sana@example.com", "28-02-2009", "April"],
         ]
     for r in rows:
         ws.append(r)
@@ -4223,7 +4227,7 @@ async def student_edit(body: dict, user=Depends(verify_token)):
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Student not found")
-    allowed = ["student_name", "mobile", "email", "dob", "reference_no",
+    allowed = ["student_name", "mobile", "alt_mobile", "email", "dob", "reference_no",
                "enrollment_no", "class_level", "session"]
     sets, params = [], []
     for f in allowed:
@@ -4324,7 +4328,7 @@ def _wa_send_one(row_key, verify=False):
     import whatsapp
     try:
         conn = get_db()
-        row = conn.execute("SELECT row_key, student_name, mobile, session, reference_no, dob, enrollment_no "
+        row = conn.execute("SELECT row_key, student_name, mobile, alt_mobile, session, reference_no, dob, enrollment_no "
                            "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
         if not row:
             conn.close()
