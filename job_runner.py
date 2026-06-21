@@ -599,6 +599,27 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
     finally:
         conn.close()
 
+def _live_report_counts():
+    """Live portal totals using the EXACT same definitions as the Excel report Summary,
+    so the WhatsApp run-report numbers always match the attached Excel sheet (instead of
+    per-run counters, which only count what one run touched)."""
+    out = {"confirmed": 0, "required": 0, "error": 0}
+    try:
+        conn = get_db()
+        ND = "COALESCE(deleted,0)=0"
+        NF = "COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0"
+        def cnt(where):
+            return conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND {where}").fetchone()[0]
+        out["confirmed"] = cnt(f"is_confirmed=1 AND {NF}")
+        out["required"] = cnt(f"current_status='Document Required' AND {NF}")
+        out["error"] = cnt("(current_status IN ('Unknown','Fetch Error') "
+                           "OR COALESCE(check_failed,0)=1 OR COALESCE(login_failed,0)=1)")
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
 def _send_run_report(stats, group_label):
     """After a completed run, WhatsApp a summary + Excel-report link to the admin numbers
     set in Settings (only if reporting is enabled). Never breaks the run on failure.
@@ -621,9 +642,12 @@ def _send_run_report(stats, group_label):
         when = datetime.now().strftime("%d %b, %I:%M %p")
         url = links.report_url(today)
         same = max(0, stats.get("checked", 0) - stats.get("changed", 0))
+        # Confirmed / Document-Required / Error come from LIVE portal totals (same as the
+        # Excel Summary) — NOT per-run counters — so the text always matches the Excel.
+        live = _live_report_counts()
         params = whatsapp.make_report_params(
-            f"{group_label} - {when}", stats.get("confirmed", 0), stats.get("required", 0),
-            stats.get("error", 0), same, stats.get("checked", 0), url)
+            f"{group_label} - {when}", live["confirmed"], live["required"],
+            live["error"], same, stats.get("checked", 0), url)
         sent, errs = whatsapp.send_report_to_all(nums, params)
         stamp = datetime.now().strftime("%d %b %I:%M %p")
         if sent:

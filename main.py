@@ -3574,8 +3574,12 @@ async def send_run_report(body: dict, user=Depends(verify_token)):
     label = r["report_label"] or "Run report"
     same = max(0, st.get("checked", 0) - st.get("changed", 0))
     url = links.report_url(datetime.now().strftime("%Y-%m-%d"))
-    params = whatsapp.make_report_params(label, st.get("confirmed", 0), st.get("required", 0),
-                                         st.get("error", 0), same, st.get("checked", 0), url)
+    # Confirmed / Required / Error from LIVE totals (match the Excel Summary), like the
+    # automatic report. Total-checked + unchanged stay as that run's own numbers.
+    import job_runner as _jr
+    live = _jr._live_report_counts()
+    params = whatsapp.make_report_params(label, live["confirmed"], live["required"],
+                                         live["error"], same, st.get("checked", 0), url)
     sent, errs = whatsapp.send_report_to_all(nums, params)
     stamp = datetime.now().strftime("%d %b %I:%M %p")
     set_setting("report_last_status",
@@ -3914,8 +3918,23 @@ def build_report_excel(path):
         return conn.execute(f"SELECT {cols} FROM student_status WHERE {ND} AND {where} "
                             f"ORDER BY student_name").fetchall()
     confirmed = rows(f"is_confirmed=1 AND {NF}")
-    today = datetime.now().strftime("%Y-%m-%d")
-    confirmed_today = rows(f"is_confirmed=1 AND {NF} AND last_changed LIKE '{today}%'")
+    # "Confirmed Today" = confirmations since the start of today — BUT if the latest run
+    # CROSSED MIDNIGHT (started yesterday ~11 PM, finished after 12 AM), count from that
+    # run's start instead, so the whole run's confirmations stay together and aren't split
+    # by the date change. Same-day morning/evening runs are unaffected (cutoff = midnight).
+    now = datetime.now()
+    midnight = now.strftime("%Y-%m-%d") + " 00:00:00"
+    cutoff = midnight
+    try:
+        lr = conn.execute("SELECT run_at FROM run_logs ORDER BY id DESC LIMIT 1").fetchone()
+        if lr and lr["run_at"]:
+            ra = str(lr["run_at"])
+            recent = (now - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
+            if ra < midnight and ra >= recent:
+                cutoff = ra   # run began before midnight & is recent -> include from run start
+    except Exception:
+        pass
+    confirmed_today = rows(f"is_confirmed=1 AND {NF} AND last_changed >= '{cutoff}'")
     required = rows(f"current_status='Document Required' AND {NF}")
     verified = rows(f"current_status='Verified' AND {NF}")
     docsprog = rows(f"current_status='Documents Verification In Progress' AND {NF}")
