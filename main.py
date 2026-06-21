@@ -1675,7 +1675,12 @@ function waBtn(s){
   }else if(sent){
     badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:#B45309">Sent to WhatsApp'+(at?' &middot; '+at:'')+' <span style="font-weight:400;color:var(--muted)">(delivery not yet confirmed)</span></div>';
   }else{
-    badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:var(--muted)">Not sent yet</div>';
+    var why=(s.whatsapp_info||"");
+    if(why && why.indexOf("2 numbers")<0){
+      badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">&#9888; Not sent &middot; '+why.replace(/</g,"&lt;").slice(0,150)+'</div>';
+    }else{
+      badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:var(--muted)">Not sent yet</div>';
+    }
   }
   if((s.whatsapp_info||"").indexOf("2 numbers")>=0){
     badge+='<div style="margin-top:3px;font-size:11px;font-weight:700;color:#7C3AED">&#128241; Sent to 2 numbers (own + alternate)</div>';
@@ -1687,13 +1692,20 @@ function waBtn(s){
 async function resendWa(rowKey,btn){
   if(btn&&btn.dataset.busy==="1")return;
   if(!confirm("Send the documents to this student on WhatsApp?"))return;
-  let orig="";
-  if(btn){btn.dataset.busy="1";orig=btn.innerHTML;btn.innerHTML="Queued…";}
-  try{const r=await api("/api/wa-resend","POST",{row_key:rowKey});
-    showToast("Resend started in background — status will update shortly");
-    setTimeout(()=>{try{loadConfirmed(1);}catch(e){}try{loadStudents(1);}catch(e){}},6000);
+  let orig="",pct=1,fake=null;
+  if(btn){btn.dataset.busy="1";orig=btn.innerHTML;
+    btn.innerHTML='<span class="dl-spin"></span> '+pct+'%';
+    fake=setInterval(()=>{ if(pct<90){pct+=Math.max(1,Math.floor((90-pct)/6));
+      btn.innerHTML='<span class="dl-spin"></span> '+pct+'%';}},420);}
+  try{
+    const r=await api("/api/wa-resend","POST",{row_key:rowKey});
+    if(fake){clearInterval(fake);fake=null;}
+    if(btn)btn.innerHTML='100%';
+    if(r.ok){ showToast("Sent \u2713 "+(r.info||"")); }
+    else{ showToast("Not sent \u2014 "+(r.info||"failed")); }
+    setTimeout(()=>{try{loadConfirmed(1);}catch(e){}try{loadStudents(1);}catch(e){}},1200);
   }catch(e){showToast("Error: "+e.message);}
-  finally{if(btn){setTimeout(()=>{btn.innerHTML=orig;btn.dataset.busy="";},3000);}}
+  finally{if(fake)clearInterval(fake);if(btn){setTimeout(()=>{btn.innerHTML=orig;btn.dataset.busy="";},1600);}}
 }
 async function downloadDoc(btn,ref,dob,kind,name){
   if(btn&&btn.dataset.busy==="1")return;          // already running -> ignore extra clicks
@@ -4458,14 +4470,16 @@ def auto_send_pending_whatsapp(batch=None, label="Auto sweep"):
     return {"sent": sent, "checked": len(keys)}
 
 @app.post("/api/wa-resend")
-async def wa_resend(body: dict, background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    """Manual (re)send for ONE student — runs in the BACKGROUND so the UI never freezes
-    and the counsellor can keep working. The Confirmed list updates on its own."""
+async def wa_resend(body: dict, user=Depends(verify_token)):
+    """Manual (re)send for ONE student. Runs the send in a worker thread (so the event loop
+    never blocks) and returns the ACTUAL result, so the counsellor immediately sees whether
+    it went through or exactly why it failed (e.g. 'no campaign set for public')."""
     row_key = body.get("row_key", "")
     if not row_key:
         raise HTTPException(status_code=400, detail="row_key required")
-    background_tasks.add_task(_wa_send_one, row_key)
-    return {"ok": True, "queued": True, "message": "Resend started — status will update shortly"}
+    from fastapi.concurrency import run_in_threadpool
+    ok, info, lf = await run_in_threadpool(_wa_send_one, row_key)
+    return {"ok": ok, "info": info, "login_failed": lf}
 
 @app.post("/api/wa-resend-bulk")
 async def wa_resend_bulk(body: dict, background_tasks: BackgroundTasks, user=Depends(verify_token)):
