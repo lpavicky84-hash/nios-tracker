@@ -642,7 +642,7 @@ function applySidebarPref(){
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
-            <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
             <select id="s-datepreset" onchange="onDatePreset('s',()=>loadStudents(1))">
               <option value="">All dates</option>
               <option value="today">Today</option>
@@ -707,7 +707,7 @@ function applySidebarPref(){
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
-            <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
             <select id="c-datepreset" onchange="onDatePreset('c',()=>loadConfirmed(1))">
               <option value="">All dates</option>
               <option value="today">Today</option>
@@ -793,7 +793,7 @@ function applySidebarPref(){
               <option>Document Required</option>
             </select>
             <select id="r-session" onchange="loadRequired(1)"><option value="">All Sessions</option></select>
-            <select id="r-source" onchange="loadRequired(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <select id="r-source" onchange="loadRequired(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
             <button class="btn btn-primary btn-sm" onclick="runRequired(this)">
               <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               Re-check Required</button>
@@ -822,7 +822,7 @@ function applySidebarPref(){
             If the data is correct it leaves this list and moves to its normal category.</p>
           <div class="filter-bar">
             <input type="text" id="f-search" placeholder="Search name / reference / email..." oninput="debounceFailed()">
-            <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
             <button class="btn btn-outline btn-sm" onclick="loadFailed(1)">Refresh</button>
           </div>
           <div id="f-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
@@ -856,7 +856,7 @@ function applySidebarPref(){
               <option>Approved</option><option>Rejected</option>
               <option>Unknown</option><option>Fetch Error</option>
             </select>
-            <select id="h-source" onchange="loadHistory(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <select id="h-source" onchange="loadHistory(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
             <input id="h-search" type="text" placeholder="Search name / reference / email…" oninput="histSearchDebounced()"
               style="padding:9px 12px;border:2px solid var(--border);border-radius:9px;font-size:13.5px;min-width:230px">
             <button class="btn btn-outline btn-sm" onclick="exportHistory()">
@@ -952,16 +952,19 @@ function applySidebarPref(){
             <span class="iv-lbl"><span class="iv-dot" style="background:#0EA5E9"></span>On Demand</span>
             <input type="number" id="iv-ondemand" min="1" max="43200" value="6">
             <select id="iv-ondemand-unit"><option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
+            <select id="iv-ondemand-src" title="Which data this group auto-runs"><option value="both">Both sources</option><option value="mvs_tracker">Tracker only</option><option value="mvs_portal">Portal only</option></select>
           </div>
           <div class="iv-row">
             <span class="iv-lbl"><span class="iv-dot" style="background:#F59E0B"></span>Stream 2</span>
             <input type="number" id="iv-stream2" min="1" max="43200" value="6">
             <select id="iv-stream2-unit"><option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
+            <select id="iv-stream2-src" title="Which data this group auto-runs"><option value="both">Both sources</option><option value="mvs_tracker">Tracker only</option><option value="mvs_portal">Portal only</option></select>
           </div>
           <div class="iv-row">
             <span class="iv-lbl"><span class="iv-dot" style="background:#7C3AED"></span>Public Exam <span style="font-weight:400;color:var(--muted);font-size:12px">(April / Oct)</span></span>
             <input type="number" id="iv-public" min="1" max="43200" value="12">
             <select id="iv-public-unit"><option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
+            <select id="iv-public-src" title="Which data this group auto-runs"><option value="both">Both sources</option><option value="mvs_tracker">Tracker only</option><option value="mvs_portal">Portal only</option></select>
           </div>
           <div class="set-foot">
             <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
@@ -1647,12 +1650,14 @@ function badge(s){
   return '<span class="badge '+(m[s]||'b-error')+'">'+(s||'Unknown')+'</span>';
 }
 function srcBadge(s){
-  var p=(s.source||"mvs_tracker")==="mvs_portal";
   var dup=(s.cross_dup==1||s.cross_dup===true);
+  if(dup){
+    return '<span title="This student exists in BOTH MVS Tracker and MVS Portal — merged into one record" style="display:inline-block;white-space:nowrap;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:linear-gradient(135deg,#EDE9FE,#E0F2FE);color:#5B21B6;border:1px solid #C4B5FD">&#8651; Both (Tracker + Portal)</span>';
+  }
+  var p=(s.source||"mvs_tracker")==="mvs_portal";
   return '<span style="display:inline-block;white-space:nowrap;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;'+
     (p?'background:#EDE9FE;color:#5B21B6':'background:#E0F2FE;color:#075985')+'">'+
-    (p?'MVS Portal':'MVS Tracker')+'</span>'+
-    (dup?'<span title="Same student also in the other source — kept once as MVS Portal" style="margin-left:5px;font-size:10px;font-weight:700;color:#7C3AED">&#8651; dup</span>':"");
+    (p?'MVS Portal':'MVS Tracker')+'</span>';
 }
 function isLoginFailed(s){return (s.login_failed==1||s.login_failed===true);}
 function fixBtn(s){
@@ -2569,7 +2574,10 @@ async function loadIntervals(){
   try{const r=await api("/api/intervals");
     setIvField("ondemand",r.ondemand_min);
     setIvField("stream2",r.stream2_min);
-    setIvField("public",r.public_min);}catch(e){}
+    setIvField("public",r.public_min);
+    var sm={ondemand:r.ondemand_src,stream2:r.stream2_src,public:r.public_src};
+    for(var g in sm){var el=document.getElementById("iv-"+g+"-src");if(el)el.value=sm[g]||"both";}
+  }catch(e){}
 }
 async function loadTrash(){
   const b=document.getElementById("trash-body");if(!b)return;
@@ -2693,7 +2701,9 @@ async function saveIntervals(){
   const S=document.getElementById("iv-status");
   if(od<15||st<15||pm<15){S.innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
   if(od>43200||st>43200||pm>43200){S.innerHTML='<span style="color:var(--danger)">Maximum interval is 30 days</span>';return;}
-  try{const r=await api("/api/intervals","POST",{ondemand_min:od,stream2_min:st,public_min:pm});
+  var ivsrc=function(g){var el=document.getElementById("iv-"+g+"-src");return el?el.value:"both";};
+  try{const r=await api("/api/intervals","POST",{ondemand_min:od,stream2_min:st,public_min:pm,
+        ondemand_src:ivsrc("ondemand"),stream2_src:ivsrc("stream2"),public_src:ivsrc("public")});
     S.innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
     showToast("Intervals saved!");try{loadNextRuns();}catch(e){}}
   catch(e){S.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
@@ -2881,6 +2891,14 @@ def _mvs_enabled():
 RUN_GROUPS = [("ondemand", "job_ondemand", 6), ("stream2", "job_stream2", 6),
               ("public", "job_public", 12)]
 
+def _group_source(grp):
+    """Per-group data-source preference for AUTO runs (set in Recheck Intervals):
+    'both' (default) -> None = both sources run together; otherwise restrict the
+    scheduled run to just MVS Tracker or just MVS Portal data. This is what lets a
+    counsellor say e.g. 'auto-run Stream 2 from MVS Tracker only'."""
+    v = get_setting(f"runsrc_{grp}", "both")
+    return v if v in ("mvs_tracker", "mvs_portal") else None
+
 def reschedule_jobs():
     """One interval job per group (On Demand / Stream 2 / Public). Both data sources
     (MVS Portal + MVS Tracker) run together; the split is by session group only.
@@ -2906,7 +2924,7 @@ def reschedule_jobs():
         nxt = last + timedelta(minutes=mins) if last else now + timedelta(minutes=mins)
         if nxt <= now:
             nxt = now + timedelta(minutes=mins)
-        scheduler.add_job(lambda g=grp: run_status_check(g),
+        scheduler.add_job(lambda g=grp: run_status_check(g, _group_source(g)),
                           trigger=IntervalTrigger(minutes=mins),
                           id=jid, replace_existing=True, next_run_time=nxt)
         logger.info(f"{jid}: every {mins}min | last_run={last} | next_run={nxt}")
@@ -3129,8 +3147,11 @@ def _build_student_where(view, search, status_filter, session_filter,
     if session_filter:
         clause, sp = _session_clause(session_filter)
         wc.append(clause); params += sp
-    if source_filter:                      # mvs_portal | mvs_tracker (Data Type)
-        wc.append("COALESCE(source,'mvs_tracker') = ?"); params.append(source_filter)
+    if source_filter:                      # mvs_portal | mvs_tracker | both (Data Type)
+        if source_filter == "both":
+            wc.append("COALESCE(cross_dup,0) = 1")   # exists in BOTH sources, merged
+        else:
+            wc.append("COALESCE(source,'mvs_tracker') = ?"); params.append(source_filter)
     if wa_status:                          # WhatsApp delivery filter (Confirmed view)
         if wa_status == "delivered":
             wc.append("whatsapp_delivery = 'delivered'")
@@ -3193,7 +3214,10 @@ async def failed_students(page: int = 1, per_page: int = 50, search: str = "",
         wc.append("(student_name LIKE ? OR reference_no LIKE ? OR email LIKE ? OR enrollment_no LIKE ?)")
         params += [like, like, like, like]
     if source:
-        wc.append("COALESCE(source,'mvs_tracker')=?"); params.append(source)
+        if source == "both":
+            wc.append("COALESCE(cross_dup,0)=1")
+        else:
+            wc.append("COALESCE(source,'mvs_tracker')=?"); params.append(source)
     where = "WHERE " + " AND ".join(wc)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     per_page = max(1, min(per_page, 200)); page = max(1, page)
@@ -3290,7 +3314,11 @@ async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_d
         wc.append("changed_at <= ?"); params.append(to_dt)
     if status:
         wc.append("new_status = ?"); params.append(status)
-    if source:
+    if source == "both":
+        wc.append("EXISTS (SELECT 1 FROM student_status ss2 "
+                  "WHERE ss2.reference_no = status_history.reference_no "
+                  "AND COALESCE(ss2.cross_dup,0) = 1)")
+    elif source:
         wc.append(f"{src_expr} = ?"); params.append(source)
     if search:
         like = f"%{search.strip()}%"
@@ -3352,7 +3380,11 @@ async def export_history(from_dt: str = "", to_dt: str = "", status: str = "",
         wc.append("changed_at <= ?"); params.append(to_dt)
     if status:
         wc.append("new_status = ?"); params.append(status)
-    if source:
+    if source == "both":
+        wc.append("EXISTS (SELECT 1 FROM student_status ss2 "
+                  "WHERE ss2.reference_no = status_history.reference_no "
+                  "AND COALESCE(ss2.cross_dup,0) = 1)")
+    elif source:
         wc.append(f"{src_expr} = ?"); params.append(source)
     where = ("WHERE " + " AND ".join(wc)) if wc else ""
     rows = conn.execute(f"SELECT {cols}, {src_expr} AS source FROM status_history {where} ORDER BY id DESC", params).fetchall()
@@ -3713,7 +3745,7 @@ async def intervals_resume(body: dict, user=Depends(verify_token)):
         rem = 0
     if rem <= 0:
         rem = mins * 60
-    scheduler.add_job(lambda g=grp: run_status_check(g),
+    scheduler.add_job(lambda g=grp: run_status_check(g, _group_source(g)),
                       trigger=IntervalTrigger(minutes=mins),
                       id=jid, replace_existing=True,
                       next_run_time=datetime.now() + timedelta(seconds=rem))
@@ -3909,7 +3941,10 @@ async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
 async def get_intervals(user=Depends(verify_token)):
     return {"ondemand_min": _interval_minutes("ondemand", 6),
             "stream2_min": _interval_minutes("stream2", 6),
-            "public_min": _interval_minutes("public", 12)}
+            "public_min": _interval_minutes("public", 12),
+            "ondemand_src": get_setting("runsrc_ondemand", "both") or "both",
+            "stream2_src": get_setting("runsrc_stream2", "both") or "both",
+            "public_src": get_setting("runsrc_public", "both") or "both"}
 
 @app.post("/api/intervals")
 async def set_intervals(body: dict, user=Depends(verify_token)):
@@ -3924,6 +3959,13 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
     set_setting("interval_stream2_min", st)
     set_setting("interval_public_min", pub)
     set_setting("interval_regular_min", "")   # retire the old combined setting
+    # Per-group DATA SOURCE for auto runs: both (default) | mvs_tracker | mvs_portal.
+    def _vsrc(x):
+        x = str(x or "both")
+        return x if x in ("both", "mvs_tracker", "mvs_portal") else "both"
+    set_setting("runsrc_ondemand", _vsrc(body.get("ondemand_src")))
+    set_setting("runsrc_stream2", _vsrc(body.get("stream2_src")))
+    set_setting("runsrc_public", _vsrc(body.get("public_src")))
     # Saving new intervals restarts the timers fresh, so clear any paused state.
     for grp in ("ondemand", "stream2", "public"):
         set_setting(f"paused_{grp}", "")
@@ -4657,60 +4699,6 @@ async def debug_idcard(ref: str, dob: str, user=Depends(verify_token)):
         return debug_idcard_text(ref, dob)
     except Exception as e:
         return {"error": str(e)}
-
-@app.get("/api/debug-group-diff")
-async def debug_group_diff(group: str = "stream2", source: str = "mvs_tracker", user=Depends(verify_token)):
-    """Explain why the ACTIVE student list shows more students than a manual run
-    actually checks. Lists every active (list-visible) student of this group+source
-    whose RAW session is classified differently by the run grouping than by the list
-    filter — i.e. the students that silently fall out of a group run.
-
-    group:  stream2 | ondemand | public
-    source: mvs_tracker | mvs_portal
-    """
-    grp = group if group in ("ondemand", "stream2", "public") else "stream2"
-
-    # OLD run classifier (pre-fix) — kept here ONLY so this report can show which
-    # students the old code used to drop. The live run now uses the fixed version.
-    def old_group(session):
-        s = (session or "").lower()
-        if "stream 2" in s or "stream2" in s or "stream-2" in s:
-            return "stream2"
-        if "on demand" in s or "ondemand" in s or "on-demand" in s or "odes" in s:
-            return "ondemand"
-        return "public"
-
-    from job_runner import session_group as new_group
-
-    label = {"stream2": "Stream 2", "ondemand": "On Demand", "public": "Public"}[grp]
-    where, params = _build_student_where("normal", "", "", label, source_filter=source)
-    conn = get_db()
-    rows = conn.execute(
-        f"SELECT reference_no, student_name, session FROM student_status {where}", params
-    ).fetchall()
-    conn.close()
-
-    affected = []        # in the list, but OLD run code dropped them (now fixed)
-    still_dropped = []   # in the list, but EVEN the fixed run still classifies elsewhere
-    for r in rows:
-        sess = r["session"] or ""
-        og, ng = old_group(sess), new_group(sess)
-        if og != grp and ng == grp:
-            affected.append({"ref": r["reference_no"], "name": r["student_name"],
-                             "raw_session": sess, "old_group": og})
-        elif ng != grp:
-            still_dropped.append({"ref": r["reference_no"], "name": r["student_name"],
-                                  "raw_session": sess, "now_group": ng})
-
-    return {
-        "group": grp,
-        "source": source,
-        "active_list_count": len(rows),
-        "fixed_by_session_patch": len(affected),
-        "students_recovered_by_fix": affected,
-        "still_dropped_count": len(still_dropped),
-        "still_dropped": still_dropped,
-    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Danger zone — wipe all student data for a fresh upload (keeps settings)
