@@ -667,6 +667,11 @@ function applySidebarPref(){
             <button class="btn btn-success btn-sm" id="sel-run-btn" onclick="runSelected()">
               <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Selected</button>
             <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="deleteSelectedStudents()">&#128465; Delete selected</button>
+            <select onchange="changeSelectedSource(this)" style="max-width:170px" title="Move selected students to a data type">
+              <option value="">Change source&hellip;</option>
+              <option value="mvs_tracker">&rarr; MVS Tracker</option>
+              <option value="mvs_portal">&rarr; MVS Portal</option>
+            </select>
             <button class="btn btn-sm" style="background:transparent;color:var(--muted);border:1px solid var(--border)" onclick="clearSelection()">Clear</button>
             <span style="font-size:12px;color:var(--muted)">Pick the exact students whose status you need right now — saves credits.</span>
           </div>
@@ -984,6 +989,24 @@ function applySidebarPref(){
           </div>
           <div id="rep-last" style="margin-top:12px;font-size:12.5px;color:var(--muted)"></div>
           <div id="rep-status" style="margin-top:8px;font-size:13px"></div>
+        </div>
+        <div class="card">
+          <div class="set-head">
+            <span class="set-ico" style="background:linear-gradient(135deg,#0EA5E9,#0369A1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>
+            <div class="set-tt"><h3>Change Data Source (MVS Portal &harr; MVS Tracker)</h3>
+            <div class="set-sub">Wrongly tagged on upload (e.g. auto-detect put a Tracker sheet under MVS Portal)? Move students from one data type to the other. <b>No data is lost</b> — only the tag changes.</div></div>
+            <div class="set-act"><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="loadSourceCounts()">Refresh counts</button></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+            <span style="font-size:13px">Move&nbsp;all from</span>
+            <select id="src-from" style="max-width:170px"><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <span style="font-size:13px">&rarr; to</span>
+            <select id="src-to" style="max-width:170px"><option value="mvs_tracker">MVS Tracker</option><option value="mvs_portal">MVS Portal</option></select>
+            <button class="btn btn-primary btn-sm" onclick="moveAllSource(this)">Move all</button>
+          </div>
+          <div id="src-counts" style="font-size:12.5px;color:var(--muted)">Current: MVS Portal — … &middot; MVS Tracker — …</div>
+          <div id="src-status" style="margin-top:8px;font-size:13px"></div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.5">Tip: to move only <b>some</b> students, go to the <b>Students</b> tab, filter by Data Type, tick the ones you want, then use <b>Change source</b> in the select bar.</div>
         </div>
         <div class="card">
           <div class="set-head">
@@ -1450,7 +1473,7 @@ function nav(page){
   if(page==="failed")loadFailed(1);
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
-  if(page==="settings"){loadIntervals();loadWa();loadTrash();loadReportSettings();}
+  if(page==="settings"){loadIntervals();loadWa();loadTrash();loadReportSettings();loadSourceCounts();}
   if(page==="upload")loadUploadSource();
   updateNavCounts();
 }
@@ -2363,6 +2386,42 @@ async function saveUploadSource(){
 }
 async function loadUploadSource(){
   try{const d=await api("/api/source-override");const sel=document.getElementById("upload-source");if(sel)sel.value=d.value||"";}catch(e){}
+}
+async function loadSourceCounts(){
+  try{
+    const d=await api("/api/source-counts");
+    const el=document.getElementById("src-counts");
+    if(el)el.innerHTML='Current: <b>MVS Portal</b> &mdash; '+(d.mvs_portal||0)+' &middot; <b>MVS Tracker</b> &mdash; '+(d.mvs_tracker||0);
+  }catch(e){}
+}
+function srcLabel(s){return s==="mvs_portal"?"MVS Portal":"MVS Tracker";}
+async function moveAllSource(btn){
+  const frm=fval("src-from"), to=fval("src-to");
+  if(frm===to){showToast("Pick two different data types");return;}
+  if(!confirm("Move ALL students from "+srcLabel(frm)+" to "+srcLabel(to)+"?\\n\\nOnly the data-type tag changes — no student is deleted or lost."))return;
+  const st=document.getElementById("src-status");
+  if(btn){btn.disabled=true;btn.textContent="Moving…";}
+  try{
+    const r=await api("/api/change-source-bulk","POST",{from_source:frm,to_source:to});
+    if(st)st.innerHTML='<span style="color:var(--success)">&#10003; Moved '+(r.moved||0)+' student(s) to '+srcLabel(to)+'.</span>';
+    loadSourceCounts();
+    refreshAllTables();
+  }catch(e){if(st)st.innerHTML='<span style="color:var(--danger)">Error: '+e.message+'</span>';}
+  finally{if(btn){btn.disabled=false;btn.textContent="Move all";}}
+}
+async function changeSelectedSource(sel){
+  const to=sel.value; if(!to){return;}
+  const keys=[...SELECTED];
+  sel.value="";
+  if(!keys.length){showToast("Select at least 1 student first");return;}
+  if(!confirm("Move "+keys.length+" selected student(s) to "+srcLabel(to)+"?\\n\\nOnly the data-type tag changes — nothing is deleted."))return;
+  try{
+    const r=await api("/api/change-source-selected","POST",{row_keys:keys,to_source:to});
+    showToast("Moved "+(r.moved||keys.length)+" student(s) to "+srcLabel(to));
+    clearSelection();
+    refreshAllTables();
+    try{loadSourceCounts();}catch(e){}
+  }catch(e){showToast("Error: "+e.message);}
 }
 async function downloadSample(type){
   try{
@@ -3881,6 +3940,54 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
         return f"{m//60}h {m%60}m"
     return {"message": f"On Demand: every {_fmt(od)}, Stream 2: every {_fmt(st)}, Public: every {_fmt(pub)}",
             "ondemand_min": od, "stream2_min": st, "public_min": pub}
+
+@app.get("/api/source-counts")
+async def source_counts(user=Depends(verify_token)):
+    """How many active students are tagged MVS Portal vs MVS Tracker (for the move tool)."""
+    conn = get_db()
+    rows = conn.execute("SELECT COALESCE(NULLIF(source,''),'mvs_tracker') AS src, COUNT(*) AS n "
+                        "FROM student_status WHERE COALESCE(deleted,0)=0 GROUP BY src").fetchall()
+    conn.close()
+    out = {"mvs_portal": 0, "mvs_tracker": 0}
+    for r in rows:
+        key = "mvs_portal" if r["src"] == "mvs_portal" else "mvs_tracker"
+        out[key] += r["n"]
+    return out
+
+@app.post("/api/change-source-bulk")
+async def change_source_bulk(body: dict, user=Depends(verify_token)):
+    """Move EVERY active student from one data type to another (e.g. a sheet that was
+    auto-detected as MVS Portal by mistake but should be MVS Tracker). No student is
+    deleted — only the 'source' tag changes, so nothing is lost."""
+    frm = body.get("from_source", "")
+    to = body.get("to_source", "")
+    if frm not in ("mvs_portal", "mvs_tracker") or to not in ("mvs_portal", "mvs_tracker") or frm == to:
+        raise HTTPException(status_code=400, detail="pick two different data types")
+    conn = get_db()
+    cur = conn.execute("UPDATE student_status SET source=? "
+                       "WHERE COALESCE(deleted,0)=0 AND COALESCE(NULLIF(source,''),'mvs_tracker')=?",
+                       (to, frm))
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return {"ok": True, "moved": n, "from": frm, "to": to}
+
+@app.post("/api/change-source-selected")
+async def change_source_selected(body: dict, user=Depends(verify_token)):
+    """Move ONLY the selected students to a data type (precise control from the list)."""
+    keys = [k for k in (body.get("row_keys", []) or []) if k][:5000]
+    to = body.get("to_source", "")
+    if to not in ("mvs_portal", "mvs_tracker"):
+        raise HTTPException(status_code=400, detail="invalid data type")
+    if not keys:
+        raise HTTPException(status_code=400, detail="no students selected")
+    conn = get_db()
+    ph = ",".join("?" * len(keys))
+    cur = conn.execute(f"UPDATE student_status SET source=? WHERE row_key IN ({ph})", [to] + keys)
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return {"ok": True, "moved": n, "to": to}
 
 @app.get("/api/source-override")
 async def get_source_override(user=Depends(verify_token)):
