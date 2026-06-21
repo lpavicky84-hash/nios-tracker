@@ -56,9 +56,12 @@ def session_group(session):
     treated as PUBLIC. Public never auto-sends unless its campaign is explicitly set up,
     so a stray/unknown session can never receive On Demand documents by mistake."""
     s = (session or "").lower()
-    if "stream 2" in s or "stream2" in s or "stream-2" in s:
+    # Spellings MUST stay in sync with _session_clause() in main.py, otherwise the
+    # student-list "Stream 2" filter and this run grouping disagree (a student shows
+    # under Stream 2 in the list but gets skipped by the Stream 2 run, or vice-versa).
+    if any(k in s for k in ("stream 2", "stream2", "stream-2", "stream_2", "stream ii")):
         return "stream2"
-    if "on demand" in s or "ondemand" in s or "on-demand" in s or "odes" in s:
+    if any(k in s for k in ("on demand", "ondemand", "on-demand", "on_demand", "odes")):
         return "ondemand"
     return "public"   # safe default — never on-demand for unknown/April/October/apr-27
 
