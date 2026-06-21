@@ -260,7 +260,13 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             logger.info(f"Upload run: {len(all_students)} student(s) from the uploaded sheet")
         else:
             # ── MVS portal: auto-fetch live students (no Excel upload needed) ──
-            if mvs_on:
+            # IMPORTANT: skip this on a TRACKER-only run. Otherwise the live portal
+            # fetch pulls in every portal student, and any tracker student who ALSO
+            # exists in the portal has its source flipped to mvs_portal during dedupe
+            # (portal rows are added first and win) — so the later source_only filter
+            # silently drops them. That made a "Stream 2 (MVS Tracker)" run check 69
+            # instead of 88. A tracker run must consider Excel + DB only.
+            if mvs_on and source_only != "mvs_tracker":
                 try:
                     mvs_students = mvs_sync.fetch_students_for_tracker(include_done=True)
                     for s in mvs_students:
@@ -269,8 +275,11 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                     logger.info(f"MVS: auto-fetched {len(mvs_students)} students")
                 except Exception as e:
                     logger.warning(f"MVS fetch failed: {e}")
-            # ── Excel upload (MVS Tracker data) — still works alongside MVS ──
-            if os.path.exists(EXCEL_PATH):
+            elif source_only == "mvs_tracker":
+                logger.info("Tracker-only run: skipping live MVS Portal fetch")
+            # ── Excel upload (MVS Tracker data) — skip on a PORTAL-only run so the
+            # mirror case can't happen (tracker Excel rows leaking into a portal run).
+            if os.path.exists(EXCEL_PATH) and source_only != "mvs_portal":
                 try:
                     all_students += read_students_from_excel(EXCEL_PATH)
                 except Exception as e:

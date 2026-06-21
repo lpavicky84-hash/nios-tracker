@@ -4658,6 +4658,60 @@ async def debug_idcard(ref: str, dob: str, user=Depends(verify_token)):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/debug-group-diff")
+async def debug_group_diff(group: str = "stream2", source: str = "mvs_tracker", user=Depends(verify_token)):
+    """Explain why the ACTIVE student list shows more students than a manual run
+    actually checks. Lists every active (list-visible) student of this group+source
+    whose RAW session is classified differently by the run grouping than by the list
+    filter — i.e. the students that silently fall out of a group run.
+
+    group:  stream2 | ondemand | public
+    source: mvs_tracker | mvs_portal
+    """
+    grp = group if group in ("ondemand", "stream2", "public") else "stream2"
+
+    # OLD run classifier (pre-fix) — kept here ONLY so this report can show which
+    # students the old code used to drop. The live run now uses the fixed version.
+    def old_group(session):
+        s = (session or "").lower()
+        if "stream 2" in s or "stream2" in s or "stream-2" in s:
+            return "stream2"
+        if "on demand" in s or "ondemand" in s or "on-demand" in s or "odes" in s:
+            return "ondemand"
+        return "public"
+
+    from job_runner import session_group as new_group
+
+    label = {"stream2": "Stream 2", "ondemand": "On Demand", "public": "Public"}[grp]
+    where, params = _build_student_where("normal", "", "", label, source_filter=source)
+    conn = get_db()
+    rows = conn.execute(
+        f"SELECT reference_no, student_name, session FROM student_status {where}", params
+    ).fetchall()
+    conn.close()
+
+    affected = []        # in the list, but OLD run code dropped them (now fixed)
+    still_dropped = []   # in the list, but EVEN the fixed run still classifies elsewhere
+    for r in rows:
+        sess = r["session"] or ""
+        og, ng = old_group(sess), new_group(sess)
+        if og != grp and ng == grp:
+            affected.append({"ref": r["reference_no"], "name": r["student_name"],
+                             "raw_session": sess, "old_group": og})
+        elif ng != grp:
+            still_dropped.append({"ref": r["reference_no"], "name": r["student_name"],
+                                  "raw_session": sess, "now_group": ng})
+
+    return {
+        "group": grp,
+        "source": source,
+        "active_list_count": len(rows),
+        "fixed_by_session_patch": len(affected),
+        "students_recovered_by_fix": affected,
+        "still_dropped_count": len(still_dropped),
+        "still_dropped": still_dropped,
+    }
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Danger zone — wipe all student data for a fresh upload (keeps settings)
 # ─────────────────────────────────────────────────────────────────────────────
