@@ -29,6 +29,88 @@ def thin_border():
     s = Side(style="thin", color="CCCCCC")
     return Border(left=s, right=s, top=s, bottom=s)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SESSION NORMALISATION — single source of truth, deliberately forgiving.
+# Counsellors type the exam session a hundred different ways:
+#   Stream 2 :  "Stream 2", "stream-2", "STREAM 2", "str-2", "str2", "stream ii", "s2"
+#   On Demand:  "On Demand", "ON DEMAND", "ondemand", "on-demand", "ode", "ODE", "ODES"
+#   April/Oct:  "April 2027", "APRIL 2027", "apr-27", "27-apr", "apr 2027", "oct-26"
+#   SYC      :  "SYC", "syc"
+# session_category()  -> the bucket used by filters / run grouping / doc rules.
+# canonicalize_session() -> the clean label stored & shown (e.g. 'April 2027').
+# Both strip case, spaces, dashes, underscores and dots before matching, so a new
+# spelling can't slip through and land a student in the wrong group again.
+# ─────────────────────────────────────────────────────────────────────────────
+_MONTHS = {
+    "january": "January", "jan": "January", "february": "February", "feb": "February",
+    "march": "March", "mar": "March", "april": "April", "apr": "April", "may": "May",
+    "june": "June", "jun": "June", "july": "July", "jul": "July", "august": "August",
+    "aug": "August", "september": "September", "sept": "September", "sep": "September",
+    "october": "October", "oct": "October", "november": "November", "nov": "November",
+    "december": "December", "dec": "December",
+}
+
+def _alnum(t):
+    """Lowercase + drop everything except letters/digits: 'str-2' -> 'str2'."""
+    return re.sub(r"[^a-z0-9]", "", (t or "").lower())
+
+def session_category(raw):
+    """Bucket ANY messy session text into exactly one of:
+        'syc' | 'ondemand' | 'stream2' | 'stream1' | 'public' | '' (blank)
+    'public' is the catch-all for April / October / abbreviations / unknown, so a
+    public-exam session can never be mistaken for On Demand again."""
+    t = (raw or "").strip().lower()
+    if not t:
+        return ""
+    c = _alnum(t)                       # 'on-demand' -> 'ondemand', 'str 2' -> 'str2'
+    if "syc" in c:
+        return "syc"
+    # On Demand — full words + ODE/ODES abbreviations + a bare 'od'/'ode' cell.
+    if ("ondemand" in c or c.startswith("odes") or c.startswith("ode")
+            or c in ("od", "ode", "odes")):
+        return "ondemand"
+    # Stream 2 — stream2 / streamII / str-2 / str2 / s2
+    if "stream2" in c or "streamii" in c or "str2" in c or c == "s2":
+        return "stream2"
+    # Stream 1 — stream1 / str-1 / str1 / s1 (kept distinct from Stream 2)
+    if "stream1" in c or "str1" in c or c == "s1" or c == "streami":
+        return "stream1"
+    return "public"                     # April / October / apr-27 / oct-26 / anything else
+
+def canonicalize_session(raw):
+    """Clean, human-readable session label for storage & display, from ANY input.
+    Stream / On Demand / SYC variants collapse to their proper name; April/October
+    style inputs (incl. 'apr-27', '27-apr') render as 'Month YYYY'. Unrecognised text
+    is returned tidied but unchanged so nothing is ever lost."""
+    t = (raw or "").strip()
+    if not t:
+        return ""
+    cat = session_category(t)
+    if cat == "syc":
+        return "SYC"
+    if cat == "ondemand":
+        return "On Demand"
+    if cat == "stream2":
+        return "Stream 2"
+    if cat == "stream1":
+        return "Stream 1"
+    # 'public' bucket — try to build a clean 'Month YYYY' out of April/October/apr-27.
+    low = t.lower()
+    month = None
+    for ab, full in _MONTHS.items():
+        if re.search(r"\b" + ab + r"|" + ab, low):
+            month = full
+            break
+    if month:
+        ym = re.search(r"(20\d{2})", low) or re.search(r"\b(\d{2})\b", low)
+        if ym:
+            y = ym.group(1)
+            if len(y) == 2:
+                y = "20" + y
+            return f"{month} {y}"
+        return month
+    return t        # genuinely unknown — keep as typed
+
 def _clean(val):
     if not val:
         return ""
@@ -94,13 +176,15 @@ def read_students_from_excel(filepath):
         return str(v).strip()
 
     def session_cell(row, col):
-        """Format session: dates become 'Month YYYY', text stays as-is."""
+        """Format session into a clean canonical label, no matter how it was typed.
+        Real date cells become 'Month YYYY'; text ('str-2', 'ODE', 'apr-27', ...) is
+        run through canonicalize_session so the stored value is always consistent."""
         if not col:
             return ""
         v = ws.cell(row, col).value
         if isinstance(v, (datetime, date)):
             return v.strftime("%B %Y")   # e.g. April 2027
-        return str(v or "").strip()
+        return canonicalize_session(str(v or "").strip())
 
     students = []
     for row in range(2, ws.max_row + 1):

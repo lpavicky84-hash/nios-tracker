@@ -172,6 +172,30 @@ def init_db():
     except Exception:
         pass
 
+    # ── One-time: canonicalise messy session labels already in the DB ──────────
+    # New uploads & portal pulls are cleaned at entry, but rows saved before this
+    # (e.g. 'str-2', 'ODE', 'apr-27', 'STREAM 2') still read messy. Rewrite them ONCE
+    # to the canonical label so the SESSION column and every filter line up. A flag
+    # makes sure this never re-runs.
+    try:
+        done = c.execute("SELECT value FROM settings WHERE key='sessions_canon_v1'").fetchone()
+        if not done:
+            from excel_handler import canonicalize_session
+            rows = c.execute("SELECT DISTINCT session FROM student_status "
+                             "WHERE TRIM(COALESCE(session,'')) != ''").fetchall()
+            fixed = 0
+            for r in rows:
+                old = r["session"]
+                new = canonicalize_session(old)
+                if new and new != old:
+                    c.execute("UPDATE student_status SET session=? WHERE session=?", (new, old))
+                    fixed += 1
+            c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('sessions_canon_v1', ?)",
+                      (str(fixed),))
+            print(f"Session cleanup: normalised {fixed} distinct session value(s)")
+    except Exception as e:
+        print(f"Session cleanup skipped: {e}")
+
     conn.commit()
     conn.close()
     print("Database initialized")

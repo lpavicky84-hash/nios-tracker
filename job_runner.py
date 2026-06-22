@@ -36,34 +36,30 @@ def _mvs_on():
 # Which sessions belong to "public exam" group (April/October + year).
 # Stream 2 / On Demand always count as REGULAR even if other words appear.
 def is_public_session(session):
-    s = (session or "").lower()
-    if "stream 2" in s or "stream2" in s or "stream-2" in s:
-        return False
-    if "on demand" in s or "ondemand" in s or "on-demand" in s:
-        return False
-    return ("april" in s) or ("october" in s) or ("public" in s)
+    from excel_handler import session_category
+    return session_category(session) == "public"
 
 def is_syc_session(session):
     """SYC students: no status check; documents via enrollment+DOB login only."""
-    return "syc" in (session or "").lower()
+    from excel_handler import session_category
+    return session_category(session) == "syc"
 
 def session_group(session):
     """Classify a session into its run group: 'ondemand', 'stream2' or 'public'.
     On Demand and Stream 2 are separate groups (own interval + manual run).
 
-    SAFETY: anything that is NOT clearly On Demand or Stream 2 — April/October public
-    cycles, abbreviations like 'apr-27' / 'oct-26', blank or unrecognised sessions — is
-    treated as PUBLIC. Public never auto-sends unless its campaign is explicitly set up,
-    so a stray/unknown session can never receive On Demand documents by mistake."""
-    s = (session or "").lower()
-    # Spellings MUST stay in sync with _session_clause() in main.py, otherwise the
-    # student-list "Stream 2" filter and this run grouping disagree (a student shows
-    # under Stream 2 in the list but gets skipped by the Stream 2 run, or vice-versa).
-    if any(k in s for k in ("stream 2", "stream2", "stream-2", "stream_2", "stream ii")):
+    All spelling tolerance lives in excel_handler.session_category (the single source
+    of truth shared with the list filter and document rules), so 'str-2', 'STREAM 2',
+    'ode', 'apr-27' etc. can never disagree between the filter and the run again.
+    SAFETY: anything not clearly On Demand / Stream 2 — April/October, Stream 1, blank
+    or unknown — is treated as PUBLIC, which never auto-sends unless set up."""
+    from excel_handler import session_category
+    cat = session_category(session)
+    if cat == "stream2":
         return "stream2"
-    if any(k in s for k in ("on demand", "ondemand", "on-demand", "on_demand", "odes")):
+    if cat == "ondemand":
         return "ondemand"
-    return "public"   # safe default — never on-demand for unknown/April/October/apr-27
+    return "public"   # stream1 / public / syc / blank all sit in the Public run group
 
 def _load_db_students(c):
     """Re-check source of truth: every student already in the DB. This makes runs

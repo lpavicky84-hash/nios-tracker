@@ -2,6 +2,8 @@ import os
 import logging
 import requests
 
+from excel_handler import canonicalize_session
+
 logger = logging.getLogger(__name__)
 
 MVS_API_URL     = os.environ.get("MVS_API_URL", "").strip()
@@ -55,7 +57,7 @@ def fetch_students_for_tracker(session=None, include_done=False):
             "mobile": str(s.get("mobile") or "").strip(), "class_level": str(s.get("class") or "").strip(),
             "alt_mobile": str(s.get("alternateMobile") or s.get("alternateNumber") or s.get("altMobile")
                               or s.get("whatsappNumber") or s.get("alternate_number") or "").strip(),
-            "session": str(s.get("examSession") or "").strip(), "row_key": rk,
+            "session": canonicalize_session(str(s.get("examSession") or "").strip()), "row_key": rk,
             "student_id": str(s.get("studentId") or "").strip(),
         })
     logger.info(f"MVS: fetched {len(rows)} students")
