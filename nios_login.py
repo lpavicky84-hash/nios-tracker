@@ -258,6 +258,37 @@ def verify_login(reference_no, dob, enrollment_no=""):
     except Exception as e:
         return False, f"NIOS login error: {str(e)[:120]}"
 
+def flip_dob(dob):
+    """Swap day<->month of a DOB, but ONLY when both are <=12 (an ambiguous date that
+    Excel may have stored flipped, e.g. 10-01 vs 01-10). Returns the flipped 'DD-MM-YYYY',
+    or '' when a flip is impossible/pointless (day==month, or a side >12 that can't be a
+    month). Prevents turning a valid 25-06 into an invalid 06-25."""
+    f = format_dob(dob)
+    m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", f)
+    if not m:
+        return ""
+    d, mo, y = m.groups()
+    if d == mo or int(d) > 12 or int(mo) > 12:
+        return ""
+    return f"{mo}-{d}-{y}"
+
+def verify_login_autofix(reference_no, dob, enrollment_no=""):
+    """verify_login, but if it fails AND a day/month flip of the DOB is plausible (both
+    <=12), retry once with them swapped — a common Excel date-formatting error. Returns
+    (ok, message, fixed_dob): fixed_dob is the corrected DD-MM-YYYY to PERSIST, set only
+    when the swap is what made the login succeed; otherwise ''."""
+    ok, msg = verify_login(reference_no, dob, enrollment_no)
+    if ok:
+        return True, "", ""
+    flipped = flip_dob(dob)
+    if flipped and flipped != format_dob(dob):
+        ok2, _ = verify_login(reference_no, flipped, enrollment_no)
+        if ok2:
+            logger.info(f"DOB autofix: {format_dob(dob)} -> {flipped} fixed login "
+                        f"for {reference_no or enrollment_no}")
+            return True, "", flipped
+    return False, msg, ""
+
 def _fetch_bytes(url, session):
     try:
         sess = session if "sdmis.nios.ac.in" in url else requests

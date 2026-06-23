@@ -819,11 +819,14 @@ function applySidebarPref(){
             These students' NIOS portal could not be opened with the uploaded details (wrong DOB / Reference / Enrollment No),
             so <b>no WhatsApp/document was sent</b> (the link would open to an error and panic the student).
             Click <b>Edit &amp; fix</b>, correct the detail, then <b>Save &amp; Run again</b> — only that one student re-runs.
-            If the data is correct it leaves this list and moves to its normal category.</p>
+            If the data is correct it leaves this list and moves to its normal category.<br>
+            <span style="color:var(--success);font-weight:600">Auto-fix:</span> every run now auto-retries transient errors and auto-tries a DOB date/month swap.
+            Use <b>Re-check all (auto-fix)</b> below to apply this to the current list in one go.</p>
           <div class="filter-bar">
             <input type="text" id="f-search" placeholder="Search name / reference / email..." oninput="debounceFailed()">
             <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
             <button class="btn btn-outline btn-sm" onclick="loadFailed(1)">Refresh</button>
+            <button class="btn btn-success btn-sm" id="f-runall-btn" onclick="runAllFailed(this)" title="Re-run every failed student with auto-retry + DOB date/month auto-swap">&#8635; Re-check all (auto-fix)</button>
           </div>
           <div id="f-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div id="f-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="f-selcount">0</span> selected</span><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('f')">&#128465; Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('f')">Clear</button></div>
@@ -2147,7 +2150,9 @@ async function loadFailed(page){
       var rm=(s.login_remark||"NIOS login failed — check Reference/Enrollment No & DOB").replace(/</g,"&lt;");
       return '<tr>'+
         '<td>'+selBox("f",s.row_key)+'</td>'+
-        '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td>'+
+        '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+
+          ((s.check_count&&s.check_count>1)?' <span style="font-size:10.5px;color:#6b7280;background:#f3f4f6;border-radius:6px;padding:1px 6px;font-weight:600">checked '+s.check_count+'x</span>':'')+
+          '</div></td>'+
         '<td><span class="ref-tag">'+ref+'</span></td>'+
         '<td style="font-size:13px">'+(s.session||"—")+'</td>'+
         '<td style="font-size:12px;color:#b91c1c;font-weight:600;max-width:300px">'+rm+'</td>'+
@@ -2161,6 +2166,16 @@ async function loadFailed(page){
     const sa=document.getElementById("f-selall");if(sa)sa.checked=false;
     selBar("f");
   }catch(e){showToast(""+e.message);}
+}
+async function runAllFailed(btn){
+  if(!confirm("Re-check ALL failed students now?\\n\\nEach one is re-run with auto-retry (transient errors) and an automatic DOB date/month swap (formatting fixes). This uses CapSolver credits for every student in the list."))return;
+  const old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await api("/api/run-now-failed","POST");
+    showToast(r.message||"Re-checking failed students…");
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 function _setNavBadge(id,n){
   const b=document.getElementById(id);if(!b)return;
@@ -3456,6 +3471,21 @@ async def run_now_upload(background_tasks: BackgroundTasks, user=Depends(verify_
     whole database or MVS Portal. Used by the 'Run Check Now' button after upload."""
     background_tasks.add_task(run_status_check, "all", None, "upload")
     return {"message": "Checking only the uploaded students!"}
+
+@app.post("/api/run-now-failed")
+async def run_now_failed(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Re-run EVERY 'Failed to Run' student with auto-fix: the status read auto-retries
+    (transient Fetch Errors heal themselves) and a confirmed student's DOB is auto-flipped
+    (date<->month) if that swap makes the NIOS login work. One-click backlog cleanup —
+    the same fixes also run automatically on every normal run from now on."""
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
+                     "AND (COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)").fetchone()[0]
+    conn.close()
+    if n == 0:
+        return {"message": "No failed students to re-check.", "count": 0}
+    background_tasks.add_task(run_status_check, "all", None, "failed")
+    return {"message": f"Re-checking {n} failed student(s) with auto-fix…", "count": n}
 
 @app.post("/api/run-selected")
 async def run_selected(body: dict, background_tasks: BackgroundTasks, user=Depends(verify_token)):

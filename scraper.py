@@ -14,6 +14,11 @@ CAPSOLVER_API_KEY = os.environ.get("CAPTCHA_API_KEY", "")
 CAPSOLVER_CREATE  = "https://api.capsolver.com/createTask"
 CAPSOLVER_RESULT  = "https://api.capsolver.com/getTaskResult"
 
+# A perfectly valid student can momentarily read as 'Fetch Error' (captcha flake, NIOS
+# hiccup, network blip). Auto-retry the status read a few times so the run self-heals
+# instead of needing a manual re-run. Only retries on FAILURE — a clean read costs 1 try.
+STATUS_MAX_TRIES = 3
+
 # Order matters: most specific first
 STATUS_KEYWORDS = [
     ("admission confirmed",               "Admission Confirmed"),
@@ -202,19 +207,31 @@ def scrape_students(students, should_cancel=None, progress_cb=None, on_result=No
             ref = s.get("reference_no", "")
             email = s.get("email", "")
             logger.info(f"[{i+1}/{total}] {ref or email}")
-            token = solve_recaptcha_v3()
-            if not token:
-                r = {**s, "status": "Fetch Error", "raw_text": "Captcha failed",
-                     "success": False, "remark": "", "discovered_ref": ""}
-                results.append(r)
-                if on_result:
-                    on_result(r)
-                if progress_cb:
-                    progress_cb(i + 1, total)
-                continue
             if i > 0 and i % 15 == 0:
                 csrf = get_csrf(session)
-            res = fetch_status(session, ref, email, csrf, token)
+            # Auto-retry on transient failure so a valid student never gets stuck as
+            # 'Fetch Error'. Stops as soon as a real status comes back.
+            res = {"reference_no": ref, "email": email, "status": "Fetch Error",
+                   "raw_text": "", "success": False, "remark": "", "discovered_ref": ""}
+            attempt = 0
+            for attempt in range(STATUS_MAX_TRIES):
+                if should_cancel and should_cancel():
+                    break
+                token = solve_recaptcha_v3()
+                if not token:
+                    res = {"reference_no": ref, "email": email, "status": "Fetch Error",
+                           "raw_text": "Captcha failed", "success": False, "remark": "",
+                           "discovered_ref": ""}
+                else:
+                    res = fetch_status(session, ref, email, csrf, token)
+                if res.get("success"):
+                    break
+                if attempt < STATUS_MAX_TRIES - 1:
+                    logger.info(f"  retry {attempt+1}/{STATUS_MAX_TRIES-1} for {ref or email} "
+                                f"(was {res.get('status')})")
+                    time.sleep(3)
+                    csrf = get_csrf(session)   # refresh token context before retrying
+            res["attempts"] = attempt + 1
             merged = {**s, **res}
             results.append(merged)
             if on_result:

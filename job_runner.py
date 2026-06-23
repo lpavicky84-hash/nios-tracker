@@ -11,9 +11,10 @@ from database import get_db, get_setting, set_setting
 from scraper import scrape_students
 from excel_handler import read_students_from_excel, write_status_to_excel, dedupe_students
 try:
-    from nios_login import verify_login
+    from nios_login import verify_login, verify_login_autofix
 except Exception:
     verify_login = None
+    verify_login_autofix = None
 try:
     import mvs_sync
 except Exception:
@@ -243,6 +244,18 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             all_students = [s for s in _load_db_students(c) if s["row_key"] in keys]
             dup_count = 0
             logger.info(f"{scope.capitalize()} run: {len(all_students)} of {len(keys)} requested student(s)")
+        elif scope == "failed":
+            # Re-run EVERY 'Failed to Run' student (status-check OR login failed) with
+            # auto-fix: the status read auto-retries (scraper) and a confirmed student's
+            # DOB is auto-flipped if a date/month swap fixes the login. Confirmed students
+            # are intentionally NOT skipped here (a confirmed-but-login-failed student must
+            # be re-verified). Uses current DB values, no MVS fetch / no Excel.
+            rows = c.execute("SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 "
+                             "AND (COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)").fetchall()
+            fkeys = {r["row_key"] for r in rows}
+            all_students = [s for s in _load_db_students(c) if s["row_key"] in fkeys]
+            dup_count = 0
+            logger.info(f"Failed re-run (auto-fix): {len(all_students)} failed student(s)")
         elif scope == "upload":
             # UPLOAD RUN: only the students in the just-uploaded sheet, ALWAYS treated as
             # MVS Tracker data. The Upload feature is the tracker entry point, so never
@@ -358,10 +371,11 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 if group_type == "all":
                     syc_list.append(s)
                 continue
-            row = c.execute("SELECT is_confirmed FROM student_status WHERE row_key=?",
-                            (s["row_key"],)).fetchone()
-            if row and row["is_confirmed"] == 1:
-                continue                              # confirmed -> never re-check
+            if scope != "failed":
+                row = c.execute("SELECT is_confirmed FROM student_status WHERE row_key=?",
+                                (s["row_key"],)).fetchone()
+                if row and row["is_confirmed"] == 1:
+                    continue                          # confirmed -> never re-check
             grp = session_group(s["session"])   # 'ondemand' | 'stream2' | 'public'
             if group_type == "regular" and grp not in ("ondemand", "stream2"):
                 continue
@@ -491,8 +505,10 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # clear remark so the counsellor can verify the reference or just run it
             # again. It clears automatically on the next successful check.
             if not res.get("success"):
+                _tries = res.get("attempts", 1)
+                _msg = _CHECK_FAIL_MSG + (f" (auto-retried {_tries}x this run)" if _tries and _tries > 1 else "")
                 c.execute("UPDATE student_status SET check_failed=1, login_remark=? WHERE row_key=?",
-                          (_CHECK_FAIL_MSG, row_key))
+                          (_msg, row_key))
             else:
                 c.execute("UPDATE student_status SET check_failed=0 WHERE row_key=?", (row_key,))
 
@@ -502,17 +518,24 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # in that case (the student would open it to a login error and panic).
             # Mark the student failed + store a clear remark so it can be edited & re-run.
             login_blocked = False
-            if new_status == "Admission Confirmed" and verify_login is not None:
+            if new_status == "Admission Confirmed" and verify_login_autofix is not None:
                 vrow = c.execute("SELECT whatsapp_sent, login_failed FROM student_status WHERE row_key=?",
                                  (row_key,)).fetchone()
                 already_sent = bool(vrow and vrow["whatsapp_sent"] == 1)
                 if not already_sent:
                     conn.commit()   # release lock before the network login
-                    ok_login, lmsg = verify_login(new_ref, res.get("dob", ""),
-                                                  res.get("enrollment_no", ""))
+                    ok_login, lmsg, fixed_dob = verify_login_autofix(
+                        new_ref, res.get("dob", ""), res.get("enrollment_no", ""))
                     if ok_login:
-                        c.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?",
-                                  (row_key,))
+                        # If a date<->month flip fixed it, persist the corrected DOB so
+                        # future runs (and the document link) use the right one.
+                        if fixed_dob:
+                            c.execute("UPDATE student_status SET dob=?, login_failed=0, login_remark='' WHERE row_key=?",
+                                      (fixed_dob, row_key))
+                            logger.info(f"DOB auto-corrected for {row_key}: -> {fixed_dob}")
+                        else:
+                            c.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?",
+                                      (row_key,))
                     else:
                         login_blocked = True
                         stats["failed"] += 1
@@ -751,10 +774,15 @@ def recheck_one(row_key):
         out["status"] = new_status
         # Verify NIOS login before any document share
         login_blocked = False
-        if new_status == "Admission Confirmed" and verify_login is not None:
-            ok_login, lmsg = verify_login(new_ref, student["dob"], student["enrollment_no"])
+        if new_status == "Admission Confirmed" and verify_login_autofix is not None:
+            ok_login, lmsg, fixed_dob = verify_login_autofix(new_ref, student["dob"], student["enrollment_no"])
             if ok_login:
-                c.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
+                if fixed_dob:
+                    c.execute("UPDATE student_status SET dob=?, login_failed=0, login_remark='' WHERE row_key=?",
+                              (fixed_dob, row_key))
+                    student["dob"] = fixed_dob
+                else:
+                    c.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
             else:
                 login_blocked = True
                 out["login_failed"] = True
