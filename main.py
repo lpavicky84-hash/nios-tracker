@@ -614,16 +614,12 @@ function applySidebarPref(){
         <div class="card">
           <div class="card-head">
             <h3>Recent Runs</h3>
-            <div style="display:flex;gap:8px;align-items:center">
-              <select id="recent-runs-limit" onchange="loadDashboard()" style="padding:6px 10px;border:2px solid var(--border);border-radius:8px;font-size:13px">
-                <option value="10">10</option><option value="20">20</option><option value="30">30</option>
-                <option value="50">50</option><option value="100">100</option></select>
-              <button class="btn-refresh" onclick="loadDashboard()" title="Refresh">
+            <button class="btn-refresh" onclick="loadDashboard()" title="Refresh">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                 Refresh</button>
-            </div>
           </div>
-          <div style="overflow-x:auto"><table>
+          <style>.recent-runs-scroll{max-height:360px;overflow:auto}.recent-runs-scroll thead th{position:sticky;top:0;background:var(--card);z-index:2}</style>
+          <div class="recent-runs-scroll"><table>
             <thead><tr><th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th><th>Action</th></tr></thead>
             <tbody id="recent-runs"></tbody>
           </table></div>
@@ -1498,9 +1494,9 @@ async function loadDashboard(){
       statCard("In Verification",c.doc_verification||0,SI.loader,"#D97706");
     renderDistribution(d.status_distribution,d.total_students);
     renderSessionCounts(d.session_counts||[]);
-    const rrSel=document.getElementById("recent-runs-limit");
-    const rrLim=rrSel?parseInt(rrSel.value):10;
-    try{const rr=await api("/api/run-logs?limit="+rrLim);renderRuns(rr,"recent-runs");}
+    // Recent Runs is now a scrollable list (no page/limit dropdown) — load a healthy
+    // window and let the user scroll; ~7-8 rows are visible at a time.
+    try{const rr=await api("/api/run-logs?limit=30");renderRuns(rr,"recent-runs");}
     catch(e){renderRuns(d.recent_runs,"recent-runs");}
     renderBell(d.notifications||[],d.dup_notifications||[],d.unknown_notifications||[]);
   updateFailedBadge();
@@ -2984,6 +2980,19 @@ async def login(body: dict):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return {"token": create_token(u), "username": u}
 
+def _dist_with_confirmed(dist_rows, confirmed_cnt):
+    """Status distribution for the chart, but with 'Admission Confirmed' shown on the
+    SAME definition as the card / sidebar / reports (the is_confirmed flag), so the
+    dashboard never shows two different confirmed numbers. The raw-status confirmed rows
+    that are actually login/check-failed are surfaced under 'Failed to Run' instead."""
+    out = []
+    for r in dist_rows:
+        d = dict(r)
+        if d.get("current_status") == "Admission Confirmed":
+            d["cnt"] = confirmed_cnt
+        out.append(d)
+    return out
+
 @app.get("/api/dashboard")
 async def dashboard(user=Depends(verify_token)):
     conn = get_db()
@@ -3061,7 +3070,7 @@ async def dashboard(user=Depends(verify_token)):
     next_run = str(min(_nexts)) if _nexts else "Not scheduled"
     return {
         "total_students": total, "next_run": next_run,
-        "status_distribution": [dict(r) for r in dist],
+        "status_distribution": _dist_with_confirmed(dist, confirmed_cnt),
         "recent_runs": [dict(r) for r in runs],
         "counts": {
             "confirmed": confirmed_cnt, "verified": verified_cnt,
