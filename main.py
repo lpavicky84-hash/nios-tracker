@@ -2978,9 +2978,14 @@ async def dashboard(user=Depends(verify_token)):
     dist = conn.execute(f"SELECT current_status, COUNT(*) as cnt FROM student_status WHERE {ND} GROUP BY current_status").fetchall()
 
     # Counts by status
+    NF = "COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0"   # exclude failed-to-run
     def count_status(s):
         return conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status=?", (s,)).fetchone()[0]
-    confirmed_cnt = count_status("Admission Confirmed")
+    # "Confirmed" everywhere else (sidebar badge, session-wise card, exported reports)
+    # means the is_confirmed FLAG, not the raw NIOS status text. Keep this dashboard
+    # card on the SAME definition so the numbers never disagree across the screen.
+    confirmed_cnt = conn.execute(
+        f"SELECT COUNT(*) FROM student_status WHERE {ND} AND {NF} AND is_confirmed=1").fetchone()[0]
     verified_cnt  = count_status("Verified")
     docreq_cnt    = count_status("Document Required")
     docverif_cnt  = count_status("Documents Verification In Progress")

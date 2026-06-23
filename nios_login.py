@@ -421,8 +421,14 @@ font-size:12.5px;font-weight:600;border-bottom:1px solid #FCD34D">
   &rarr; <b>Open in browser</b>, then tap Save as PDF.
 </div>
 <style>
-@media print{#__mvs_bar,#__mvs_inapp{display:none!important}}
-body{padding-top:70px!important}
+/* The banner gap (70px) is only for the on-SCREEN fixed bar. In print the bar is
+   hidden AND its reserved gap is removed, so the document prints exactly like the
+   official NIOS copy (1 page) instead of being pushed onto a 2nd page. */
+@media print{
+  #__mvs_bar,#__mvs_inapp{display:none!important}
+  body{padding-top:0!important;margin-top:0!important}
+}
+@media screen{ body{padding-top:70px!important} }
 /* Do NOT override image width/height here — NIOS sizes each image (photo/signature/QR)
    via its own attributes/CSS. Any override (e.g. height:auto) distorts a square signature
    or photo vs the official copy. Page-level fit for phones is handled by the viewport

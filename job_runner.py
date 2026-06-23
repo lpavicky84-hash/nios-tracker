@@ -244,16 +244,37 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             dup_count = 0
             logger.info(f"{scope.capitalize()} run: {len(all_students)} of {len(keys)} requested student(s)")
         elif scope == "upload":
-            # UPLOAD RUN: only the students in the just-uploaded sheet. No MVS fetch,
-            # no DB — so pressing "Run Check Now" after an upload checks ONLY those
-            # newly uploaded students (always treated as MVS Tracker data).
+            # UPLOAD RUN: only the students in the just-uploaded sheet, ALWAYS treated as
+            # MVS Tracker data. The Upload feature is the tracker entry point, so never
+            # auto-label an uploaded sheet as Portal just because it carries portal-style
+            # headers (referenceNo / examSession / ...). No MVS fetch, no other DB rows.
             if os.path.exists(EXCEL_PATH):
                 try:
-                    all_students += read_students_from_excel(EXCEL_PATH)
+                    sheet = read_students_from_excel(EXCEL_PATH)
+                    for s in sheet:
+                        s["source"] = "mvs_tracker"
+                    all_students += sheet
                 except Exception as e:
                     logger.warning(f"Excel read failed: {e}")
             all_students, dup_count = dedupe_students(all_students)
-            logger.info(f"Upload run: {len(all_students)} student(s) from the uploaded sheet")
+            # Skip students already tracked (same reference / key already in the DB) so
+            # "Run Check Now" after an upload checks only the NEWLY added students — the
+            # exact count the upload report promised ("X new after duplicates removed").
+            # Existing students keep their status and are refreshed by their normal run.
+            existing_refs, existing_keys = set(), set()
+            for r in c.execute("SELECT reference_no, row_key FROM student_status "
+                               "WHERE COALESCE(deleted,0)=0").fetchall():
+                if r["reference_no"] and str(r["reference_no"]).strip():
+                    existing_refs.add(str(r["reference_no"]).strip())
+                if r["row_key"]:
+                    existing_keys.add(r["row_key"])
+            before = len(all_students)
+            all_students = [s for s in all_students
+                            if str(s.get("reference_no") or "").strip() not in existing_refs
+                            and s.get("row_key") not in existing_keys]
+            skipped = before - len(all_students)
+            logger.info(f"Upload run: {len(all_students)} NEW student(s) from the uploaded sheet "
+                        f"(MVS Tracker) | {skipped} already tracked & skipped | {dup_count} in-sheet dup(s) merged")
         else:
             # ── MVS portal: auto-fetch live students (no Excel upload needed) ──
             # IMPORTANT: skip this on a TRACKER-only run. Otherwise the live portal
