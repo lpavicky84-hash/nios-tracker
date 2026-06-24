@@ -211,6 +211,14 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
 
     conn = get_db()
     c = conn.cursor()
+    # "new" scope: only check students that are NOT already in the DB — i.e. students
+    # that just arrived on the MVS Portal. This skips every already-tracked/active
+    # student, so a frequent "new data only" run uses far fewer CapSolver credits.
+    _new_only = (scope == "new")
+    _existing_keys = set()
+    if _new_only:
+        _existing_keys = {r["row_key"] for r in c.execute(
+            "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0").fetchall()}
     # Transfers detected during any run are labelled 'auto'. A user-clicked Portal sync
     # logs its own 'manual' rows separately.
     _transfer_mode = "auto"
@@ -401,8 +409,13 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         to_check = []
         syc_list = []
         _portal_noref = 0
+        _skipped_existing = 0
         for s in all_students:
             if source_only and src_by_key.get(s["row_key"], "mvs_tracker") != source_only:
+                continue
+            # "new" scope: skip every student we already track — only brand-new arrivals run.
+            if _new_only and s["row_key"] in _existing_keys:
+                _skipped_existing += 1
                 continue
             # MVS Portal data must be checked by Reference No ONLY — never fall back to
             # email for portal students. So skip any portal student with no reference.
@@ -442,11 +455,16 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         if _portal_noref:
             logger.info(f"Skipped {_portal_noref} MVS Portal student(s) with no Reference No "
                         f"(email fallback disabled for portal)")
+        if _new_only:
+            logger.info(f"New-only run: skipped {_skipped_existing} already-tracked student(s); "
+                        f"{len(to_check)} new student(s) to check")
 
         total = len(work)
         if total == 0:
             msg = "Nothing to check"
-            if source_only == "mvs_portal":
+            if _new_only:
+                msg = "Nothing to check — no new MVS Portal students since last time"
+            elif source_only == "mvs_portal":
                 _pool = sum(1 for s in all_students
                             if src_by_key.get(s["row_key"], "mvs_tracker") == "mvs_portal")
                 if _pool > 0:

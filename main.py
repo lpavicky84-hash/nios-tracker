@@ -563,6 +563,7 @@ function applySidebarPref(){
               <button class="run-menu-item por" onclick="runChoice('portal','stream2')"><span class="rmi-dot"></span><span class="rmi-main">Stream 2</span></button>
               <button class="run-menu-item por" onclick="runChoice('portal','public')"><span class="rmi-dot"></span><span class="rmi-main">Public</span></button>
               <button class="run-menu-item por" onclick="runChoice('portal','all')"><span class="rmi-dot"></span><span class="rmi-main">All Portal</span><span class="rmi-tag">all</span></button>
+              <button class="run-menu-item por" onclick="runChoice('portalnew')" style="background:#f0fdf4" title="Check only students newly arrived on the portal — skips already-active data, saves CapSolver credits"><span class="rmi-dot" style="background:#16a34a"></span><span class="rmi-main">New data only</span><span class="rmi-tag" style="background:#dcfce7;color:#15803d">saves credits</span></button>
             </div>
           </div>
         </div>
@@ -1048,6 +1049,12 @@ function applySidebarPref(){
             <input type="number" id="iv-public" min="1" max="43200" value="12">
             <select id="iv-public-unit"><option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
             <select id="iv-public-src" title="Which data this group auto-runs"><option value="both">Both sources</option><option value="mvs_tracker">Tracker only</option><option value="mvs_portal">Portal only</option></select>
+          </div>
+          <div class="iv-row" style="background:#f0fdf4;border-radius:9px;padding:8px 10px;margin-top:4px">
+            <span class="iv-lbl"><span class="iv-dot" style="background:#16A34A"></span>MVS Portal — New data <span style="font-weight:400;color:var(--muted);font-size:12px">(saves credits)</span></span>
+            <input type="number" id="iv-portalnew" min="1" max="43200" value="3">
+            <select id="iv-portalnew-unit"><option value="hours">hours</option><option value="minutes">minutes</option><option value="days">days</option></select>
+            <span style="font-size:11.5px;color:var(--muted);align-self:center">Checks only newly-arrived portal students</span>
           </div>
           <div class="set-foot">
             <button class="btn btn-primary btn-sm" onclick="saveIntervals()">Save Intervals</button>
@@ -2791,8 +2798,8 @@ document.addEventListener("click",function(e){
   if(!w){const m=document.getElementById("run-menu");if(m)m.style.display="none";
     const b=document.getElementById("run-now-btn");if(b)b.classList.remove("open");}
 });
-const RUN_EP={all:"/api/run-now",tracker:"/api/run-now-tracker",portal:"/api/run-now-portal"};
-const RUN_LBL={all:"all students",tracker:"MVS Tracker students",portal:"MVS Portal students"};
+const RUN_EP={all:"/api/run-now",tracker:"/api/run-now-tracker",portal:"/api/run-now-portal",portalnew:"/api/run-now-portal-new"};
+const RUN_LBL={all:"all students",tracker:"MVS Tracker students",portal:"MVS Portal students",portalnew:"MVS Portal — new data only"};
 const PORTAL_GRP_LBL={ondemand:"On Demand",stream2:"Stream 2",public:"Public",all:"all MVS Portal"};
 async function runRequired(btn){
   if(btn&&btn.dataset.busy==="1")return;
@@ -2875,6 +2882,7 @@ async function loadIntervals(){
     setIvField("ondemand",r.ondemand_min);
     setIvField("stream2",r.stream2_min);
     setIvField("public",r.public_min);
+    setIvField("portalnew",r.portalnew_min);
     var sm={ondemand:r.ondemand_src,stream2:r.stream2_src,public:r.public_src};
     for(var g in sm){var el=document.getElementById("iv-"+g+"-src");if(el)el.value=sm[g]||"both";}
   }catch(e){}
@@ -2997,12 +3005,12 @@ async function testReport(btn){
   finally{if(btn){btn.disabled=false;btn.style.opacity="";}}
 }
 async function saveIntervals(){
-  const od=ivToMin("ondemand"),st=ivToMin("stream2"),pm=ivToMin("public");
+  const od=ivToMin("ondemand"),st=ivToMin("stream2"),pm=ivToMin("public"),pn=ivToMin("portalnew");
   const S=document.getElementById("iv-status");
-  if(od<15||st<15||pm<15){S.innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
-  if(od>43200||st>43200||pm>43200){S.innerHTML='<span style="color:var(--danger)">Maximum interval is 30 days</span>';return;}
+  if(od<15||st<15||pm<15||pn<15){S.innerHTML='<span style="color:var(--danger)">Minimum interval is 15 minutes</span>';return;}
+  if(od>43200||st>43200||pm>43200||pn>43200){S.innerHTML='<span style="color:var(--danger)">Maximum interval is 30 days</span>';return;}
   var ivsrc=function(g){var el=document.getElementById("iv-"+g+"-src");return el?el.value:"both";};
-  try{const r=await api("/api/intervals","POST",{ondemand_min:od,stream2_min:st,public_min:pm,
+  try{const r=await api("/api/intervals","POST",{ondemand_min:od,stream2_min:st,public_min:pm,portalnew_min:pn,
         ondemand_src:ivsrc("ondemand"),stream2_src:ivsrc("stream2"),public_src:ivsrc("public")});
     S.innerHTML='<span style="color:var(--success)">'+r.message+'</span>';
     showToast("Intervals saved!");try{loadNextRuns();}catch(e){}}
@@ -3228,6 +3236,22 @@ def reschedule_jobs():
                           trigger=IntervalTrigger(minutes=mins),
                           id=jid, replace_existing=True, next_run_time=nxt)
         logger.info(f"{jid}: every {mins}min | last_run={last} | next_run={nxt}")
+
+    # MVS Portal — NEW data only: a cheap, frequent run that checks just the students
+    # newly arrived on the portal (skips already-tracked/active data) to save CapSolver.
+    if get_setting("paused_portalnew", "") == "1":
+        try:
+            scheduler.remove_job("job_portalnew")
+        except Exception:
+            pass
+        logger.info("job_portalnew: PAUSED — not scheduled.")
+    else:
+        pn_mins = _interval_minutes("portalnew", 3)
+        pn_nxt = now + timedelta(minutes=pn_mins)
+        scheduler.add_job(lambda: run_status_check("all", "mvs_portal", "new"),
+                          trigger=IntervalTrigger(minutes=pn_mins),
+                          id="job_portalnew", replace_existing=True, next_run_time=pn_nxt)
+        logger.info(f"job_portalnew: every {pn_mins}min | next_run={pn_nxt}")
 
 @app.on_event("startup")
 async def startup():
@@ -3914,6 +3938,14 @@ async def run_now_portal(background_tasks: BackgroundTasks, group: str = "all", 
     label = {"ondemand": "On Demand", "stream2": "Stream 2", "public": "Public", "all": "all"}[g]
     return {"message": f"Run triggered for MVS Portal — {label} students!"}
 
+@app.post("/api/run-now-portal-new")
+async def run_now_portal_new(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Manual run: MVS Portal — NEW data only. Checks just the students that have arrived
+    on the portal since last time (not already in the tracker), skipping all already-active
+    students to save CapSolver credits."""
+    background_tasks.add_task(run_status_check, "all", "mvs_portal", "new")
+    return {"message": "Run triggered for MVS Portal — NEW data only!"}
+
 @app.post("/api/run-now-upload")
 async def run_now_upload(background_tasks: BackgroundTasks, user=Depends(verify_token)):
     """Run ONLY the students in the just-uploaded Excel sheet (MVS Tracker), not the
@@ -4003,9 +4035,9 @@ async def run_progress(user=Depends(verify_token)):
             "trk": {"done": dt, "total": tt, "percent": int(dt*100/tt) if tt else 0}}
 
 GROUP_LABELS = {"ondemand": "On Demand", "stream2": "Stream 2",
-                "public": "Public (April / October)"}
-_GROUP_JID = {"ondemand": "job_ondemand", "stream2": "job_stream2", "public": "job_public"}
-_GROUP_DH = {"ondemand": 6, "stream2": 6, "public": 12}
+                "public": "Public (April / October)", "portalnew": "MVS Portal — New data"}
+_GROUP_JID = {"ondemand": "job_ondemand", "stream2": "job_stream2", "public": "job_public", "portalnew": "job_portalnew"}
+_GROUP_DH = {"ondemand": 6, "stream2": 6, "public": 12, "portalnew": 3}
 
 def _job_remaining_sec(jid):
     """Seconds until a scheduled job's next run (None if not scheduled)."""
@@ -4035,11 +4067,22 @@ async def next_runs(user=Depends(verify_token)):
             secs = _job_remaining_sec(jid)
         out.append({"group": grp, "label": GROUP_LABELS.get(grp, grp),
                     "seconds": secs, "paused": paused})
+    # MVS Portal — New data timer
+    pn_paused = get_setting("paused_portalnew", "") == "1"
+    if pn_paused:
+        try:
+            pn_secs = int(get_setting("pause_remaining_portalnew_sec", "") or 0)
+        except Exception:
+            pn_secs = None
+    else:
+        pn_secs = _job_remaining_sec("job_portalnew")
+    out.append({"group": "portalnew", "label": GROUP_LABELS["portalnew"],
+                "seconds": pn_secs, "paused": pn_paused})
     return {"runs": out}
 
 def _valid_group(g):
-    if g not in ("ondemand", "stream2", "public"):
-        raise HTTPException(status_code=400, detail="group must be 'ondemand', 'stream2' or 'public'")
+    if g not in ("ondemand", "stream2", "public", "portalnew"):
+        raise HTTPException(status_code=400, detail="group must be 'ondemand', 'stream2', 'public' or 'portalnew'")
     return g
 
 @app.get("/api/report-settings")
@@ -4217,7 +4260,11 @@ async def intervals_resume(body: dict, user=Depends(verify_token)):
         rem = 0
     if rem <= 0:
         rem = mins * 60
-    scheduler.add_job(lambda g=grp: run_status_check(g, _group_source(g)),
+    if grp == "portalnew":
+        job_fn = lambda: run_status_check("all", "mvs_portal", "new")
+    else:
+        job_fn = lambda g=grp: run_status_check(g, _group_source(g))
+    scheduler.add_job(job_fn,
                       trigger=IntervalTrigger(minutes=mins),
                       id=jid, replace_existing=True,
                       next_run_time=datetime.now() + timedelta(seconds=rem))
@@ -4547,6 +4594,7 @@ async def get_intervals(user=Depends(verify_token)):
     return {"ondemand_min": _interval_minutes("ondemand", 6),
             "stream2_min": _interval_minutes("stream2", 6),
             "public_min": _interval_minutes("public", 12),
+            "portalnew_min": _interval_minutes("portalnew", 3),
             "ondemand_src": get_setting("runsrc_ondemand", "both") or "both",
             "stream2_src": get_setting("runsrc_stream2", "both") or "both",
             "public_src": get_setting("runsrc_public", "both") or "both"}
@@ -4556,13 +4604,15 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
     od = int(body.get("ondemand_min", 360))
     st = int(body.get("stream2_min", 360))
     pub = int(body.get("public_min", 720))
+    pn = int(body.get("portalnew_min", 180))
     MAX_MIN = 43200   # 30 days — lets counsellors run every few days, not just hours
-    for v in (od, st, pub):
+    for v in (od, st, pub, pn):
         if not (15 <= v <= MAX_MIN):
             raise HTTPException(status_code=400, detail="Interval must be between 15 minutes and 30 days")
     set_setting("interval_ondemand_min", od)
     set_setting("interval_stream2_min", st)
     set_setting("interval_public_min", pub)
+    set_setting("interval_portalnew_min", pn)
     set_setting("interval_regular_min", "")   # retire the old combined setting
     # Per-group DATA SOURCE for auto runs: both (default) | mvs_tracker | mvs_portal.
     def _vsrc(x):
@@ -4572,7 +4622,7 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
     set_setting("runsrc_stream2", _vsrc(body.get("stream2_src")))
     set_setting("runsrc_public", _vsrc(body.get("public_src")))
     # Saving new intervals restarts the timers fresh, so clear any paused state.
-    for grp in ("ondemand", "stream2", "public"):
+    for grp in ("ondemand", "stream2", "public", "portalnew"):
         set_setting(f"paused_{grp}", "")
         set_setting(f"pause_remaining_{grp}_sec", "")
     reschedule_jobs()
