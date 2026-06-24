@@ -2215,6 +2215,7 @@ async function loadFailed(page){
         '<td style="font-size:13px">'+(s.session||"—")+'</td>'+
         '<td style="font-size:12px;color:#b91c1c;font-weight:600;max-width:300px">'+rm+'</td>'+
         '<td><div style="display:flex;gap:6px;flex-wrap:wrap">'+
+          ((rm.indexOf("DIFFERENT student")>=0)?'<button onclick="markNameOk(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer" title="The name/Reference is actually correct — dismiss this warning">&#10003; Name correct</button>':'')+
           '<button onclick="editStudent(&quot;'+s.row_key+'&quot;)" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">Edit &amp; fix</button>'+
           '<button onclick="deleteStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">Remove</button>'+
         '</div></td></tr>';
@@ -2223,6 +2224,17 @@ async function loadFailed(page){
     renderPg("f-pg",page,d.pages,"loadFailed");
     const sa=document.getElementById("f-selall");if(sa)sa.checked=false;
     selBar("f");
+  }catch(e){showToast(""+e.message);}
+}
+async function markNameOk(rk,nm){
+  if(!confirm("Mark this student's name/Reference as CORRECT?\\n\\nOnly do this after checking on the portal that the Reference No genuinely belongs to "+nm+". This dismisses the wrong-reference warning."))return;
+  try{
+    const fd=new FormData();fd.append("row_key",rk);
+    const r=await fetch("/api/mark-name-verified",{method:"POST",headers:{Authorization:"Bearer "+TOKEN},body:fd});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||"Failed");
+    showToast(d.confirmed?"Marked correct \u2014 moved to Confirmed":"Marked correct");
+    loadFailed(1);updateNavCounts();
   }catch(e){showToast(""+e.message);}
 }
 async function runAllFailed(btn){
@@ -3460,6 +3472,25 @@ async def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify
         return {"message": "No Unknown students to re-check.", "count": 0}
     background_tasks.add_task(run_status_check, "all", None, "unknown")
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
+
+@app.post("/api/mark-name-verified")
+async def mark_name_verified(row_key: str = Form(...), user=Depends(verify_token)):
+    """Counsellor confirms (after checking the portal) that the Reference No genuinely
+    belongs to this student — the wrong-reference warning was a false alarm. Dismiss the
+    error, remember it (name_verified=1) so the warning never re-appears, and drop the
+    student into its correct bucket."""
+    conn = get_db(); c = conn.cursor()
+    r = c.execute("SELECT current_status FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+    if not r:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Student not found")
+    is_conf = 1 if (r["current_status"] or "") == "Admission Confirmed" else 0
+    c.execute("""UPDATE student_status
+                 SET name_verified=1, login_failed=0, check_failed=0, login_remark='',
+                     whatsapp_info='', is_confirmed=?
+                 WHERE row_key=?""", (is_conf, row_key))
+    conn.commit(); conn.close()
+    return {"ok": True, "confirmed": bool(is_conf)}
 
 @app.get("/api/nav-count")
 async def nav_count(user=Depends(verify_token)):

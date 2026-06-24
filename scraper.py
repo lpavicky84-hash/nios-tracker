@@ -171,6 +171,7 @@ def fetch_status(session, ref_no, email, csrf, token):
 
         result["status"] = label
         result["raw_text"] = status_text[:300]
+        result["nios_name"] = (data.get("name of candidate", "") or "").strip()
         result["remark"] = remark[:400] if (label == "Document Required" and remark) else ""
         result["success"] = (label != "Unknown")
         logger.info(f"  {ref_no or email} -> {label}" + (f" | remark: {remark[:50]}" if remark else ""))

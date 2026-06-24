@@ -25,6 +25,22 @@ logger = logging.getLogger(__name__)
 # Shown in 'Failed to Run' when NIOS didn't return a readable status for a student.
 _CHECK_FAIL_MSG = ("Status check failed — NIOS didn't return a readable status. "
                    "Verify the Reference No, or run this student again (may be temporary).")
+
+
+def _names_disagree(sheet_name, nios_name):
+    """True only when BOTH names exist and share NO common word — a strong signal the
+    Reference No belongs to a different student. Deliberately conservative: a single
+    shared word (or a missing name on either side) is treated as a match, so spelling,
+    word-order or middle-name differences don't raise a false alarm."""
+    import re as _re
+    def _toks(x):
+        return {t for t in _re.sub(r"[^a-z]", " ", (x or "").lower()).split() if len(t) >= 3}
+    a, b = _toks(sheet_name), _toks(nios_name)
+    if not a or not b:
+        return False
+    return len(a & b) == 0
+
+
 EXCEL_PATH = os.environ.get("EXCEL_PATH", os.path.join(os.environ.get("DATA_DIR", "."), "students.xlsx"))
 
 def _mvs_on():
@@ -384,8 +400,15 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         #  Both data sources (MVS Portal + MVS Tracker) run together.
         to_check = []
         syc_list = []
+        _portal_noref = 0
         for s in all_students:
             if source_only and src_by_key.get(s["row_key"], "mvs_tracker") != source_only:
+                continue
+            # MVS Portal data must be checked by Reference No ONLY — never fall back to
+            # email for portal students. So skip any portal student with no reference.
+            if (src_by_key.get(s["row_key"], "mvs_tracker") == "mvs_portal"
+                    and not (s.get("reference_no") or "").strip()):
+                _portal_noref += 1
                 continue
             if is_syc_session(s["session"]):
                 if group_type == "all":
@@ -416,6 +439,9 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
 
         logger.info(f"{len(to_check)} to check (group={group_type}); SYC: {len(syc_list)} "
                     f"| MVS Portal:{tot_mvs} MVS Tracker:{tot_trk}")
+        if _portal_noref:
+            logger.info(f"Skipped {_portal_noref} MVS Portal student(s) with no Reference No "
+                        f"(email fallback disabled for portal)")
 
         total = len(work)
         if total == 0:
@@ -590,6 +616,19 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                     else:
                         login_blocked = True
                         stats["failed"] += 1
+                        # Login failed = "data mismatch". Pinpoint the cause: if the name
+                        # NIOS shows for this reference shares NO word with the student's
+                        # name, the Reference No likely belongs to a DIFFERENT student
+                        # (vs. just a wrong DOB). Counsellor verifies on the portal, then
+                        # ticks "Name correct" (sets name_verified=1) or fixes the reference.
+                        _nv = c.execute("SELECT name_verified FROM student_status WHERE row_key=?",
+                                        (row_key,)).fetchone()
+                        _already_ok = bool(_nv and _nv["name_verified"] == 1)
+                        _nm = res.get("nios_name", "")
+                        if (not _already_ok) and _names_disagree(res.get("student_name", ""), _nm):
+                            lmsg = (f"\u26a0 Reference No may belong to a DIFFERENT student — NIOS shows "
+                                    f"'{_nm}' but name here is '{res.get('student_name','')}'. Check the "
+                                    f"portal: tick 'Name correct' if fine, else update the Reference No.")
                         c.execute("UPDATE student_status SET login_failed=1, login_remark=?, "
                                   "whatsapp_info=?, whatsapp_sent=0 WHERE row_key=?",
                                   (lmsg[:240], ("Not sent — " + lmsg)[:180], row_key))
@@ -837,6 +876,13 @@ def recheck_one(row_key):
             else:
                 login_blocked = True
                 out["login_failed"] = True
+                _nv = c.execute("SELECT name_verified FROM student_status WHERE row_key=?",
+                                (row_key,)).fetchone()
+                _nm = res.get("nios_name", "")
+                if (not (_nv and _nv["name_verified"] == 1)) and _names_disagree(student["student_name"], _nm):
+                    lmsg = (f"\u26a0 Reference No may belong to a DIFFERENT student — NIOS shows "
+                            f"'{_nm}' but name here is '{student['student_name']}'. Check the portal: "
+                            f"tick 'Name correct' if fine, else update the Reference No.")
                 out["login_remark"] = lmsg
                 c.execute("UPDATE student_status SET login_failed=1, login_remark=? WHERE row_key=?",
                           (lmsg[:240], row_key))
