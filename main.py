@@ -2586,11 +2586,25 @@ if(altDrop){
 function handleAltFile(file){
   if(!file)return;
   const st=document.getElementById("alt-status");
-  st.innerHTML='<div style="color:var(--muted);font-size:13px">Uploading &amp; matching alternate numbers…</div>';
+  st.innerHTML='<div class="up-prog"><div class="up-prog-top"><span>Uploading alternate numbers…</span>'+
+    '<span id="alt-pct">0%</span></div><div class="up-track"><div class="up-fill" id="alt-fill"></div></div>'+
+    '<div class="up-eta" id="alt-eta"></div></div>';
   const fd=new FormData();fd.append("file",file);
   const xhr=new XMLHttpRequest();
+  const startT=Date.now();
   xhr.open("POST",API+"/api/upload-alt-numbers");
   xhr.setRequestHeader("Authorization","Bearer "+TOKEN);
+  xhr.upload.onprogress=function(e){
+    if(!e.lengthComputable)return;
+    const pct=Math.round(e.loaded*100/e.total);
+    const pe=document.getElementById("alt-pct"),pf=document.getElementById("alt-fill"),pet=document.getElementById("alt-eta");
+    if(pe)pe.textContent=pct+"%";
+    if(pf)pf.style.width=pct+"%";
+    const elapsed=(Date.now()-startT)/1000;
+    const speed=e.loaded/Math.max(elapsed,0.001);
+    const eta=speed>0?(e.total-e.loaded)/speed:0;
+    if(pet)pet.textContent=pct<100?("~"+fmtEta(eta)+" remaining · "+fmtBytes(e.loaded)+" / "+fmtBytes(e.total)):"Matching references & updating numbers on the server…";
+  };
   xhr.onload=function(){
     let d={};try{d=JSON.parse(xhr.responseText);}catch(e){}
     if(xhr.status<200||xhr.status>=300){st.innerHTML='<div style="color:var(--danger)">'+(d.detail||"Upload failed")+'</div>';return;}
@@ -4441,7 +4455,7 @@ def _send_alt_to_confirmed(row_keys):
             if ok:
                 sent += 1
                 c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
-                          (f"Sent to alternate number {alt}", rk))
+                          (f"Sent to 2 numbers (own + alternate {alt})", rk))
                 conn.commit()
             logger.info(f"Alt-send {rk} -> {alt}: {'ok' if ok else 'FAIL'} | {info}")
         except Exception as e:
