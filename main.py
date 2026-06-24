@@ -2639,7 +2639,7 @@ async function removeStalePortal(btn){
     showToast("Moved "+(r.deleted||keys.length)+" student(s) to Trash");
     document.getElementById("stale-box").innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">&#10003; Done — '+(r.deleted||0)+' record(s) moved to Trash.</div>';
     try{loadDashboard();}catch(e){}
-  }catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.textContent="\ud83d\uddd1 Move selected to Trash";}}
+  }catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.textContent="Move selected to Trash";}}
 }
 async function syncTransfers(btn){
   if(!confirm("Push the current status of every matched (Both) student to MVS Portal now?\\n\\nThis re-sends each Both-student's latest NIOS status + document links to the portal and logs them as Manual transfers."))return;
