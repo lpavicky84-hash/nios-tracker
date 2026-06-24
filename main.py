@@ -610,6 +610,7 @@ function applySidebarPref(){
         <div class="stat-grid" id="stat-grid"></div>
         <div class="card">
           <h3>Session-wise Students</h3>
+          <div id="source-counts"></div>
           <div id="session-counts"><div class="empty">Loading...</div></div>
         </div>
         <div class="card">
@@ -1556,6 +1557,7 @@ async function loadDashboard(){
       statCard("In Verification",c.doc_verification||0,SI.loader,"#D97706");
     renderDistribution(d.status_distribution,d.total_students);
     renderSessionCounts(d.session_counts||[]);
+    renderSourceCounts(d.source_counts||[]);
     // Recent Runs is now a scrollable list (no page/limit dropdown) — load a healthy
     // window and let the user scroll; ~7-8 rows are visible at a time.
     try{const rr=await api("/api/run-logs?limit=30");renderRuns(rr,"recent-runs");}
@@ -1581,6 +1583,31 @@ function renderSessionCounts(arr){
         cell("Active",s.active,"#7C3AED")+
         cell("Required",s.required,"#EA580C")+
       '</div></div>').join("")+'</div>';
+}
+function renderSourceCounts(arr){
+  const el=document.getElementById("source-counts");
+  if(!el)return;
+  if(!arr.length){el.innerHTML="";return;}
+  const cell=(label,val,color)=>'<div style="text-align:center;flex:1;min-width:0">'+
+    '<div style="font-size:17px;font-weight:800;color:'+color+';line-height:1.1">'+(val||0)+'</div>'+
+    '<div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">'+label+'</div></div>';
+  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-bottom:16px">'+
+    arr.map(s=>{
+      var portal=(s.key==="mvs_portal");
+      var accent=portal?"#7C3AED":"#0EA5E9";
+      var badgeBg=portal?"#ede9fe":"#e0f2fe", badgeFg=portal?"#6d28d9":"#0369a1";
+      return '<div style="padding:15px 16px;background:var(--soft);border:1px solid var(--border);'+
+        'border-left:4px solid '+accent+';border-radius:13px">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
+          '<span style="font-size:11px;font-weight:700;color:'+badgeFg+';background:'+badgeBg+';border-radius:6px;padding:3px 9px">'+(s.source||"—")+'</span>'+
+          '<span style="font-size:12.5px;color:var(--muted);font-weight:600">Total&nbsp;<b style="color:var(--text);font-size:17px">'+s.cnt+'</b></span></div>'+
+        '<div style="display:flex;gap:4px;padding-top:11px;border-top:1px solid var(--border)">'+
+          cell("Confirmed",s.confirmed,"#16A34A")+
+          cell("Verified",s.verified,"#2563EB")+
+          cell("Active",s.active,"#7C3AED")+
+          cell("Required",s.required,"#EA580C")+
+        '</div></div>';
+    }).join("")+'</div>';
 }
 function statCard(lbl,val,svg,col){
   return '<div class="stat"><div class="ic" style="background:'+col+'1A;color:'+col+'">'+svg+
@@ -3249,6 +3276,18 @@ async def dashboard(user=Depends(verify_token)):
         f"FROM student_status WHERE {ND} AND {NFAIL} AND session != '' GROUP BY session ORDER BY cnt DESC"
     ).fetchall()
 
+    # Same breakdown but grouped by DATA SOURCE (MVS Portal vs MVS Tracker), so the
+    # dashboard shows a card for the live portal data alongside the session cards.
+    src_counts = conn.execute(
+        f"SELECT source, COUNT(*) as cnt, "
+        f"SUM(CASE WHEN is_confirmed=1 THEN 1 ELSE 0 END) as confirmed, "
+        f"SUM(CASE WHEN COALESCE(is_confirmed,0)=0 AND current_status='Verified' THEN 1 ELSE 0 END) as verified, "
+        f"SUM(CASE WHEN current_status='Document Required' THEN 1 ELSE 0 END) as required, "
+        f"SUM(CASE WHEN COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
+        f"         AND (session IS NULL OR session NOT LIKE '%syc%') THEN 1 ELSE 0 END) as active "
+        f"FROM student_status WHERE {ND} AND {NFAIL} GROUP BY source"
+    ).fetchall()
+
     conn.close()
     _nexts = [j.next_run_time for j in (scheduler.get_job(jid) for _g, jid, _d in RUN_GROUPS)
               if j and j.next_run_time]
@@ -3267,7 +3306,22 @@ async def dashboard(user=Depends(verify_token)):
         "unknown_notifications": [dict(u) for u in unknown_notifs],
         "login_issues": [dict(li) for li in login_issues],
         "session_counts": _normalized_session_counts(sess_counts),
+        "source_counts": _normalized_source_counts(src_counts),
     }
+
+def _normalized_source_counts(raw_rows):
+    """Per data-source totals (MVS Portal / MVS Tracker) with the same breakdown as the
+    session cards. MVS Portal is returned first so it leads the dashboard."""
+    label = {"mvs_portal": "MVS Portal", "mvs_tracker": "MVS Tracker"}
+    out = []
+    for r in raw_rows:
+        src = (r["source"] if "source" in r.keys() else "") or "mvs_tracker"
+        out.append({"source": label.get(src, src), "key": src,
+                    "cnt": r["cnt"] or 0, "confirmed": r["confirmed"] or 0,
+                    "verified": r["verified"] or 0, "active": r["active"] or 0,
+                    "required": r["required"] or 0})
+    out.sort(key=lambda x: 0 if x["key"] == "mvs_portal" else 1)
+    return out
 
 def _normalized_session_counts(raw_rows):
     """Collapse raw session rows into the normalized categories (On Demand, Stream 2,
