@@ -1591,15 +1591,14 @@ function renderSourceCounts(arr){
   const cell=(label,val,color)=>'<div style="text-align:center;flex:1;min-width:0">'+
     '<div style="font-size:17px;font-weight:800;color:'+color+';line-height:1.1">'+(val||0)+'</div>'+
     '<div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">'+label+'</div></div>';
-  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-bottom:16px">'+
+  el.innerHTML='<div style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">By Data Source</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-bottom:18px">'+
     arr.map(s=>{
-      var portal=(s.key==="mvs_portal");
-      var accent=portal?"#7C3AED":"#0EA5E9";
-      var badgeBg=portal?"#ede9fe":"#e0f2fe", badgeFg=portal?"#6d28d9":"#0369a1";
-      return '<div style="padding:15px 16px;background:var(--soft);border:1px solid var(--border);'+
-        'border-left:4px solid '+accent+';border-radius:13px">'+
+      var dot=(s.key==="mvs_portal")?"#7C3AED":"#0EA5E9";
+      return '<div style="padding:15px 16px;background:var(--soft);border:1px solid var(--border);border-radius:13px">'+
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
-          '<span style="font-size:11px;font-weight:700;color:'+badgeFg+';background:'+badgeBg+';border-radius:6px;padding:3px 9px">'+(s.source||"—")+'</span>'+
+          '<span style="font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px">'+
+            '<span style="width:9px;height:9px;border-radius:50%;background:'+dot+';display:inline-block;flex:none"></span>'+(s.source||"—")+'</span>'+
           '<span style="font-size:12.5px;color:var(--muted);font-weight:600">Total&nbsp;<b style="color:var(--text);font-size:17px">'+s.cnt+'</b></span></div>'+
         '<div style="display:flex;gap:4px;padding-top:11px;border-top:1px solid var(--border)">'+
           cell("Confirmed",s.confirmed,"#16A34A")+
@@ -1607,7 +1606,8 @@ function renderSourceCounts(arr){
           cell("Active",s.active,"#7C3AED")+
           cell("Required",s.required,"#EA580C")+
         '</div></div>';
-    }).join("")+'</div>';
+    }).join("")+'</div>'+
+    '<div style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">By Session</div>';
 }
 function statCard(lbl,val,svg,col){
   return '<div class="stat"><div class="ic" style="background:'+col+'1A;color:'+col+'">'+svg+
