@@ -343,11 +343,19 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         # detected, mvs_tracker = manual upload).
         src_by_key = {s["row_key"]: s.get("source", "mvs_tracker") for s in all_students}
         alt_by_key = {s["row_key"]: (s.get("alt_mobile") or "") for s in all_students}
-        # Manual override (set in the Upload section) wins over auto-detection.
+        # Manual override (set in the Upload section) wins over auto-detection — but ONLY
+        # for the upload run it was set for. It used to apply to EVERY run and was never
+        # cleared, so a stale 'mvs_tracker' override forced all students to Tracker and a
+        # "MVS Portal" run (source_only='mvs_portal') filtered everyone out -> "Nothing to
+        # check". Now it is one-shot and upload-only: explicit Portal/Tracker/All/scheduled
+        # runs always use the real auto-detected source.
         override = get_setting("source_override", "")
-        if override in ("mvs_portal", "mvs_tracker"):
+        if override in ("mvs_portal", "mvs_tracker") and scope == "upload":
             src_by_key = {k: override for k in src_by_key}
-            logger.info(f"Source override active: all -> {override}")
+            logger.info(f"Source override active (upload only): all -> {override}")
+            set_setting("source_override", "")   # one-shot — clear after this upload run
+        elif override in ("mvs_portal", "mvs_tracker"):
+            logger.info(f"Ignoring stale source_override='{override}' (not an upload run)")
         # MVS student-id map (for pushing status + doc links back to the portal).
         sid_by_key = {s["row_key"]: s.get("student_id", "")
                       for s in all_students if s.get("student_id")}
@@ -411,7 +419,20 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
 
         total = len(work)
         if total == 0:
-            _finish(conn, run_id, 0, 0, 0, "Nothing to check")
+            msg = "Nothing to check"
+            if source_only == "mvs_portal":
+                _pool = sum(1 for s in all_students
+                            if src_by_key.get(s["row_key"], "mvs_tracker") == "mvs_portal")
+                if _pool > 0:
+                    msg = f"Nothing to check — all {_pool} MVS Portal student(s) already confirmed"
+                else:
+                    msg = "Nothing to check — no MVS Portal students in this run (bridge returned none)"
+            elif source_only == "mvs_tracker":
+                _pool = sum(1 for s in all_students
+                            if src_by_key.get(s["row_key"], "mvs_tracker") == "mvs_tracker")
+                if _pool > 0:
+                    msg = f"Nothing to check — all {_pool} MVS Tracker student(s) already confirmed"
+            _finish(conn, run_id, 0, 0, 0, msg)
             return
 
         # Live progress: overall + per-source counters.
