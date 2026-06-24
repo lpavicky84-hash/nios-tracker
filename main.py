@@ -495,6 +495,9 @@ function applySidebarPref(){
     <div class="nav-item" data-page="failed" onclick="nav('failed')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span><span class="lbl">Failed to Run</span>
       <span class="badge-count" id="nav-failed-badge" style="display:none">0</span></div>
+    <div class="nav-item" data-page="unknown" onclick="nav('unknown')">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span><span class="lbl">Unknown</span>
+      <span class="badge-count" id="nav-unknown-badge" style="display:none">0</span></div>
     <div class="nav-sep">Activity</div>
     <div class="nav-item" data-page="history" onclick="nav('history')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="lbl">Change History</span></div>
@@ -834,6 +837,31 @@ function applySidebarPref(){
             </tr></thead><tbody id="f-body"></tbody></table>
           </div>
           <div class="pg-bar" id="f-pg"></div>
+        </div>
+      </section>
+
+      <section id="sec-unknown" class="page-section">
+        <div class="card">
+          <div class="card-head">
+            <h3>Unknown Status</h3>
+            <button class="btn btn-success btn-sm" id="u-runall-btn" onclick="runAllUnknown(this)" title="Re-check only the Unknown students (with auto-retry)">&#8635; Run Unknown only</button>
+          </div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+            NIOS returned <b>no recognisable status</b> for these students — usually a wrong or not-yet-active Reference No,
+            or a status NIOS shows that isn't tracked yet. The <b>reason</b> is shown for each. Fix the reference if needed, or
+            click <b>Run Unknown only</b> to re-check just these (errors often clear on a retry).</p>
+          <div class="filter-bar">
+            <input type="text" id="u-search" placeholder="Search name / reference / email..." oninput="debounceUnknown()">
+            <select id="u-session" onchange="loadUnknown(1)"><option value="">All Sessions</option></select>
+            <button class="btn btn-outline btn-sm" onclick="loadUnknown(1)">Refresh</button>
+          </div>
+          <div id="u-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Why Unknown</th><th>Last Checked</th><th>Action</th>
+            </tr></thead><tbody id="u-body"></tbody></table>
+          </div>
+          <div class="pg-bar" id="u-pg"></div>
         </div>
       </section>
 
@@ -1481,7 +1509,7 @@ async function resumeIntervals(group,btn){
 
 const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
   syc:"SYC Students",
-  required:"Document Required",failed:"Failed to Run",history:"Change History",runlogs:"Run Logs",transfers:"Transfer Data",upload:"Upload Excel",settings:"Settings"};
+  required:"Document Required",failed:"Failed to Run",unknown:"Unknown Status",history:"Change History",runlogs:"Run Logs",transfers:"Transfer Data",upload:"Upload Excel",settings:"Settings"};
 function refreshPage(btn){
   // reload the data of whichever page is currently open (no full reload, stays logged in)
   if(btn){var ic=btn.querySelector("svg");if(ic){ic.style.transition="transform .6s";ic.style.transform="rotate(360deg)";
@@ -1505,6 +1533,7 @@ function nav(page){
   if(page==="syc")loadSyc(1);
   if(page==="required")loadRequired(1);
   if(page==="failed")loadFailed(1);
+  if(page==="unknown")loadUnknown(1);
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
   if(page==="transfers")loadTransfers(1);
@@ -1813,7 +1842,7 @@ async function downloadDoc(btn,ref,dob,kind,name){
 }
 function fillSessions(arr){
   if(!arr)return;
-  ["s-session","c-session","r-session"].forEach(id=>{
+  ["s-session","c-session","r-session","u-session"].forEach(id=>{
     const sel=document.getElementById(id);
     if(!sel)return;
     const cur=sel.value;
@@ -2206,6 +2235,63 @@ async function runAllFailed(btn){
   }catch(e){showToast(""+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
+let uTimer=null;
+function debounceUnknown(){clearTimeout(uTimer);uTimer=setTimeout(()=>loadUnknown(1),400);}
+async function loadUnknown(page){
+  page=page||1;
+  const q=new URLSearchParams({page:page,per_page:perPage,
+    search:(document.getElementById("u-search")?document.getElementById("u-search").value:""),
+    session_filter:fval("u-session")});
+  try{
+    const d=await api("/api/unknown-students?"+q.toString());
+    if(d.sessions)fillSessions(d.sessions);
+    document.getElementById("u-count").textContent=d.total+" student(s) with Unknown status";
+    const b=document.getElementById("u-body");
+    b.innerHTML=d.students.length?d.students.map(s=>{
+      var ref=(s.reference_no||s.enrollment_no||"\u2014");
+      var nm=(s.student_name||"this student").replace(/[\\"']/g," ");
+      var rm=(s.login_remark||"NIOS returned no recognisable status.").replace(/</g,"&lt;");
+      return '<tr>'+
+        '<td>'+(s.student_name||"\u2014")+'<div style="margin-top:4px">'+srcBadge(s)+
+          ((s.check_count&&s.check_count>1)?' <span style="font-size:10.5px;color:#6b7280;background:#f3f4f6;border-radius:6px;padding:1px 6px;font-weight:600">checked '+s.check_count+'x</span>':'')+
+          '</div></td>'+
+        '<td><span class="ref-tag">'+ref+'</span></td>'+
+        '<td style="font-size:13px">'+(s.session||"\u2014")+'</td>'+
+        '<td style="font-size:12px;color:#b45309;font-weight:500;max-width:320px">'+rm+'</td>'+
+        '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"\u2014")+'</td>'+
+        '<td><div style="display:flex;gap:6px;flex-wrap:wrap">'+
+          '<button onclick="editStudent(&quot;'+s.row_key+'&quot;)" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">Edit &amp; fix</button>'+
+          '<button onclick="deleteStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">Remove</button>'+
+        '</div></td></tr>';
+    }).join("")
+      :'<tr><td colspan="6" class="empty" style="color:var(--success)">No Unknown students \u2014 all clear!</td></tr>';
+    renderUnknownPg(page,d.pages,d.total);
+  }catch(e){showToast(""+e.message);}
+}
+function renderUnknownPg(page,total,totalRows){
+  const el=document.getElementById("u-pg");if(!el)return;
+  if(!total||total<=0){el.innerHTML="";return;}
+  let ctrl='<div class="pg-controls">';
+  ctrl+='<button onclick="loadUnknown('+(page-1)+')" '+(page<=1?"disabled":"")+'>\u2039 Prev</button>';
+  const start=Math.max(1,page-2),end=Math.min(total,page+2);
+  for(let i=start;i<=end;i++)ctrl+='<button class="'+(i===page?'active':'')+'" onclick="loadUnknown('+i+')">'+i+'</button>';
+  ctrl+='<button onclick="loadUnknown('+(page+1)+')" '+(page>=total?"disabled":"")+'>Next \u203a</button></div>';
+  const sel='<div class="perpage">'+(totalRows!=null?'<span>'+totalRows+' students</span> \u00b7 ':'')+
+    'Per page: <select onchange="perPage=parseInt(this.value);loadUnknown(1)">'+
+    [10,20,50,100].map(n=>'<option value="'+n+'" '+(n===perPage?"selected":"")+'>'+n+'</option>').join("")+
+    '</select></div>';
+  el.innerHTML=ctrl+sel;
+}
+async function runAllUnknown(btn){
+  if(!confirm("Re-check ALL Unknown students now?\\n\\nEach is re-run with auto-retry. Uses CapSolver credits for every student in this list."))return;
+  const old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting\u2026";}
+  try{
+    const r=await api("/api/run-now-unknown","POST");
+    showToast(r.message||"Re-checking Unknown students\u2026");
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
 function _setNavBadge(id,n){
   const b=document.getElementById(id);if(!b)return;
   if(n>0){b.textContent=n;b.style.display="inline-block";b.classList.add("has");}
@@ -2219,6 +2305,7 @@ async function updateNavCounts(){
     _setNavBadge("nav-required-badge",d.required);
     _setNavBadge("nav-syc-badge",d.syc);
     _setNavBadge("nav-failed-badge",d.failed);
+    _setNavBadge("nav-unknown-badge",d.unknown);
   }catch(e){}
 }
 async function updateFailedBadge(){return updateNavCounts();}   // back-compat
@@ -3310,7 +3397,8 @@ async def failed_students(page: int = 1, per_page: int = 50, search: str = "",
                           source: str = "", user=Depends(verify_token)):
     """Students whose NIOS login failed (wrong data) — the 'Failed to Run' list."""
     conn = get_db()
-    wc = ["COALESCE(deleted,0)=0", "(COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)"]
+    wc = ["COALESCE(deleted,0)=0", "(COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)",
+          "COALESCE(current_status,'')!='Unknown'"]
     params = []
     if search:
         like = f"%{search.strip()}%"
@@ -3331,6 +3419,48 @@ async def failed_students(page: int = 1, per_page: int = 50, search: str = "",
     return {"students": [dict(r) for r in rows], "total": total, "page": page,
             "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page)}
 
+@app.get("/api/unknown-students")
+async def unknown_students(page: int = 1, per_page: int = 50, search: str = "",
+                           session_filter: str = "", user=Depends(verify_token)):
+    """Students stuck at the 'Unknown' NIOS status — their own tab so they're easy to
+    find, filter (by session) and re-run. Also returns the session list for the dropdown."""
+    conn = get_db()
+    wc = ["COALESCE(deleted,0)=0", "current_status='Unknown'"]
+    params = []
+    if search:
+        like = f"%{search.strip()}%"
+        wc.append("(student_name LIKE ? OR reference_no LIKE ? OR email LIKE ? OR enrollment_no LIKE ?)")
+        params += [like, like, like, like]
+    if session_filter:
+        clause, sp = _session_clause(session_filter)
+        wc.append(clause); params += sp
+    where = "WHERE " + " AND ".join(wc)
+    total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
+    per_page = max(1, min(per_page, 200)); page = max(1, page)
+    offset = (page - 1) * per_page
+    rows = conn.execute(f"SELECT * FROM student_status {where} ORDER BY last_checked DESC LIMIT ? OFFSET ?",
+                        params + [per_page, offset]).fetchall()
+    raw_sessions = conn.execute("SELECT DISTINCT session FROM student_status "
+                                "WHERE COALESCE(deleted,0)=0 AND current_status='Unknown'").fetchall()
+    norm_sessions = sorted({normalize_session(r["session"]) for r in raw_sessions})
+    norm_sessions = [x for x in norm_sessions if x and x != "SYC"]
+    conn.close()
+    return {"students": [dict(r) for r in rows], "total": total, "page": page,
+            "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page),
+            "sessions": norm_sessions}
+
+@app.post("/api/run-now-unknown")
+async def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Re-run ONLY the Unknown-status students (status auto-retries on each)."""
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
+                     "AND current_status='Unknown'").fetchone()[0]
+    conn.close()
+    if n == 0:
+        return {"message": "No Unknown students to re-check.", "count": 0}
+    background_tasks.add_task(run_status_check, "all", None, "unknown")
+    return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
+
 @app.get("/api/nav-count")
 async def nav_count(user=Depends(verify_token)):
     """Live counts for the sidebar badges (active / confirmed / required / syc / failed)."""
@@ -3344,10 +3474,11 @@ async def nav_count(user=Depends(verify_token)):
     confirmed = c(NF + " AND is_confirmed=1")
     required = c(NF + " AND current_status='Document Required'")
     syc = c(NF + " AND (session LIKE '%syc%' OR current_status='SYC')")
-    failed = c("(COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)")
+    failed = c("(COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1) AND COALESCE(current_status,'')!='Unknown'")
+    unknown = c("current_status='Unknown'")
     conn.close()
     return {"students": active, "confirmed": confirmed, "required": required,
-            "syc": syc, "failed": failed}
+            "syc": syc, "failed": failed, "unknown": unknown}
 
 @app.get("/api/failed-count")
 async def failed_count(user=Depends(verify_token)):

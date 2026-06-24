@@ -259,6 +259,15 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             all_students = [s for s in _load_db_students(c) if s["row_key"] in fkeys]
             dup_count = 0
             logger.info(f"Failed re-run (auto-fix): {len(all_students)} failed student(s)")
+        elif scope == "unknown":
+            # Re-run only students stuck at 'Unknown' (NIOS returned no recognisable
+            # status) — usually a wrong/late reference or a transient blip.
+            rows = c.execute("SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 "
+                             "AND current_status='Unknown'").fetchall()
+            ukeys = {r["row_key"] for r in rows}
+            all_students = [s for s in _load_db_students(c) if s["row_key"] in ukeys]
+            dup_count = 0
+            logger.info(f"Unknown re-run: {len(all_students)} unknown-status student(s)")
         elif scope == "upload":
             # UPLOAD RUN: only the students in the just-uploaded sheet, ALWAYS treated as
             # MVS Tracker data. The Upload feature is the tracker entry point, so never
@@ -518,7 +527,14 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # network / captcha issue), surface the student in 'Failed to Run' with a
             # clear remark so the counsellor can verify the reference or just run it
             # again. It clears automatically on the next successful check.
-            if not res.get("success"):
+            if new_status == "Unknown":
+                _why = ("NIOS returned no recognizable status — verify the Reference No "
+                        "(it may be wrong or not found yet), or NIOS may be showing a status not tracked yet.")
+                if res.get("raw_text"):
+                    _why += f" [NIOS: {res['raw_text'][:110]}]"
+                c.execute("UPDATE student_status SET check_failed=1, login_remark=? WHERE row_key=?",
+                          (_why[:300], row_key))
+            elif not res.get("success"):
                 _tries = res.get("attempts", 1)
                 _msg = _CHECK_FAIL_MSG + (f" (auto-retried {_tries}x this run)" if _tries and _tries > 1 else "")
                 c.execute("UPDATE student_status SET check_failed=1, login_remark=? WHERE row_key=?",
