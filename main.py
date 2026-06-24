@@ -999,6 +999,29 @@ function applySidebarPref(){
             <button class="btn btn-outline btn-sm" onclick="downloadExcel()">Download Updated Excel</button>
           </div>
         </div>
+
+        <div class="card">
+          <h3>Bulk Alternate Numbers</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+            Forgot to add alternate WhatsApp numbers in your sheet? Upload a small sheet here with just two
+            columns — <b>Reference No</b> and <b>Alternate Number</b> — to add/update them in bulk. Students are
+            matched by reference number. For anyone already <b>confirmed</b>, the documents are sent to the new
+            alternate number automatically (the primary number is not messaged again).</p>
+          <div style="background:var(--soft);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:18px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">&#128196; Need the format? Download a sample:</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Two columns: Reference No, Alternate Number. Fill and upload.</div>
+            <button class="btn btn-outline btn-sm" onclick="downloadAltSample()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Sample — Alternate Numbers</button>
+          </div>
+          <div class="drop" id="alt-drop" onclick="document.getElementById('alt-file-input').click()">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
+            <div style="font-weight:600;font-size:15px">Click or drag the alternate-numbers sheet here</div>
+            <div style="color:var(--muted);font-size:13px;margin-top:5px">.xlsx — Reference No + Alternate Number</div>
+          </div>
+          <input type="file" id="alt-file-input" accept=".xlsx,.xls" style="display:none" onchange="handleAltFile(this.files[0])">
+          <div id="alt-status" style="margin-top:16px"></div>
+        </div>
       </section>
 
       <section id="sec-settings" class="page-section">
@@ -2553,6 +2576,46 @@ function handleFile(file){
   };
   xhr.onerror=function(){st.innerHTML='<div style="color:var(--danger)">Upload error — try again</div>';};
   xhr.send(fd);
+}
+const altDrop=document.getElementById("alt-drop");
+if(altDrop){
+  ["dragover","dragenter"].forEach(ev=>altDrop.addEventListener(ev,e=>{e.preventDefault();altDrop.classList.add("drag");}));
+  ["dragleave","drop"].forEach(ev=>altDrop.addEventListener(ev,e=>{e.preventDefault();altDrop.classList.remove("drag");}));
+  altDrop.addEventListener("drop",e=>{if(e.dataTransfer.files[0])handleAltFile(e.dataTransfer.files[0]);});
+}
+function handleAltFile(file){
+  if(!file)return;
+  const st=document.getElementById("alt-status");
+  st.innerHTML='<div style="color:var(--muted);font-size:13px">Uploading &amp; matching alternate numbers…</div>';
+  const fd=new FormData();fd.append("file",file);
+  const xhr=new XMLHttpRequest();
+  xhr.open("POST",API+"/api/upload-alt-numbers");
+  xhr.setRequestHeader("Authorization","Bearer "+TOKEN);
+  xhr.onload=function(){
+    let d={};try{d=JSON.parse(xhr.responseText);}catch(e){}
+    if(xhr.status<200||xhr.status>=300){st.innerHTML='<div style="color:var(--danger)">'+(d.detail||"Upload failed")+'</div>';return;}
+    st.innerHTML='<div style="color:var(--success);font-weight:600">'+(d.message||"Done")+'</div>'+
+      '<div class="up-stats" style="margin-top:12px">'+
+        '<div class="up-stat new"><div class="us-lbl">Updated</div><div class="us-val">'+(d.updated||0)+'</div></div>'+
+        '<div class="up-stat sim"><div class="us-lbl">Sent to alt (confirmed)</div><div class="us-val">'+(d.to_send||0)+'</div></div>'+
+        '<div class="up-stat dup"><div class="us-lbl">Not found</div><div class="us-val">'+(d.not_found||0)+'</div></div>'+
+      '</div>';
+    showToast("Alternate numbers — updated "+(d.updated||0));
+    const fi=document.getElementById("alt-file-input");if(fi)fi.value="";
+  };
+  xhr.onerror=function(){st.innerHTML='<div style="color:var(--danger)">Upload error — try again</div>';};
+  xhr.send(fd);
+}
+async function downloadAltSample(){
+  try{
+    const r=await fetch(API+"/api/sample-alt-sheet",{headers:{Authorization:"Bearer "+TOKEN}});
+    if(!r.ok){showToast("Sample download failed ("+r.status+")");return;}
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download="MVS_alternate_numbers_sample.xlsx";
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
+    showToast("Sample sheet downloaded");
+  }catch(e){showToast("Error: "+e.message);}
 }
 function fmtBytes(b){if(b<1024)return b+" B";if(b<1048576)return (b/1024).toFixed(1)+" KB";return (b/1048576).toFixed(1)+" MB";}
 function fmtEta(s){s=Math.ceil(s);if(s<1)return "0s";if(s<60)return s+"s";const m=Math.floor(s/60),ss=s%60;return m+"m "+ss+"s";}
@@ -4331,6 +4394,138 @@ async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
     return Response(content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{fn}"'})
+
+@app.get("/api/sample-alt-sheet")
+async def sample_alt_sheet(user=Depends(verify_token)):
+    """Two-column sample for the bulk alternate-number upload."""
+    import io, openpyxl
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Alternate Numbers"
+    headers = ["Reference No", "Alternate Number"]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="4F46E5")
+    for r in [["D1026300062", "9988776655"], ["B0926200020", "9012345678"], ["A1026300040", "8123456789"]]:
+        ws.append(r)
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 20
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return Response(content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="MVS_alternate_numbers_sample.xlsx"'})
+
+def _send_alt_to_confirmed(row_keys):
+    """Send the documents ONLY to the alternate number for already-confirmed students
+    (their primary number already received them, so it is not messaged again)."""
+    if get_setting("wa_enabled", "0") != "1":
+        return
+    import whatsapp
+    conn = get_db(); c = conn.cursor()
+    sent = 0
+    for rk in row_keys:
+        r = c.execute("SELECT * FROM student_status WHERE row_key=?", (rk,)).fetchone()
+        if not r:
+            continue
+        alt = (r["alt_mobile"] if "alt_mobile" in r.keys() else "") or ""
+        if not alt:
+            continue
+        try:
+            ok, info = whatsapp.send_for_student({
+                "row_key": rk, "student_name": r["student_name"] or "",
+                "mobile": r["mobile"] or "", "alt_mobile": alt,
+                "session": r["session"] or "", "reference_no": r["reference_no"] or "",
+                "dob": r["dob"] or ""}, only_number=alt)
+            if ok:
+                sent += 1
+                c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                          (f"Sent to alternate number {alt}", rk))
+                conn.commit()
+            logger.info(f"Alt-send {rk} -> {alt}: {'ok' if ok else 'FAIL'} | {info}")
+        except Exception as e:
+            logger.warning(f"Alt-send error {rk}: {e}")
+    conn.close()
+    logger.info(f"Alternate-number send complete: {sent}/{len(row_keys)}")
+
+@app.post("/api/upload-alt-numbers")
+async def upload_alt_numbers(background_tasks: BackgroundTasks,
+                             file: UploadFile = File(...), user=Depends(verify_token)):
+    """Bulk add/update ALTERNATE WhatsApp numbers for students already in the system.
+    Sheet needs a Reference No column and an Alternate Number column (header names are
+    matched flexibly). Matches by reference (then enrollment), updates alt_mobile, and for
+    students that are ALREADY confirmed, sends the documents to the new alternate number."""
+    if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx files allowed")
+    import io, openpyxl
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read the file: {e}")
+    ws = wb.active
+    data = list(ws.iter_rows(values_only=True))
+    if not data:
+        return {"message": "The sheet is empty.", "updated": 0, "not_found": 0, "to_send": 0}
+    header = [str(h or "").strip().lower() for h in data[0]]
+
+    def _find(cands):
+        for i, h in enumerate(header):
+            if any(cc in h for cc in cands):
+                return i
+        return -1
+    ref_i = _find(["reference", "ref no", "ref_no", "refno", "ref"])
+    enr_i = _find(["enrollment", "enrol"])
+    alt_i = _find(["alternate", "alt", "second", "whatsapp", "other"])
+    if ref_i < 0 and enr_i < 0:
+        return {"message": "No 'Reference No' (or Enrollment) column found in the sheet.",
+                "updated": 0, "not_found": 0, "to_send": 0}
+    if alt_i < 0:
+        return {"message": "No 'Alternate Number' column found in the sheet.",
+                "updated": 0, "not_found": 0, "to_send": 0}
+
+    def _digits(v):
+        return "".join(ch for ch in str(v or "") if ch.isdigit())
+
+    conn = get_db(); c = conn.cursor()
+    updated, not_found, send_keys = 0, 0, []
+    for row in data[1:]:
+        if not row:
+            continue
+        ref = str(row[ref_i] or "").strip() if 0 <= ref_i < len(row) else ""
+        enr = str(row[enr_i] or "").strip() if 0 <= enr_i < len(row) else ""
+        alt = _digits(row[alt_i]) if alt_i < len(row) else ""
+        if not alt or len(alt) < 10:
+            continue
+        rec = None
+        if ref:
+            rec = c.execute("SELECT row_key, mobile, is_confirmed FROM student_status "
+                            "WHERE reference_no=? AND COALESCE(deleted,0)=0 LIMIT 1", (ref,)).fetchone()
+        if rec is None and enr:
+            rec = c.execute("SELECT row_key, mobile, is_confirmed FROM student_status "
+                            "WHERE enrollment_no=? AND COALESCE(deleted,0)=0 LIMIT 1", (enr,)).fetchone()
+        if rec is None:
+            not_found += 1
+            continue
+        if alt == _digits(rec["mobile"]):
+            continue   # alternate same as primary — skip
+        c.execute("UPDATE student_status SET alt_mobile=? WHERE row_key=?", (alt, rec["row_key"]))
+        updated += 1
+        if rec["is_confirmed"] == 1:
+            send_keys.append(rec["row_key"])
+    conn.commit(); conn.close()
+
+    wa_on = get_setting("wa_enabled", "0") == "1"
+    if send_keys and wa_on:
+        background_tasks.add_task(_send_alt_to_confirmed, send_keys)
+    msg = f"Updated the alternate number for {updated} student(s)."
+    if not_found:
+        msg += f" {not_found} reference(s) were not found in the system."
+    if send_keys:
+        msg += (f" Sending documents to the alternate number for {len(send_keys)} confirmed student(s) in the background…"
+                if wa_on else f" {len(send_keys)} are confirmed — turn ON WhatsApp in Settings to send to the alternate number.")
+    return {"message": msg, "updated": updated, "not_found": not_found,
+            "to_send": (len(send_keys) if wa_on else 0)}
 
 @app.get("/api/intervals")
 async def get_intervals(user=Depends(verify_token)):
