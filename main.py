@@ -932,6 +932,17 @@ function applySidebarPref(){
       </section>
 
       <section id="sec-transfers" class="page-section">
+        <div class="card" style="border:1px solid #fde68a;background:#fffdf5">
+          <div class="card-head">
+            <h3>&#128465; Old / Removed Portal Students</h3>
+            <button class="btn btn-outline btn-sm" id="stale-find-btn" onclick="findStalePortal(this)">Find old portal data</button>
+          </div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:6px">
+            Finds students we still track as <b>MVS Portal</b> that are <b>no longer on the live portal</b> — e.g. an old batch
+            you removed from the portal. It only <b>previews</b> them; nothing is deleted until you click <b>Move to Trash</b>
+            (recoverable from Settings &#8594; Trash any time).</p>
+          <div id="stale-box" style="margin-top:10px"></div>
+        </div>
         <div class="card">
           <div class="card-head">
             <h3>Transfer Data — Tracker &#8594; Portal</h3>
@@ -2556,6 +2567,80 @@ function renderTransPg(page,total,totalRows){
     '</select></div>';
   el.innerHTML=ctrl+sel;
 }
+let staleKeys=[];
+async function findStalePortal(btn){
+  const box=document.getElementById("stale-box");
+  if(btn){btn.disabled=true;btn.textContent="Checking\u2026";}
+  if(box)box.innerHTML='<div style="color:var(--muted);font-size:13px;padding:8px 0">Fetching the live portal and comparing\u2026</div>';
+  try{
+    const r=await api("/api/portal-stale");
+    if(r.ok===false){box.innerHTML='<div style="color:var(--warn);font-size:13px">'+(r.message||"Could not check right now.")+'</div>';return;}
+    staleKeys=(r.stale||[]).map(s=>s.row_key);
+    if(!r.stale||!r.stale.length){
+      box.innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">&#10003; All clean — every tracked MVS Portal student is still on the live portal. (Compared against '+r.fetched+' live records.)</div>';
+      return;
+    }
+    var rows=r.stale.map((s,i)=>'<tr>'+
+      '<td><input type="checkbox" class="stale-cb" value="'+s.row_key+'" checked onchange="updateStaleCount()"></td>'+
+      '<td style="font-size:12px;color:var(--muted)">'+(i+1)+'</td>'+
+      '<td>'+(s.student_name||"\u2014")+'</td>'+
+      '<td><span class="ref-tag">'+(s.reference_no||"\u2014")+'</span></td>'+
+      '<td style="font-size:12.5px">'+(s.session||"\u2014")+'</td>'+
+      '<td style="font-size:12.5px">'+(s.status||"\u2014")+'</td>'+
+      '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"\u2014")+'</td>'+
+      '</tr>').join("");
+    box.innerHTML='<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;padding:10px 13px;margin-bottom:10px;font-size:13.5px;color:#9a3412">'+
+        'Found <b>'+r.stale.length+'</b> old portal student(s) no longer on the live portal (compared against '+r.fetched+' live records). '+
+        '<b>Tick the ones you want</b>, then either move them to the Tracker (keeps the data) or to Trash.</div>'+
+      '<div style="overflow-x:auto"><table><thead><tr>'+
+        '<th><input type="checkbox" id="stale-all" checked onclick="toggleStaleAll(this)"></th>'+
+        '<th>#</th><th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Last Status</th><th>Last Checked</th>'+
+        '</tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      '<div style="margin-top:13px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
+        '<button class="btn btn-sm" style="background:#2563eb;color:#fff" onclick="transferStaleToTracker(this)">&#8594; Transfer selected to Tracker</button>'+
+        '<button class="btn btn-sm" style="background:#dc2626;color:#fff" onclick="removeStalePortal(this)">&#128465; Move selected to Trash</button>'+
+        '<span id="stale-count" style="font-size:12.5px;color:var(--muted)"></span>'+
+      '</div>'+
+      '<div style="font-size:12px;color:var(--muted);margin-top:7px">&#8594; <b>Transfer to Tracker</b> keeps the record (re-checked as Tracker data, no longer linked to the portal). &#128465; <b>Trash</b> is recoverable from Settings.</div>';
+    updateStaleCount();
+  }catch(e){box.innerHTML='<div style="color:var(--danger);font-size:13px">'+e.message+'</div>';}
+  finally{if(btn){btn.disabled=false;btn.textContent="Find old portal data";}}
+}
+function getStaleSelected(){
+  return Array.from(document.querySelectorAll(".stale-cb:checked")).map(c=>c.value);
+}
+function updateStaleCount(){
+  const el=document.getElementById("stale-count");if(!el)return;
+  el.textContent=getStaleSelected().length+" selected";
+}
+function toggleStaleAll(cb){
+  document.querySelectorAll(".stale-cb").forEach(c=>{c.checked=cb.checked;});
+  updateStaleCount();
+}
+async function transferStaleToTracker(btn){
+  const keys=getStaleSelected();
+  if(!keys.length){showToast("Select at least one student first");return;}
+  if(!confirm("Move these "+keys.length+" student(s) from MVS Portal to MVS Tracker?\\n\\nThe records are kept and re-checked as Tracker data — they're just no longer linked to the live portal."))return;
+  if(btn){btn.disabled=true;btn.textContent="Moving\u2026";}
+  try{
+    const r=await api("/api/portal-to-tracker","POST",{row_keys:keys});
+    showToast("Moved "+(r.moved||keys.length)+" student(s) to MVS Tracker");
+    document.getElementById("stale-box").innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">&#10003; Done — '+(r.moved||0)+' record(s) moved to MVS Tracker. They are kept and will be re-checked as Tracker data.</div>';
+    try{loadDashboard();}catch(e){}
+  }catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.textContent="\u2192 Transfer selected to Tracker";}}
+}
+async function removeStalePortal(btn){
+  const keys=getStaleSelected();
+  if(!keys.length){showToast("Select at least one student first");return;}
+  if(!confirm("Move these "+keys.length+" student(s) to Trash?\\n\\nThey can be restored anytime from Settings \u2192 Trash."))return;
+  if(btn){btn.disabled=true;btn.textContent="Removing\u2026";}
+  try{
+    const r=await api("/api/students-delete-bulk","POST",{row_keys:keys});
+    showToast("Moved "+(r.deleted||keys.length)+" student(s) to Trash");
+    document.getElementById("stale-box").innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">&#10003; Done — '+(r.deleted||0)+' record(s) moved to Trash.</div>';
+    try{loadDashboard();}catch(e){}
+  }catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.textContent="\ud83d\uddd1 Move selected to Trash";}}
+}
 async function syncTransfers(btn){
   if(!confirm("Push the current status of every matched (Both) student to MVS Portal now?\\n\\nThis re-sends each Both-student's latest NIOS status + document links to the portal and logs them as Manual transfers."))return;
   const old=btn?btn.textContent:"";
@@ -3921,6 +4006,58 @@ async def transfer_sync(user=Depends(verify_token)):
             logger.warning(f"transfer-sync push failed {rk}: {e}")
     conn.commit(); conn.close()
     return {"message": f"Synced {pushed} matched student(s) to MVS Portal.", "count": pushed}
+
+@app.get("/api/portal-stale")
+async def portal_stale(user=Depends(verify_token)):
+    """Preview OLD / removed MVS Portal students: students we still track as source=mvs_portal
+    whose record is NO LONGER present on the live portal (e.g. an old batch you removed).
+    Returns the list only — nothing is deleted here. Guarded so a failed/empty fetch never
+    flags everyone as stale."""
+    import mvs_sync
+    if not mvs_sync.enabled():
+        raise HTTPException(status_code=400, detail="MVS Portal bridge is not enabled (set MVS_MODE).")
+    try:
+        portal = mvs_sync.fetch_students_for_tracker(include_done=True)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach MVS Portal: {e}")
+    live_keys = {p["row_key"] for p in portal if p.get("row_key")}
+    # Safety: if the portal returned nothing, refuse to flag anything (avoid mass-delete).
+    if not live_keys:
+        return {"ok": False, "fetched": 0, "stale": [],
+                "message": "Portal returned 0 students — not flagging anything (try again later)."}
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT row_key, student_name, reference_no, enrollment_no, session, current_status, "
+        "mobile, last_checked FROM student_status "
+        "WHERE COALESCE(deleted,0)=0 AND COALESCE(source,'mvs_tracker')='mvs_portal' "
+        "ORDER BY student_name").fetchall()
+    conn.close()
+    stale = []
+    for r in rows:
+        if r["row_key"] not in live_keys:
+            stale.append({"row_key": r["row_key"], "student_name": r["student_name"] or "—",
+                          "reference_no": r["reference_no"] or r["enrollment_no"] or "—",
+                          "session": r["session"] or "—", "status": r["current_status"] or "—",
+                          "mobile": r["mobile"] or "—", "last_checked": r["last_checked"] or "—"})
+    return {"ok": True, "fetched": len(live_keys), "stale": stale, "count": len(stale)}
+
+@app.post("/api/portal-to-tracker")
+async def portal_to_tracker(body: dict, user=Depends(verify_token)):
+    """Move selected students from MVS Portal -> MVS Tracker (keeps the record, just changes
+    its data source). Used to preserve old portal records instead of deleting them: they stay
+    tracked as Tracker data and are no longer tied to the live portal."""
+    keys = [k for k in (body.get("row_keys", []) or []) if k][:1000]
+    if not keys:
+        raise HTTPException(status_code=400, detail="no students selected")
+    conn = get_db()
+    ph = ",".join("?" * len(keys))
+    cur = conn.execute(
+        f"UPDATE student_status SET source='mvs_tracker', cross_dup=0 "
+        f"WHERE row_key IN ({ph}) AND COALESCE(deleted,0)=0", keys)
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return {"ok": True, "moved": n}
 
 @app.post("/api/run-now")
 async def run_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
