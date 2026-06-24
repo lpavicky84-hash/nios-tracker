@@ -79,6 +79,25 @@ def init_db():
         )
     """)
 
+    # Tracker -> Portal transfer log: one row each time a student that existed in MVS
+    # Tracker is matched to MVS Portal and merged (now managed/run as Portal). Lets the
+    # counsellor see exactly which students moved, with old vs new status + key details.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS transfer_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            row_key TEXT,
+            reference_no TEXT,
+            enrollment_no TEXT,
+            student_name TEXT,
+            mobile TEXT,
+            session TEXT,
+            old_status TEXT,
+            new_status TEXT,
+            transferred_at TEXT NOT NULL,
+            mode TEXT DEFAULT 'auto'
+        )
+    """)
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS student_status (
             row_key TEXT PRIMARY KEY,

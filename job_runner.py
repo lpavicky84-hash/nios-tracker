@@ -195,6 +195,9 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
 
     conn = get_db()
     c = conn.cursor()
+    # Transfers detected during any run are labelled 'auto'. A user-clicked Portal sync
+    # logs its own 'manual' rows separately.
+    _transfer_mode = "auto"
     # Auto-cancel any previously 'running' run so two checks never overlap.
     # The old run's worker polls its own status and stops cooperatively.
     prev = c.execute("SELECT id FROM run_logs WHERE status='running'").fetchall()
@@ -454,6 +457,17 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             if prev_source and prev_source != new_source:
                 final_source = "mvs_portal"
                 cross = 1
+                # Log this Tracker -> Portal transfer ONCE (the moment the merge is first
+                # detected). prev was 'mvs_tracker', it now lives in BOTH and is managed as
+                # Portal. old_status = what Tracker had, new_status = the fresh Portal check.
+                if prev_source == "mvs_tracker":
+                    c.execute("""INSERT INTO transfer_log
+                        (row_key, reference_no, enrollment_no, student_name, mobile, session,
+                         old_status, new_status, transferred_at, mode)
+                        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                        (row_key, new_ref, res.get("enrollment_no", ""), res.get("student_name", ""),
+                         res.get("mobile", ""), res.get("session", ""), old_status or "",
+                         new_status, now_s, _transfer_mode))
             status_changed = (old_status != new_status)
             if status_changed:
                 stats["changed"] += 1

@@ -500,6 +500,8 @@ function applySidebarPref(){
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="lbl">Change History</span></div>
     <div class="nav-item" data-page="runlogs" onclick="nav('runlogs')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span><span class="lbl">Run Logs</span></div>
+    <div class="nav-item" data-page="transfers" onclick="nav('transfers')">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span><span class="lbl">Transfer Data</span></div>
     <div class="nav-sep">Manage</div>
     <div class="nav-item" data-page="upload" onclick="nav('upload')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span><span class="lbl">Upload Excel</span></div>
@@ -896,6 +898,36 @@ function applySidebarPref(){
               <th>Run At</th><th>Type</th><th>Checked</th><th>Changed</th><th>Failed</th><th>Status</th><th>Action</th>
             </tr></thead><tbody id="rl-body"></tbody></table>
           </div>
+        </div>
+      </section>
+
+      <section id="sec-transfers" class="page-section">
+        <div class="card">
+          <div class="card-head">
+            <h3>Transfer Data — Tracker &#8594; Portal</h3>
+            <button class="btn btn-success btn-sm" id="tr-sync-btn" onclick="syncTransfers(this)" title="Push the current status of every matched (Both) student to MVS Portal now">&#8635; Sync matched to Portal</button>
+          </div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+            Every student that existed in <b>MVS Tracker</b> and was then matched to <b>MVS Portal</b> appears here — it now lives in
+            <b>Both</b> and is run/managed as Portal, with its status pushed to the portal. Shows the status it had before (Old)
+            vs after the Portal check (New), so you can see exactly which &amp; how many records moved.</p>
+          <div class="filter-bar">
+            <input id="tr-search" type="text" placeholder="Master search — name / reference / enrollment / mobile…" oninput="trSearchDebounced()"
+              style="padding:9px 12px;border:2px solid var(--border);border-radius:9px;font-size:13.5px;min-width:280px">
+            <select id="tr-mode" onchange="loadTransfers(1)">
+              <option value="">All transfers</option>
+              <option value="auto">Automatic (during runs)</option>
+              <option value="manual">Manual (Sync button)</option>
+            </select>
+            <button class="btn btn-outline btn-sm" onclick="loadTransfers(1)">Refresh</button>
+          </div>
+          <div id="tr-count" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Old Status</th><th>New Status</th><th>Transferred At</th><th>Mode</th>
+            </tr></thead><tbody id="tr-body"></tbody></table>
+          </div>
+          <div class="pg-bar" id="tr-pg"></div>
         </div>
       </section>
 
@@ -1449,7 +1481,7 @@ async function resumeIntervals(group,btn){
 
 const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
   syc:"SYC Students",
-  required:"Document Required",failed:"Failed to Run",history:"Change History",runlogs:"Run Logs",upload:"Upload Excel",settings:"Settings"};
+  required:"Document Required",failed:"Failed to Run",history:"Change History",runlogs:"Run Logs",transfers:"Transfer Data",upload:"Upload Excel",settings:"Settings"};
 function refreshPage(btn){
   // reload the data of whichever page is currently open (no full reload, stays logged in)
   if(btn){var ic=btn.querySelector("svg");if(ic){ic.style.transition="transform .6s";ic.style.transform="rotate(360deg)";
@@ -1475,6 +1507,7 @@ function nav(page){
   if(page==="failed")loadFailed(1);
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
+  if(page==="transfers")loadTransfers(1);
   if(page==="settings"){loadIntervals();loadWa();loadTrash();loadReportSettings();loadSourceCounts();}
   if(page==="upload")loadUploadSource();
   updateNavCounts();
@@ -2298,6 +2331,59 @@ async function loadRunLogs(){
   const sel=document.getElementById("rl-limit");
   const lim=sel?parseInt(sel.value):50;
   try{const l=await api("/api/run-logs?limit="+lim);renderRuns(l,"rl-body");}catch(e){showToast(""+e.message);}
+}
+let transPerPage=10,_trSearchT=null;
+function trSearchDebounced(){clearTimeout(_trSearchT);_trSearchT=setTimeout(()=>loadTransfers(1),350);}
+async function loadTransfers(page){
+  page=page||1;
+  const q=new URLSearchParams({page:page,per_page:transPerPage,
+    search:fval("tr-search"),mode:fval("tr-mode")});
+  try{
+    const d=await api("/api/transfers?"+q.toString());
+    const items=d.items||[];
+    const cnt=document.getElementById("tr-count");
+    if(cnt)cnt.textContent=d.total+" record(s) transferred Tracker \u2192 Portal";
+    document.getElementById("tr-body").innerHTML=items.length?items.map(x=>{
+      var mode=(x.mode==="manual")
+        ?'<span style="font-size:11px;font-weight:600;color:#3730a3;background:#e0e7ff;border-radius:6px;padding:2px 8px">Manual</span>'
+        :'<span style="font-size:11px;font-weight:600;color:#065f46;background:#d1fae5;border-radius:6px;padding:2px 8px">Auto</span>';
+      return '<tr>'+
+        '<td>'+(x.student_name||"\u2014")+'<div style="margin-top:3px"><span style="font-size:10.5px;color:#6b7280">'+(x.mobile||"")+'</span></div></td>'+
+        '<td><span class="ref-tag">'+(x.reference_no||x.enrollment_no||"\u2014")+'</span></td>'+
+        '<td style="font-size:13px">'+(x.session||"\u2014")+'</td>'+
+        '<td>'+badge(x.old_status||"\u2014")+'</td>'+
+        '<td>'+badge(x.new_status||"\u2014")+'</td>'+
+        '<td style="font-size:12px;color:var(--muted)">'+(x.transferred_at||"")+'</td>'+
+        '<td>'+mode+'</td></tr>';
+    }).join("")
+      :'<tr><td colspan="7" class="empty">No transfers yet. When a Tracker student is matched to Portal during a run, it appears here.</td></tr>';
+    renderTransPg(d.page,d.pages,d.total);
+  }catch(e){showToast(""+e.message);}
+}
+function renderTransPg(page,total,totalRows){
+  const el=document.getElementById("tr-pg");if(!el)return;
+  if(!total||total<=0){el.innerHTML="";return;}
+  let ctrl='<div class="pg-controls">';
+  ctrl+='<button onclick="loadTransfers('+(page-1)+')" '+(page<=1?"disabled":"")+'>\u2039 Prev</button>';
+  const start=Math.max(1,page-2),end=Math.min(total,page+2);
+  for(let i=start;i<=end;i++)ctrl+='<button class="'+(i===page?'active':'')+'" onclick="loadTransfers('+i+')">'+i+'</button>';
+  ctrl+='<button onclick="loadTransfers('+(page+1)+')" '+(page>=total?"disabled":"")+'>Next \u203a</button></div>';
+  const sel='<div class="perpage">'+(totalRows!=null?'<span>'+totalRows+' records</span> \u00b7 ':'')+
+    'Per page: <select onchange="transPerPage=parseInt(this.value);loadTransfers(1)">'+
+    [10,20,30,50,100].map(n=>'<option value="'+n+'" '+(n===transPerPage?"selected":"")+'>'+n+'</option>').join("")+
+    '</select></div>';
+  el.innerHTML=ctrl+sel;
+}
+async function syncTransfers(btn){
+  if(!confirm("Push the current status of every matched (Both) student to MVS Portal now?\\n\\nThis re-sends each Both-student's latest NIOS status + document links to the portal and logs them as Manual transfers."))return;
+  const old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Syncing\u2026";}
+  try{
+    const r=await api("/api/transfer-sync","POST");
+    showToast(r.message||"Synced to Portal");
+    loadTransfers(1);
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 
 const drop=document.getElementById("drop");
@@ -3431,6 +3517,67 @@ async def get_run_logs(limit: int=50, user=Depends(verify_token)):
     l = conn.execute("SELECT * FROM run_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
     return [dict(x) for x in l]
+
+@app.get("/api/transfers")
+async def get_transfers(page: int = 1, per_page: int = 10, search: str = "",
+                        mode: str = "", user=Depends(verify_token)):
+    """Tracker -> Portal transfer log, with master search + pagination (10..100/page)."""
+    conn = get_db()
+    wc, params = [], []
+    if search:
+        like = f"%{search.strip()}%"
+        wc.append("(student_name LIKE ? OR reference_no LIKE ? OR enrollment_no LIKE ? OR mobile LIKE ?)")
+        params += [like, like, like, like]
+    if mode in ("auto", "manual"):
+        wc.append("mode=?"); params.append(mode)
+    where = ("WHERE " + " AND ".join(wc)) if wc else ""
+    total = conn.execute(f"SELECT COUNT(*) FROM transfer_log {where}", params).fetchone()[0]
+    per_page = max(10, min(per_page, 100)); page = max(1, page)
+    offset = (page - 1) * per_page
+    rows = conn.execute(f"SELECT * FROM transfer_log {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                        params + [per_page, offset]).fetchall()
+    conn.close()
+    return {"items": [dict(r) for r in rows], "total": total, "page": page,
+            "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page)}
+
+@app.post("/api/transfer-sync")
+async def transfer_sync(user=Depends(verify_token)):
+    """Manually push the current NIOS status + document links of every matched (Both /
+    cross-source) student to MVS Portal, and log each as a 'manual' transfer."""
+    import mvs_sync
+    if not mvs_sync.enabled():
+        raise HTTPException(status_code=400, detail="MVS Portal bridge is not enabled (set MVS_MODE).")
+    try:
+        portal = mvs_sync.fetch_students_for_tracker(include_done=True)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach MVS Portal: {e}")
+    sid_by_key = {p["row_key"]: p.get("student_id", "") for p in portal if p.get("student_id")}
+    conn = get_db(); c = conn.cursor()
+    rows = c.execute("SELECT * FROM student_status WHERE COALESCE(deleted,0)=0 "
+                     "AND COALESCE(cross_dup,0)=1").fetchall()
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    pushed = 0
+    for r in rows:
+        rk = r["row_key"]; sid = sid_by_key.get(rk, "")
+        if not sid:
+            continue
+        student = {"student_id": sid, "row_key": rk,
+                   "reference_no": r["reference_no"] or "", "enrollment_no": r["enrollment_no"] or "",
+                   "session": r["session"] or "", "remark": r["remark"] or ""}
+        try:
+            mvs_sync.push_student(student, r["current_status"] or "", conn)
+            c.execute("""INSERT INTO transfer_log
+                (row_key, reference_no, enrollment_no, student_name, mobile, session,
+                 old_status, new_status, transferred_at, mode)
+                VALUES (?,?,?,?,?,?,?,?,?,'manual')""",
+                (rk, r["reference_no"] or "", r["enrollment_no"] or "", r["student_name"] or "",
+                 r["mobile"] or "", r["session"] or "", r["current_status"] or "",
+                 r["current_status"] or "", now_s))
+            pushed += 1
+        except Exception as e:
+            logger.warning(f"transfer-sync push failed {rk}: {e}")
+    conn.commit(); conn.close()
+    return {"message": f"Synced {pushed} matched student(s) to MVS Portal.", "count": pushed}
 
 @app.post("/api/run-now")
 async def run_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
