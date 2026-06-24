@@ -188,9 +188,11 @@ def send_report_to_all(numbers, params, media_url=None, filename="NIOS_Report.xl
     return sent, errs
 
 
-def send_for_student(student):
+def send_for_student(student, only_number=None):
     """Send the right template for this student's session group.
     student: dict with row_key, student_name, mobile, session, reference_no, dob.
+    only_number: if given, send ONLY to that number (used to deliver to a freshly-added
+    alternate number when the primary already received the documents).
     Returns (ok, info)."""
     from links import short_doc_url as doc_file_url
     group = group_of(student.get("session"))
@@ -217,6 +219,12 @@ def send_for_student(student):
         params = [name, ref, doc_file_url(rk, "id_card")]
 
     primary = student.get("mobile")
+    # Targeted send (e.g. only the newly-added alternate number).
+    if only_number:
+        on = normalize_number(only_number)
+        if not on or len(on) < 11:
+            return False, f"bad number: {only_number}"
+        return _post(campaign, only_number, name, params, group=group)
     ok, info = _post(campaign, primary, name, params, group=group)
     # If the student gave an ALTERNATE number, send the same documents there too.
     alt = str(student.get("alt_mobile") or "").strip()
