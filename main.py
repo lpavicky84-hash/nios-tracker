@@ -4399,6 +4399,7 @@ async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
 async def sample_alt_sheet(user=Depends(verify_token)):
     """Two-column sample for the bulk alternate-number upload."""
     import io, openpyxl
+    from fastapi import Response
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Alternate Numbers"
