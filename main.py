@@ -1492,12 +1492,15 @@ async function pollProgress(){
 }
 
 /* ---------- next-run timers ---------- */
-let timers=[],timerInt=null;
+let timers=[],timerInt=null,pnTimer=null;
 async function loadNextRuns(){
   try{
     const d=await api("/api/next-runs");
-    timers=(d.runs||[]).map(r=>({label:r.label,group:r.group,paused:!!r.paused,
+    const all=(d.runs||[]);
+    timers=all.filter(r=>r.group!=="portalnew").map(r=>({label:r.label,group:r.group,paused:!!r.paused,
       remain:(r.seconds==null?null:r.seconds),at:Date.now()}));
+    const pn=all.find(r=>r.group==="portalnew");
+    pnTimer=pn?{paused:!!pn.paused,remain:(pn.seconds==null?null:pn.seconds),at:Date.now()}:null;
     renderTimers();
     if(!timerInt)timerInt=setInterval(renderTimers,1000);
   }catch(e){}
@@ -1508,8 +1511,8 @@ function fmtDur(s){
   let o="";if(h>0)o+=h+"h ";o+=(m<10&&h>0?"0":"")+m+"m ";o+=(ss<10?"0":"")+ss+"s";return o;
 }
 function renderTimers(){
-  const el=document.getElementById("next-runs");if(!el)return;
-  if(!timers.length){el.innerHTML="";return;}
+  const el=document.getElementById("next-runs");
+  if(el){if(!timers.length){el.innerHTML="";}else{
   el.innerHTML=timers.map(t=>{
     const paused=t.paused;
     // When paused, freeze the remaining time (don't subtract elapsed).
@@ -1526,6 +1529,22 @@ function renderTimers(){
         '<div class="tc-grp">'+t.label+'</div>'+
       '</div>'+btn+'</div>';
   }).join("");
+  }}
+  updatePnTimer();
+}
+function updatePnTimer(){
+  const t=document.getElementById("pn-timer"),b=document.getElementById("pn-btn");
+  if(!t||!pnTimer)return;
+  let rem=(pnTimer.remain==null)?null:(pnTimer.paused?pnTimer.remain:Math.max(0,pnTimer.remain-Math.floor((Date.now()-pnTimer.at)/1000)));
+  t.textContent=(pnTimer.paused?"Paused · ":"")+fmtDur(rem);
+  if(b){b.textContent=pnTimer.paused?"Resume":"Pause";b.disabled=false;b.style.opacity="";
+    b.style.background=pnTimer.paused?"#dbeafe":"#dcfce7";b.style.color=pnTimer.paused?"#1d4ed8":"#15803d";
+    b.style.borderColor=pnTimer.paused?"#bfdbfe":"#bbf7d0";}
+}
+function togglePn(btn){
+  if(!pnTimer)return;
+  if(pnTimer.paused)resumeIntervals("portalnew",btn);
+  else pauseIntervals("portalnew",btn);
 }
 async function pauseIntervals(group,btn){
   if(btn){btn.disabled=true;btn.style.opacity="0.6";}
@@ -1625,6 +1644,12 @@ function renderSourceCounts(arr){
     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-bottom:18px">'+
     arr.map(s=>{
       var dot=(s.key==="mvs_portal")?"#7C3AED":"#0EA5E9";
+      var pnrow=(s.key==="mvs_portal")?
+        ('<div style="display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--muted)">'+
+          '<svg viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>'+
+          '<span style="flex:1">New-data run in <b id="pn-timer" style="color:var(--text)">…</b></span>'+
+          '<button id="pn-btn" onclick="togglePn(this)" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">Pause</button>'+
+        '</div>'):'';
       return '<div style="padding:15px 16px;background:var(--soft);border:1px solid var(--border);border-radius:13px">'+
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
           '<span style="font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px">'+
@@ -1635,9 +1660,10 @@ function renderSourceCounts(arr){
           cell("Verified",s.verified,"#2563EB")+
           cell("Active",s.active,"#7C3AED")+
           cell("Required",s.required,"#EA580C")+
-        '</div></div>';
+        '</div>'+pnrow+'</div>';
     }).join("")+'</div>'+
     '<div style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">By Session</div>';
+  updatePnTimer();
 }
 function statCard(lbl,val,svg,col){
   return '<div class="stat"><div class="ic" style="background:'+col+'1A;color:'+col+'">'+svg+
