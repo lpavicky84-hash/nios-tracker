@@ -640,17 +640,22 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 if (new_status == "Admission Confirmed" and not login_blocked
                         and get_setting("wa_enabled", "0") == "1"):
                     conn.commit()   # release write lock so short-link creation can write
-                    wrow = c.execute("SELECT whatsapp_sent FROM student_status WHERE row_key=?",
+                    wrow = c.execute("SELECT whatsapp_sent, alt_mobile FROM student_status WHERE row_key=?",
                                      (row_key,)).fetchone()
                     already = bool(wrow and wrow["whatsapp_sent"] == 1)
                     phone = res.get("mobile", "")
+                    # Alt number from THIS run if present, else the one saved in the DB
+                    # (e.g. added later via the bulk alternate-number upload) — so documents
+                    # reach the alternate number even when the student confirms in a later run.
+                    _eff_alt = (alt_by_key.get(row_key, "")
+                                or (wrow["alt_mobile"] if (wrow and "alt_mobile" in wrow.keys()) else "") or "")
                     if not already and phone:
                         import whatsapp
                         ok, info = whatsapp.send_for_student({
                             "row_key": row_key,
                             "student_name": res.get("student_name", ""),
                             "mobile": phone,
-                            "alt_mobile": alt_by_key.get(row_key, ""),
+                            "alt_mobile": _eff_alt,
                             "session": res.get("session", ""),
                             "reference_no": new_ref,
                             "dob": res.get("dob", ""),
@@ -830,6 +835,7 @@ def recheck_one(row_key):
         "dob": r["dob"] or "",
         "student_name": r["student_name"] or "",
         "mobile": r["mobile"] or "",
+        "alt_mobile": (r["alt_mobile"] if "alt_mobile" in r.keys() else "") or "",
         "class_level": r["class_level"] or "",
         "session": r["session"] or "",
     }
