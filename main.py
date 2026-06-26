@@ -1714,17 +1714,21 @@ function drImgHtml(s){
       '<img src="'+s.image+'" style="height:52px;border-radius:8px;border:1px solid var(--border);object-fit:cover">'+
       '<span style="font-size:12px;color:var(--success);font-weight:600">&#128247; Screenshot attached</span>'+
       '<button class="btn btn-outline btn-sm" onclick="pickDocImg(&quot;'+s.row_key+'&quot;)">Replace</button>'+
+      '<button class="btn btn-outline btn-sm" onclick="pasteDocImg(&quot;'+s.row_key+'&quot;)" title="Paste an image copied to clipboard (e.g. after Win+Shift+S)">&#128203; Paste</button>'+
       '<button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c" onclick="removeDocImg(&quot;'+s.row_key+'&quot;)">Remove</button>'+
       '<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" id="drf-'+s.row_key+'" onchange="uploadDocImg(this,&quot;'+s.row_key+'&quot;)">'+
     '</div>';
   }
-  return '<button class="btn btn-outline btn-sm" onclick="pickDocImg(&quot;'+s.row_key+'&quot;)" title="Attach a demo screenshot to send with this WhatsApp message">&#128206; Attach screenshot (optional)</button>'+
-    '<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" id="drf-'+s.row_key+'" onchange="uploadDocImg(this,&quot;'+s.row_key+'&quot;)">';
+  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+    '<button class="btn btn-outline btn-sm" onclick="pickDocImg(&quot;'+s.row_key+'&quot;)" title="Attach a demo screenshot to send with this WhatsApp message">&#128206; Attach screenshot (optional)</button>'+
+    '<button class="btn btn-outline btn-sm" onclick="pasteDocImg(&quot;'+s.row_key+'&quot;)" title="Paste an image copied to clipboard (e.g. after taking a screenshot with Win+Shift+S)">&#128203; Paste from clipboard</button>'+
+    '<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" id="drf-'+s.row_key+'" onchange="uploadDocImg(this,&quot;'+s.row_key+'&quot;)">'+
+  '</div>';
 }
 function drImgBox(key){return Array.from(document.querySelectorAll('.dr-img')).find(b=>b.dataset.key===key);}
 function pickDocImg(key){const f=document.getElementById("drf-"+key);if(f)f.click();}
-async function uploadDocImg(input,key){
-  const file=input.files&&input.files[0];if(!file)return;
+async function uploadDocImgFile(file,key){
+  if(!file)return;
   const fd=new FormData();fd.append("row_key",key);fd.append("file",file);
   try{
     const r=await fetch(API+"/api/doc-request-image",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN},body:fd});
@@ -1733,6 +1737,26 @@ async function uploadDocImg(input,key){
     const it=drData.find(x=>x.row_key===key);if(it){it.image=d.url;const box=drImgBox(key);if(box)box.innerHTML=drImgHtml(it);}
     showToast("Screenshot attached \u2713");
   }catch(e){showToast("Error: "+e.message);}
+}
+async function uploadDocImg(input,key){const file=input.files&&input.files[0];await uploadDocImgFile(file,key);}
+async function pasteDocImg(key){
+  try{
+    if(!navigator.clipboard||!navigator.clipboard.read){showToast("Clipboard paste isn't supported here — use Attach instead");return;}
+    const items=await navigator.clipboard.read();
+    for(const it of items){
+      const type=(it.types||[]).find(t=>t.startsWith("image/"));
+      if(type){
+        const blob=await it.getType(type);
+        const ext=(type.split("/")[1]||"png").replace("jpeg","jpg");
+        if(["png","jpg","webp"].indexOf(ext)<0){showToast("Pasted image type not supported");return;}
+        const file=new File([blob],"pasted."+ext,{type:type});
+        showToast("Uploading pasted image\u2026");
+        await uploadDocImgFile(file,key);
+        return;
+      }
+    }
+    showToast("No image found in clipboard — copy a screenshot first");
+  }catch(e){showToast("Couldn't read clipboard: "+(e.message||e)+" (allow clipboard permission, or use Attach)");}
 }
 async function removeDocImg(key){
   try{await api("/api/doc-request-image-remove","POST",{row_key:key});
