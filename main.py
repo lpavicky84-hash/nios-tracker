@@ -1805,6 +1805,17 @@ async function sendDocReq(mode,btn){
     const payload=mode==="all"?{all:true}:{row_keys:keys};
     const r=await api("/api/doc-request-send","POST",payload);
     showToast("Sent: "+r.sent+(r.failed?(" · Failed: "+r.failed):""));
+    const warn=document.getElementById("dr-warn");
+    if(warn){
+      const fails=(r.results||[]).filter(x=>!x.ok);
+      if(fails.length){
+        warn.style.display="block";
+        warn.innerHTML='<b>'+fails.length+' message(s) failed.</b> Reason from WhatsApp gateway:<br>'+
+          fails.slice(0,5).map(f=>'&bull; <b>'+(f.student_name||"")+'</b>: '+(f.info||"unknown")).join("<br>")+
+          (fails.length>5?'<br>&hellip; and '+(fails.length-5)+' more':'')+
+          '<br><span style="color:#7c2d12">Tip: check the campaign name is exactly correct (case-sensitive) and the template is Approved &amp; Live on AiSensy.</span>';
+      }else{warn.style.display="none";}
+    }
     loadDocReq();
   }catch(e){showToast("Error: "+e.message);}
   finally{if(btn)btn.disabled=false;}
