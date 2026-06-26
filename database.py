@@ -126,6 +126,9 @@ def init_db():
             login_remark TEXT,
             check_failed INTEGER DEFAULT 0,
             name_verified INTEGER DEFAULT 0,
+            required_notified INTEGER DEFAULT 0,
+            required_notified_at TEXT,
+            required_msg TEXT,
             deleted INTEGER DEFAULT 0,
             deleted_at TEXT
         )
@@ -144,6 +147,9 @@ def init_db():
                       ("login_remark", "TEXT"),
                       ("check_failed", "INTEGER DEFAULT 0"),
                       ("name_verified", "INTEGER DEFAULT 0"),
+                      ("required_notified", "INTEGER DEFAULT 0"),
+                      ("required_notified_at", "TEXT"),
+                      ("required_msg", "TEXT"),
                       ("deleted", "INTEGER DEFAULT 0"),
                       ("deleted_at", "TEXT")):
         try:

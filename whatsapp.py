@@ -240,6 +240,43 @@ def send_for_student(student, only_number=None):
     return ok, info
 
 
+def required_campaign_for(group):
+    """The 'please share your documents' reminder has its OWN approved template/campaign,
+    one per AiSensy account: the main account (on-demand + stream2) vs the public account."""
+    if group == "public":
+        return os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip()
+    return os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip()
+
+
+def send_required_reminder(student, message=None):
+    """Polite reminder sent when a student is 'Document Required'. The counsellor reviews/edits
+    the exact document-request line on the portal first; that text is passed in as `message`
+    and goes into the approved template as {{2}} (with {{1}} = student name). Warm wording only —
+    never alarming. Routing matches document delivery: public -> public API;
+    on-demand/stream2 -> main API. Sends to primary + alternate (if any). Returns (ok, info)."""
+    group = group_of(student.get("session"))
+    campaign = required_campaign_for(group)
+    if not campaign:
+        return False, f"no document-required campaign set for {group}"
+    name = (str(student.get("student_name") or "Student").strip() or "Student")
+    msg = (str(message or "").strip()
+           or "kuch zaroori documents jinki aapke admission ko poora karne ke liye zarurat hai")
+    params = [name, msg]   # approved template: {{1}} = name, {{2}} = document request
+    primary = student.get("mobile")
+    ok, info = _post(campaign, primary, name, params, group=group)
+    alt = str(student.get("alt_mobile") or "").strip()
+    pn, an = normalize_number(primary), normalize_number(alt)
+    if an and len(an) >= 11 and an != pn:
+        ok2, info2 = _post(campaign, alt, name, params, group=group)
+        if ok or ok2:
+            note = "Reminder sent to 2 numbers (own + alternate)"
+            if not (ok and ok2):
+                note += " — one still pending"
+            return True, note
+        return False, f"both numbers failed: {info} | {info2}"
+    return ok, info
+
+
 def send_test(number, name="Test Student", group="ondemand"):
     """Send a test message of the chosen template to any number (demo links)."""
     from links import PUBLIC_BASE_URL

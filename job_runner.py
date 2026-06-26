@@ -691,6 +691,18 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             except Exception as we:
                 logger.warning(f"WhatsApp trigger error: {we}")
 
+            # ── Document-Required: prepare for the counsellor-reviewed reminder ──
+            # We DO NOT auto-send. The counsellor reviews/edits each student's document
+            # request on the "Doc Requests" page and sends manually. Here we only reset the
+            # 'sent' flag when a student LEAVES the Document Required state, so that if they
+            # fall back into it later, they appear as a fresh pending request (not "sent").
+            try:
+                if new_status != "Document Required":
+                    c.execute("UPDATE student_status SET required_notified=0 "
+                              "WHERE row_key=? AND COALESCE(required_notified,0)=1", (row_key,))
+            except Exception as re_:
+                logger.warning(f"Required-reset error: {re_}")
+
             # ── MVS portal: push status + doc links back (only if login isn't broken) ──
             try:
                 if mvs_on and not login_blocked and sid_by_key.get(row_key):
@@ -932,6 +944,14 @@ def recheck_one(row_key):
                     conn.commit()
                 except Exception as we:
                     logger.warning(f"recheck WhatsApp error {row_key}: {we}")
+        # Document-Required reminders are sent manually from the "Doc Requests" page after the
+        # counsellor reviews them — never auto-sent. Just reset the flag when leaving the state.
+        try:
+            if new_status != "Document Required":
+                c.execute("UPDATE student_status SET required_notified=0 WHERE row_key=? AND COALESCE(required_notified,0)=1", (row_key,))
+                conn.commit()
+        except Exception as re2:
+            logger.warning(f"recheck required-reset error {row_key}: {re2}")
 
     try:
         scrape_students([student], on_result=_cb)

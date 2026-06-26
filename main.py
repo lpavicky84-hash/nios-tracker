@@ -489,6 +489,9 @@ function applySidebarPref(){
     <div class="nav-item" data-page="required" onclick="nav('required')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="15"/><line x1="12" y1="18" x2="12" y2="18"/></svg></span><span class="lbl">Required</span>
       <span class="badge-count" id="nav-required-badge">0</span></div>
+    <div class="nav-item" data-page="docreq" onclick="nav('docreq')">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><span class="lbl">Doc Requests</span>
+      <span class="badge-count" id="nav-docreq-badge">0</span></div>
     <div class="nav-item" data-page="syc" onclick="nav('syc')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="lbl">SYC Students</span>
       <span class="nav-num" id="nav-syc-badge" style="display:none">0</span></div>
@@ -812,6 +815,25 @@ function applySidebarPref(){
             </tr></thead><tbody id="r-body"></tbody></table>
           </div>
           <div class="pg-bar" id="r-pg"></div>
+        </div>
+      </section>
+
+      <section id="sec-docreq" class="page-section">
+        <div class="card">
+          <h3>&#128172; Document Requests &mdash; Review &amp; Send on WhatsApp</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
+            For every <b>Document Required</b> student, we read the NIOS remark and prepare a <b>simple, friendly message</b>
+            (in your words, not NIOS's technical language). <b>Review each one, edit if needed, then send.</b> Nothing goes
+            out automatically. Routing is automatic: <b>Public &#8594; public number</b>, <b>On Demand &amp; Stream 2 &#8594; main number</b>.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+            <button class="btn btn-outline btn-sm" onclick="loadDocReq(this)">&#8635; Refresh</button>
+            <button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="sendDocReq('selected',this)">Send selected</button>
+            <button class="btn btn-sm" style="background:#2563eb;color:#fff" onclick="sendDocReq('all',this)">Send all pending</button>
+            <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;margin-left:4px"><input type="checkbox" id="dr-selall" onclick="toggleDrAll(this)"> Select all</label>
+            <span id="dr-count" style="font-size:13px;color:var(--muted);margin-left:auto"></span>
+          </div>
+          <div id="dr-warn" style="display:none;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px 13px;font-size:12.5px;color:#9a3412;margin-bottom:12px"></div>
+          <div id="dr-body"></div>
         </div>
       </section>
 
@@ -1141,6 +1163,17 @@ function applySidebarPref(){
             <input type="checkbox" id="wa-enabled" onchange="saveWa()" style="width:18px;height:18px;cursor:pointer">
             <span style="font-weight:600">Enable auto-send</span>
           </label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:10px">
+            <input type="checkbox" id="wa-required-enabled" onchange="saveWa()" style="width:18px;height:18px;cursor:pointer">
+            <span style="font-weight:600">Enable <b>Document Requests</b> (counsellor-reviewed reminders)</span>
+          </label>
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:11px 13px;font-size:12.5px;color:#166534;line-height:1.6;margin-bottom:18px">
+            When ON, every <b>Document Required</b> student appears on the <b>Doc Requests</b> page with a simple, friendly
+            message prepared from the NIOS remark. <b>The counsellor reviews/edits and sends manually</b> &mdash; nothing goes
+            out automatically. Routing: <b>Public &#8594; public number</b>; <b>On Demand &amp; Stream 2 &#8594; main number</b>.<br>
+            <span style="color:#15803d">Needs an approved 2-variable template ({{1}} = name, {{2}} = document request) and its campaign set in Railway:
+            <b>AISENSY_CAMPAIGN_REQUIRED</b> (main account) and <b>AISENSY_CAMPAIGN_REQUIRED_PUBLIC</b> (public account).</span>
+          </div>
           <div style="border-top:1px solid var(--border);padding-top:16px">
             <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
               <b>Send a test message</b> — choose a template, enter your number, and a sample message will be sent:</p>
@@ -1570,7 +1603,7 @@ async function resumeIntervals(group,btn){
 
 const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
   syc:"SYC Students",
-  required:"Document Required",failed:"Failed to Run",unknown:"Unknown Status",history:"Change History",runlogs:"Run Logs",transfers:"Transfer Data",upload:"Upload Excel",settings:"Settings"};
+  required:"Document Required",failed:"Failed to Run",unknown:"Unknown Status",docreq:"Document Requests",history:"Change History",runlogs:"Run Logs",transfers:"Transfer Data",upload:"Upload Excel",settings:"Settings"};
 function refreshPage(btn){
   // reload the data of whichever page is currently open (no full reload, stays logged in)
   if(btn){var ic=btn.querySelector("svg");if(ic){ic.style.transition="transform .6s";ic.style.transform="rotate(360deg)";
@@ -1595,6 +1628,7 @@ function nav(page){
   if(page==="required")loadRequired(1);
   if(page==="failed")loadFailed(1);
   if(page==="unknown")loadUnknown(1);
+  if(page==="docreq")loadDocReq();
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
   if(page==="transfers")loadTransfers(1);
@@ -1603,6 +1637,94 @@ function nav(page){
   updateNavCounts();
 }
 
+let drData=[], drPrefix="", drSuffix="";
+function drEsc(t){return (t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+async function loadDocReq(btn){
+  if(btn)btn.disabled=true;
+  const body=document.getElementById("dr-body");
+  if(body)body.innerHTML='<div style="color:var(--muted);font-size:13px;padding:10px 0">Loading…</div>';
+  try{
+    const r=await api("/api/doc-requests");
+    drData=r.requests||[]; drPrefix=r.prefix||""; drSuffix=r.suffix||"";
+    renderDocReq();
+  }catch(e){if(body)body.innerHTML='<div style="color:var(--danger);font-size:13px">'+e.message+'</div>';}
+  finally{if(btn)btn.disabled=false;}
+}
+function renderDocReq(){
+  const body=document.getElementById("dr-body");if(!body)return;
+  const badge=document.getElementById("nav-docreq-badge");
+  const pending=drData.filter(s=>!s.sent).length;
+  if(badge){badge.textContent=pending;badge.style.display=pending?"inline-flex":"none";}
+  if(!drData.length){body.innerHTML='<div style="color:var(--success);font-size:14px;padding:10px 0">&#10003; No Document-Required students right now.</div>';updateDrCount();return;}
+  body.innerHTML=drData.map((s,i)=>{
+    const sentBadge=s.sent?'<span style="background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">&#10003; Sent'+(s.sent_at?' &middot; '+s.sent_at:'')+'</span>':'<span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">Pending</span>';
+    const blank=!s.message;
+    return '<div class="dr-card" style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;background:'+(s.sent?'#f6fef9':'#fff')+'">'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;flex-wrap:wrap">'+
+        '<input type="checkbox" class="dr-cb" value="'+s.row_key+'" '+(s.sent?'':'checked')+' onchange="updateDrCount()" style="width:16px;height:16px">'+
+        '<b style="font-size:14px">'+(i+1)+'. '+drEsc(s.student_name)+'</b>'+
+        '<span style="font-size:12px;color:var(--muted)">'+drEsc(s.session)+' &middot; '+drEsc(s.mobile)+'</span>'+
+        '<span style="margin-left:auto">'+sentBadge+'</span>'+
+      '</div>'+
+      '<div style="font-size:11.5px;color:var(--muted);background:var(--soft);border-radius:8px;padding:8px 10px;margin-bottom:9px"><b>NIOS remark:</b> '+(s.remark?drEsc(s.remark):'<i>none</i>')+'</div>'+
+      '<label style="font-size:12px;font-weight:600">Message to send (edit if needed)'+(blank?' <span style="color:#b91c1c">&mdash; please write what to ask for</span>':'')+'</label>'+
+      '<textarea class="dr-msg" data-key="'+s.row_key+'" rows="2" oninput="drDirty(this)" style="width:100%;margin-top:5px;padding:10px;border:2px solid var(--border);border-radius:9px;font-size:13.5px;font-family:inherit;resize:vertical">'+drEsc(s.message||"")+'</textarea>'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">'+
+        '<button class="btn btn-outline btn-sm" onclick="saveDocReqMsg(this,\''+s.row_key+'\')">Save</button>'+
+        '<button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="sendDocReqOne(this,\''+s.row_key+'\')">Send now</button>'+
+        '<span class="dr-saved" data-key="'+s.row_key+'" style="font-size:12px;color:var(--success)"></span>'+
+        '<button type="button" onclick="toggleDrPrev(this)" style="margin-left:auto;background:none;border:none;color:#2563eb;font-size:12px;cursor:pointer;text-decoration:underline">Preview full message</button>'+
+      '</div>'+
+      '<div class="dr-prev" style="display:none;white-space:pre-wrap;background:#ecfdf5;border:1px solid #bbf7d0;border-radius:9px;padding:11px;margin-top:9px;font-size:13px;color:#065f46"></div>'+
+    '</div>';
+  }).join("");
+  updateDrCount();
+}
+function drDirty(ta){const tag=document.querySelector('.dr-saved[data-key="'+ta.dataset.key+'"]');if(tag){tag.textContent="unsaved…";tag.style.color="var(--muted)";}}
+function toggleDrPrev(btn){
+  const card=btn.closest(".dr-card");if(!card)return;
+  const prev=card.querySelector(".dr-prev"),ta=card.querySelector(".dr-msg");
+  if(prev.style.display==="none"){prev.textContent=drPrefix.replace("{name}","<student name>")+(ta.value||"…")+drSuffix;prev.style.display="block";btn.textContent="Hide preview";}
+  else{prev.style.display="none";btn.textContent="Preview full message";}
+}
+function getDrSelected(){return Array.from(document.querySelectorAll(".dr-cb:checked")).map(c=>c.value);}
+function updateDrCount(){const el=document.getElementById("dr-count");if(el)el.textContent=getDrSelected().length+" selected · "+drData.length+" total";}
+function toggleDrAll(cb){document.querySelectorAll(".dr-cb").forEach(c=>c.checked=cb.checked);updateDrCount();}
+async function saveDocReqMsg(btn,key){
+  const ta=document.querySelector('.dr-msg[data-key="'+key+'"]');if(!ta)return;
+  try{await api("/api/doc-request-save","POST",{row_key:key,message:ta.value});
+    const tag=document.querySelector('.dr-saved[data-key="'+key+'"]');if(tag){tag.textContent="\u2713 saved";tag.style.color="var(--success)";}
+    const it=drData.find(x=>x.row_key===key);if(it)it.message=ta.value;
+  }catch(e){showToast("Error: "+e.message);}
+}
+async function sendDocReqOne(btn,key){
+  const ta=document.querySelector('.dr-msg[data-key="'+key+'"]');
+  if(ta&&!ta.value.trim()){showToast("Please write the document message first");return;}
+  if(!confirm("Send this document request on WhatsApp now?"))return;
+  if(ta){try{await api("/api/doc-request-save","POST",{row_key:key,message:ta.value});}catch(e){}}
+  if(btn){btn.disabled=true;btn.textContent="Sending…";}
+  try{const r=await api("/api/doc-request-send","POST",{row_keys:[key]});
+    showToast(r.sent?"Sent \u2713":("Failed: "+((r.results&&r.results[0]&&r.results[0].info)||"")));
+    loadDocReq();
+  }catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.textContent="Send now";}}
+}
+async function sendDocReq(mode,btn){
+  let keys=[];
+  if(mode==="selected"){keys=getDrSelected();if(!keys.length){showToast("Select at least one student");return;}}
+  const n=mode==="all"?drData.filter(s=>!s.sent).length:keys.length;
+  if(!n){showToast("Nothing to send");return;}
+  if(!confirm("Send document request on WhatsApp to "+n+" student(s)?"))return;
+  if(btn)btn.disabled=true;
+  try{
+    const edits=Array.from(document.querySelectorAll(".dr-msg")).map(ta=>({row_key:ta.dataset.key,message:ta.value}));
+    for(const e of edits){try{await api("/api/doc-request-save","POST",e);}catch(_){}}
+    const payload=mode==="all"?{all:true}:{row_keys:keys};
+    const r=await api("/api/doc-request-send","POST",payload);
+    showToast("Sent: "+r.sent+(r.failed?(" · Failed: "+r.failed):""));
+    loadDocReq();
+  }catch(e){showToast("Error: "+e.message);}
+  finally{if(btn)btn.disabled=false;}
+}
 async function loadDashboard(){
   try{
     const d=await api("/api/dashboard");
@@ -3131,15 +3253,18 @@ async function saveIntervals(){
 async function loadWa(){
   try{const r=await api("/api/wa-settings");
     document.getElementById("wa-enabled").checked=r.enabled;
+    var re=document.getElementById("wa-required-enabled");if(re)re.checked=!!r.required_enabled;
     const cfg=document.getElementById("wa-config");
     if(!r.configured){
       cfg.innerHTML='<span style="color:var(--danger)">&#10007; AISENSY_API_KEY is not set in Railway environment variables</span>';
     }else{
-      const c=r.campaigns||{};
+      const c=r.campaigns||{};const rc=r.required_campaigns||{};
       const row=(lbl,v)=>'<div style="margin:2px 0">'+lbl+': '+
         (v?'<b style="color:var(--success)">'+v+'</b>':'<span style="color:var(--warn)">not set</span>')+'</div>';
       cfg.innerHTML='<div style="color:var(--success);margin-bottom:6px">&#10003; API key configured</div>'+
-        row("On Demand",c.ondemand)+row("Stream 2",c.stream2)+row("Public",c.public)+row("SYC",c.syc);
+        row("On Demand",c.ondemand)+row("Stream 2",c.stream2)+row("Public",c.public)+row("SYC",c.syc)+
+        '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)"><b style="font-size:12px;color:var(--muted)">Document-Required reminder</b></div>'+
+        row("Reminder &middot; main (On Demand/Stream 2)",rc.main)+row("Reminder &middot; public",rc.public);
     }
   }catch(e){}
   try{const w=await api("/api/webhook-url");const el=document.getElementById("wh-url");if(el)el.value=w.url||"";}catch(e){}
@@ -3152,8 +3277,10 @@ function copyWebhook(btn){
 }
 async function saveWa(){
   const en=document.getElementById("wa-enabled").checked;
-  try{await api("/api/wa-settings","POST",{enabled:en});
-    showToast(en?"WhatsApp auto-send enabled":"WhatsApp auto-send disabled");}
+  var reEl=document.getElementById("wa-required-enabled");
+  const ren=reEl?reEl.checked:false;
+  try{await api("/api/wa-settings","POST",{enabled:en,required_enabled:ren});
+    showToast("WhatsApp settings saved");}
   catch(e){showToast("Error: "+e.message);}
 }
 async function testWa(){
@@ -5340,9 +5467,10 @@ async def run_logs_clear(user=Depends(verify_token)):
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/api/wa-settings")
 async def wa_settings_get(user=Depends(verify_token)):
-    import whatsapp
+    import whatsapp, os
     return {
         "enabled": get_setting("wa_enabled", "0") == "1",
+        "required_enabled": get_setting("wa_required_enabled", "0") == "1",
         "configured": whatsapp.is_configured(),
         "campaigns": {
             "ondemand": whatsapp.campaign_for("ondemand"),
@@ -5350,12 +5478,21 @@ async def wa_settings_get(user=Depends(verify_token)):
             "public": whatsapp.campaign_for("public"),
             "syc": whatsapp.campaign_for("syc"),
         },
+        "required_campaigns": {
+            "main": os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip(),
+            "public": os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip(),
+        },
     }
 
 @app.post("/api/wa-settings")
 async def wa_settings_set(body: dict, user=Depends(verify_token)):
-    set_setting("wa_enabled", "1" if body.get("enabled") else "0")
-    return {"message": "saved", "enabled": bool(body.get("enabled"))}
+    if "enabled" in body:
+        set_setting("wa_enabled", "1" if body.get("enabled") else "0")
+    if "required_enabled" in body:
+        set_setting("wa_required_enabled", "1" if body.get("required_enabled") else "0")
+    return {"message": "saved",
+            "enabled": get_setting("wa_enabled", "0") == "1",
+            "required_enabled": get_setting("wa_required_enabled", "0") == "1"}
 
 @app.post("/api/wa-test")
 async def wa_test(body: dict, user=Depends(verify_token)):
@@ -5366,6 +5503,140 @@ async def wa_test(body: dict, user=Depends(verify_token)):
     name = body.get("name", "") or "Test Student"
     ok, info = whatsapp.send_test(number, name, group)
     return {"ok": ok, "info": info}
+
+
+def _humanize_remark(remark):
+    """Turn NIOS's raw RC comment into a simple, warm document request — written the way a
+    human counsellor would, so the student actually understands what to send. This is only a
+    DRAFT: the counsellor reviews and edits it before anything is sent. Returns a Hinglish
+    line for the message ({{2}} param). Empty string -> unrecognised, counsellor writes it."""
+    r = (remark or "").lower()
+    asks = []
+    if "address" in r or "correspondence" in r or "rent agreement" in r:
+        if "delhi" in r or "ncr" in r:
+            asks.append("Apna Delhi/NCR ka address proof (Aadhaar card, bijli/paani/phone ka bill, "
+                        "ration card, voter ID, passport ya rent agreement me se koi ek — jisme aapka "
+                        "ya aapke parents ka naam aur poora address ho)")
+        else:
+            asks.append("Apna sahi address proof (Aadhaar card, bijli/paani/phone ka bill, ration card, "
+                        "voter ID, passport ya rent agreement me se koi ek — jisme aapka ya aapke "
+                        "parents ka naam aur poora address ho)")
+    if "mark sheet" in r or "marksheet" in r or "mark-sheet" in r:
+        asks.append("Apni Class 10th ki original marksheet")
+    if ("matriculation" in r or "passing certificate" in r or "secondary examination" in r
+            or "date of birth" in r or ("10th" in r and "certificate" in r)):
+        asks.append("Apna Class 10th passing certificate (jisme aapki date of birth likhi ho)")
+    if ("father" in r) and ("not match" in r or "correct" in r or "e-service" in r or "e service" in r):
+        asks.append("Apne father ke naam ka sahi record — abhi jo naam hai wo academic record se match "
+                    "nahi kar raha; aap apne dashboard ki E-Services se ise theek kar sakte hain")
+    if ("mother" in r) and ("not match" in r or "correct" in r or "e-service" in r or "e service" in r):
+        asks.append("Apne mother ke naam ka sahi record (dashboard ki E-Services se correction)")
+    if "photo" in r or "photograph" in r:
+        asks.append("Apni clear passport-size photo")
+    if "signature" in r:
+        asks.append("Apne signature ki clear photo")
+    if not asks:
+        return ""
+    if len(asks) == 1:
+        return asks[0]
+    return "; ".join(asks)
+
+
+# Fixed, approved wrapper around the editable {{2}} document line (kept in sync with the
+# AiSensy template the user gets approved). Shown in the portal preview.
+DOCREQ_PREFIX = "Namaste {name} \U0001F64F\n\nAapke NIOS admission ko poora karne ke liye humein aapse ye chahiye:\n\n"
+DOCREQ_SUFFIX = ("\n\nJab aapko suvidha ho, kripya ye MVS Foundation ko bhej dijiye — koi jaldi ya "
+                 "chinta ki baat nahi \U0001F60A Hum aapki poori madad ke liye yahin hain.\n\n"
+                 "Kisi bhi sawaal ke liye is number par message kar dijiye.\n\nMVS Foundation Team")
+
+
+def _docreq_rows(conn, keys=None, pending_only=False):
+    q = ("SELECT row_key, student_name, mobile, alt_mobile, session, remark, required_msg, "
+         "required_notified, required_notified_at FROM student_status "
+         "WHERE COALESCE(deleted,0)=0 AND current_status='Document Required' "
+         "AND COALESCE(is_confirmed,0)=0 AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0")
+    params = []
+    if pending_only:
+        q += " AND COALESCE(required_notified,0)=0"
+    if keys:
+        q += " AND row_key IN (%s)" % ",".join("?" * len(keys))
+        params = keys
+    q += " ORDER BY COALESCE(required_notified,0) ASC, student_name"
+    return conn.execute(q, params).fetchall()
+
+
+@app.get("/api/doc-requests")
+async def doc_requests(user=Depends(verify_token)):
+    """List Document-Required students with the (editable) document-request message that
+    will be sent. The counsellor reviews/edits these on the portal before sending."""
+    conn = get_db()
+    rows = _docreq_rows(conn)
+    conn.close()
+    out = []
+    for r in rows:
+        saved = (r["required_msg"] or "").strip()
+        draft = saved or _humanize_remark(r["remark"] or "")
+        out.append({
+            "row_key": r["row_key"], "student_name": r["student_name"] or "\u2014",
+            "mobile": r["mobile"] or "\u2014", "session": r["session"] or "\u2014",
+            "remark": r["remark"] or "", "message": draft,
+            "edited": bool(saved), "auto_blank": (not saved and not draft),
+            "sent": bool(r["required_notified"] == 1), "sent_at": r["required_notified_at"] or "",
+        })
+    return {"requests": out, "count": len(out),
+            "prefix": DOCREQ_PREFIX, "suffix": DOCREQ_SUFFIX}
+
+
+@app.post("/api/doc-request-save")
+async def doc_request_save(body: dict, user=Depends(verify_token)):
+    """Save the counsellor's edited document-request message for one student."""
+    rk = body.get("row_key", "")
+    msg = (body.get("message", "") or "").strip()
+    if not rk:
+        raise HTTPException(status_code=400, detail="row_key required")
+    conn = get_db()
+    conn.execute("UPDATE student_status SET required_msg=? WHERE row_key=?", (msg[:1000], rk))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/doc-request-send")
+async def doc_request_send(body: dict, user=Depends(verify_token)):
+    """Send the reviewed document-request WhatsApp message to selected (or all pending)
+    Document-Required students. Routes per session (public -> public API; others -> main API).
+    Marks each as sent so it isn't messaged twice."""
+    if get_setting("wa_required_enabled", "0") != "1":
+        raise HTTPException(status_code=400, detail="Document-request reminders are turned OFF in Settings — turn them on first.")
+    import whatsapp
+    if not whatsapp.is_configured():
+        raise HTTPException(status_code=400, detail="AISENSY_API_KEY is not set.")
+    send_all = bool(body.get("all"))
+    keys = [k for k in (body.get("row_keys", []) or []) if k][:500]
+    conn = get_db()
+    rows = _docreq_rows(conn, keys=None if send_all else keys, pending_only=send_all)
+    if not send_all and not keys:
+        conn.close()
+        raise HTTPException(status_code=400, detail="no students selected")
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sent, failed, results = 0, 0, []
+    for r in rows:
+        msg = (r["required_msg"] or "").strip() or _humanize_remark(r["remark"] or "")
+        ok, info = whatsapp.send_required_reminder({
+            "row_key": r["row_key"], "student_name": r["student_name"] or "",
+            "mobile": r["mobile"] or "", "session": r["session"] or "",
+            "alt_mobile": (r["alt_mobile"] if ("alt_mobile" in r.keys()) else "") or "",
+        }, msg)
+        if ok:
+            conn.execute("UPDATE student_status SET required_notified=1, required_notified_at=?, "
+                         "required_msg=? WHERE row_key=?", (now_s, msg[:1000], r["row_key"]))
+            sent += 1
+        else:
+            failed += 1
+        results.append({"student_name": r["student_name"] or "\u2014", "ok": ok, "info": str(info)[:120]})
+    conn.commit()
+    conn.close()
+    return {"ok": True, "sent": sent, "failed": failed, "results": results}
 
 def _wa_send_one(row_key, verify=False):
     """(Re)send the documents for ONE confirmed student. Opens its own DB connection so it
