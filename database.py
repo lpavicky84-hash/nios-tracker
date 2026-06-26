@@ -129,6 +129,7 @@ def init_db():
             required_notified INTEGER DEFAULT 0,
             required_notified_at TEXT,
             required_msg TEXT,
+            required_img TEXT,
             deleted INTEGER DEFAULT 0,
             deleted_at TEXT
         )
@@ -150,6 +151,7 @@ def init_db():
                       ("required_notified", "INTEGER DEFAULT 0"),
                       ("required_notified_at", "TEXT"),
                       ("required_msg", "TEXT"),
+                      ("required_img", "TEXT"),
                       ("deleted", "INTEGER DEFAULT 0"),
                       ("deleted_at", "TEXT")):
         try:

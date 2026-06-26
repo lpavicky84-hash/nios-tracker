@@ -93,7 +93,7 @@ def normalize_number(num) -> str:
     return d
 
 
-def _post(campaign, phone, name, params, group=None):
+def _post(campaign, phone, name, params, group=None, media_url=None):
     key = _api_key_for(group)
     if not key:
         return False, "AISENSY_API_KEY not set"
@@ -109,6 +109,10 @@ def _post(campaign, phone, name, params, group=None):
         "userName": name or "Student",
         "templateParams": [str(p) for p in params],
     }
+    # Image header (e.g. a demo screenshot). Only works with a template whose header is an
+    # IMAGE; the URL must be publicly reachable so the WhatsApp gateway can fetch it.
+    if media_url:
+        payload["media"] = {"url": media_url, "filename": "screenshot.jpg"}
     try:
         r = requests.post(AISENSY_URL, json=payload, timeout=40)
         body = (r.text or "")[:200]
@@ -240,41 +244,55 @@ def send_for_student(student, only_number=None):
     return ok, info
 
 
-def required_campaign_for(group):
-    """The 'please share your documents' reminder has its OWN approved template/campaign,
-    one per AiSensy account: the main account (on-demand + stream2) vs the public account."""
+def required_campaign_for(group, with_image=False):
+    """The document-request reminder has its OWN approved template/campaign, one per AiSensy
+    account: the main account (on-demand + stream2) vs the public account. When a screenshot is
+    attached we use the IMAGE-header variant of the template (a separate approved campaign),
+    falling back to the text-only campaign if the image one isn't set."""
+    if with_image:
+        img = (os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC_IMG", "").strip() if group == "public"
+               else os.environ.get("AISENSY_CAMPAIGN_REQUIRED_IMG", "").strip())
+        if img:
+            return img, True
     if group == "public":
-        return os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip()
-    return os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip()
+        return os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip(), False
+    return os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip(), False
 
 
-def send_required_reminder(student, message=None):
+def send_required_reminder(student, message=None, media_url=None):
     """Polite reminder sent when a student is 'Document Required'. The counsellor reviews/edits
-    the exact document-request line on the portal first; that text is passed in as `message`
-    and goes into the approved template as {{2}} (with {{1}} = student name). Warm wording only —
-    never alarming. Routing matches document delivery: public -> public API;
-    on-demand/stream2 -> main API. Sends to primary + alternate (if any). Returns (ok, info)."""
+    the document line on the portal first; that text goes into the approved template as {{2}}
+    ({{1}} = name). If a demo screenshot is attached, the IMAGE-header template variant is used;
+    otherwise the text-only template is used. Routing: public -> public API; on-demand/stream2 ->
+    main API. Sends to primary + alternate. Returns (ok, info)."""
     group = group_of(student.get("session"))
-    campaign = required_campaign_for(group)
+    want_img = bool(media_url)
+    campaign, img_ok = required_campaign_for(group, with_image=want_img)
     if not campaign:
         return False, f"no document-required campaign set for {group}"
+    # Screenshot attached but no image-template campaign configured -> send text-only and tell
+    # the counsellor the image was skipped (rather than silently dropping it).
+    note_suffix = ""
+    if want_img and not img_ok:
+        media_url = None
+        note_suffix = " (screenshot skipped — image template not set up)"
     name = (str(student.get("student_name") or "Student").strip() or "Student")
     msg = (str(message or "").strip()
            or "kuch zaroori documents jinki aapke admission ko poora karne ke liye zarurat hai")
     params = [name, msg]   # approved template: {{1}} = name, {{2}} = document request
     primary = student.get("mobile")
-    ok, info = _post(campaign, primary, name, params, group=group)
+    ok, info = _post(campaign, primary, name, params, group=group, media_url=media_url)
     alt = str(student.get("alt_mobile") or "").strip()
     pn, an = normalize_number(primary), normalize_number(alt)
     if an and len(an) >= 11 and an != pn:
-        ok2, info2 = _post(campaign, alt, name, params, group=group)
+        ok2, info2 = _post(campaign, alt, name, params, group=group, media_url=media_url)
         if ok or ok2:
             note = "Reminder sent to 2 numbers (own + alternate)"
             if not (ok and ok2):
                 note += " — one still pending"
-            return True, note
+            return True, note + note_suffix
         return False, f"both numbers failed: {info} | {info2}"
-    return ok, info
+    return ok, (str(info) + note_suffix) if ok else info
 
 
 def send_test(number, name="Test Student", group="ondemand"):

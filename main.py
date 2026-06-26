@@ -8,7 +8,7 @@ except Exception:
     pass
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
@@ -823,7 +823,7 @@ function applySidebarPref(){
           <h3>&#128172; Document Requests &mdash; Review &amp; Send on WhatsApp</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
             For every <b>Document Required</b> student, we read the NIOS remark and prepare a <b>simple, friendly message</b>
-            (in your words, not NIOS's technical language). <b>Review each one, edit if needed, then send.</b> Nothing goes
+            (in your words, not NIOS's technical language). <b>Review each one, edit if needed, attach a demo screenshot if helpful, then send.</b> Nothing goes
             out automatically. Routing is automatic: <b>Public &#8594; public number</b>, <b>On Demand &amp; Stream 2 &#8594; main number</b>.</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
             <button class="btn btn-outline btn-sm" onclick="loadDocReq(this)">&#8635; Refresh</button>
@@ -834,6 +834,7 @@ function applySidebarPref(){
           </div>
           <div id="dr-warn" style="display:none;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px 13px;font-size:12.5px;color:#9a3412;margin-bottom:12px"></div>
           <div id="dr-body"></div>
+          <div class="pg-bar" id="dr-pg"></div>
         </div>
       </section>
 
@@ -1171,8 +1172,7 @@ function applySidebarPref(){
             When ON, every <b>Document Required</b> student appears on the <b>Doc Requests</b> page with a simple, friendly
             message prepared from the NIOS remark. <b>The counsellor reviews/edits and sends manually</b> &mdash; nothing goes
             out automatically. Routing: <b>Public &#8594; public number</b>; <b>On Demand &amp; Stream 2 &#8594; main number</b>.<br>
-            <span style="color:#15803d">Needs an approved 2-variable template ({{1}} = name, {{2}} = document request) and its campaign set in Railway:
-            <b>AISENSY_CAMPAIGN_REQUIRED</b> (main account) and <b>AISENSY_CAMPAIGN_REQUIRED_PUBLIC</b> (public account).</span>
+            <span style="color:#15803d">Templates ({{1}} = name, {{2}} = document request) &amp; campaigns in Railway &mdash; <b>text-only:</b> AISENSY_CAMPAIGN_REQUIRED / _PUBLIC; <b>image-header (for screenshots):</b> AISENSY_CAMPAIGN_REQUIRED_IMG / _PUBLIC_IMG. No screenshot &#8594; text-only template; screenshot attached &#8594; image template.</span>
           </div>
           <div style="border-top:1px solid var(--border);padding-top:16px">
             <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
@@ -1637,7 +1637,7 @@ function nav(page){
   updateNavCounts();
 }
 
-let drData=[], drPrefix="", drSuffix="";
+let drData=[], drPrefix="", drSuffix="", drPage=1, drPerPage=10;
 function drEsc(t){return (t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 async function loadDocReq(btn){
   if(btn)btn.disabled=true;
@@ -1646,22 +1646,46 @@ async function loadDocReq(btn){
   try{
     const r=await api("/api/doc-requests");
     drData=r.requests||[]; drPrefix=r.prefix||""; drSuffix=r.suffix||"";
+    drData.forEach(s=>{s._checked=!s.sent;});
+    drPage=1;
     renderDocReq();
   }catch(e){if(body)body.innerHTML='<div style="color:var(--danger);font-size:13px">'+e.message+'</div>';}
   finally{if(btn)btn.disabled=false;}
 }
+function drItem(key){return drData.find(x=>x.row_key===key);}
+function renderDrPg(pages){
+  const el=document.getElementById("dr-pg");if(!el)return;
+  if(drData.length<=drPerPage){
+    el.innerHTML=drData.length?('<div class="perpage" style="margin-left:auto">Per page: <select onchange="drSetPerPage(this.value)">'+
+      [10,20,50,100].map(n=>'<option value="'+n+'" '+(n===drPerPage?"selected":"")+'>'+n+'</option>').join("")+'</select></div>'):"";
+    return;
+  }
+  let ctrl='<div class="pg-controls"><button onclick="drGoPage('+(drPage-1)+')" '+(drPage<=1?"disabled":"")+'>&#8249; Prev</button>';
+  const start=Math.max(1,drPage-2),end=Math.min(pages,drPage+2);
+  for(let i=start;i<=end;i++)ctrl+='<button class="'+(i===drPage?'active':'')+'" onclick="drGoPage('+i+')">'+i+'</button>';
+  ctrl+='<button onclick="drGoPage('+(drPage+1)+')" '+(drPage>=pages?"disabled":"")+'>Next &#8250;</button></div>';
+  const sel='<div class="perpage">Per page: <select onchange="drSetPerPage(this.value)">'+
+    [10,20,50,100].map(n=>'<option value="'+n+'" '+(n===drPerPage?"selected":"")+'>'+n+'</option>').join("")+'</select></div>';
+  el.innerHTML=ctrl+sel;
+}
+function drGoPage(p){const pages=Math.max(1,Math.ceil(drData.length/drPerPage));drPage=Math.min(Math.max(1,p),pages);renderDocReq();var s=document.getElementById("sec-docreq");if(s)s.scrollIntoView({behavior:"smooth",block:"start"});}
+function drSetPerPage(v){drPerPage=parseInt(v)||10;drPage=1;renderDocReq();}
 function renderDocReq(){
   const body=document.getElementById("dr-body");if(!body)return;
   const badge=document.getElementById("nav-docreq-badge");
   const pending=drData.filter(s=>!s.sent).length;
   if(badge){badge.textContent=pending;badge.style.display=pending?"inline-flex":"none";}
-  if(!drData.length){body.innerHTML='<div style="color:var(--success);font-size:14px;padding:10px 0">&#10003; No Document-Required students right now.</div>';updateDrCount();return;}
-  body.innerHTML=drData.map((s,i)=>{
+  if(!drData.length){body.innerHTML='<div style="color:var(--success);font-size:14px;padding:10px 0">&#10003; No Document-Required students right now.</div>';renderDrPg(0);updateDrCount();return;}
+  const pages=Math.max(1,Math.ceil(drData.length/drPerPage));
+  if(drPage>pages)drPage=pages;
+  const slice=drData.slice((drPage-1)*drPerPage, drPage*drPerPage);
+  body.innerHTML=slice.map((s)=>{
+    const i=drData.indexOf(s);
     const sentBadge=s.sent?'<span style="background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">&#10003; Sent'+(s.sent_at?' &middot; '+s.sent_at:'')+'</span>':'<span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">Pending</span>';
     const blank=!s.message;
     return '<div class="dr-card" style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;background:'+(s.sent?'#f6fef9':'#fff')+'">'+
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;flex-wrap:wrap">'+
-        '<input type="checkbox" class="dr-cb" value="'+s.row_key+'" '+(s.sent?'':'checked')+' onchange="updateDrCount()" style="width:16px;height:16px">'+
+        '<input type="checkbox" class="dr-cb" value="'+s.row_key+'" '+(s._checked?'checked':'')+' onchange="drToggle(&quot;'+s.row_key+'&quot;,this.checked)" style="width:16px;height:16px">'+
         '<b style="font-size:14px">'+(i+1)+'. '+drEsc(s.student_name)+'</b>'+
         '<span style="font-size:12px;color:var(--muted)">'+drEsc(s.session)+' &middot; '+drEsc(s.mobile)+'</span>'+
         '<span style="margin-left:auto">'+sentBadge+'</span>'+
@@ -1675,21 +1699,57 @@ function renderDocReq(){
         '<span class="dr-saved" data-key="'+s.row_key+'" style="font-size:12px;color:var(--success)"></span>'+
         '<button type="button" onclick="toggleDrPrev(this)" style="margin-left:auto;background:none;border:none;color:#2563eb;font-size:12px;cursor:pointer;text-decoration:underline">Preview full message</button>'+
       '</div>'+
+      '<div class="dr-img" data-key="'+s.row_key+'" style="margin-top:9px">'+drImgHtml(s)+'</div>'+
       '<div class="dr-prev" style="display:none;white-space:pre-wrap;background:#ecfdf5;border:1px solid #bbf7d0;border-radius:9px;padding:11px;margin-top:9px;font-size:13px;color:#065f46"></div>'+
     '</div>';
   }).join("");
+  renderDrPg(pages);
   updateDrCount();
 }
-function drDirty(ta){const tag=document.querySelector('.dr-saved[data-key="'+ta.dataset.key+'"]');if(tag){tag.textContent="unsaved…";tag.style.color="var(--muted)";}}
+function drToggle(key,checked){const it=drItem(key);if(it)it._checked=checked;updateDrCount();}
+function drDirty(ta){const it=drItem(ta.dataset.key);if(it)it.message=ta.value;const tag=document.querySelector('.dr-saved[data-key="'+ta.dataset.key+'"]');if(tag){tag.textContent="unsaved…";tag.style.color="var(--muted)";}}
+function drImgHtml(s){
+  if(s.image){
+    return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+      '<img src="'+s.image+'" style="height:52px;border-radius:8px;border:1px solid var(--border);object-fit:cover">'+
+      '<span style="font-size:12px;color:var(--success);font-weight:600">&#128247; Screenshot attached</span>'+
+      '<button class="btn btn-outline btn-sm" onclick="pickDocImg(&quot;'+s.row_key+'&quot;)">Replace</button>'+
+      '<button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c" onclick="removeDocImg(&quot;'+s.row_key+'&quot;)">Remove</button>'+
+      '<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" id="drf-'+s.row_key+'" onchange="uploadDocImg(this,&quot;'+s.row_key+'&quot;)">'+
+    '</div>';
+  }
+  return '<button class="btn btn-outline btn-sm" onclick="pickDocImg(&quot;'+s.row_key+'&quot;)" title="Attach a demo screenshot to send with this WhatsApp message">&#128206; Attach screenshot (optional)</button>'+
+    '<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" id="drf-'+s.row_key+'" onchange="uploadDocImg(this,&quot;'+s.row_key+'&quot;)">';
+}
+function drImgBox(key){return Array.from(document.querySelectorAll('.dr-img')).find(b=>b.dataset.key===key);}
+function pickDocImg(key){const f=document.getElementById("drf-"+key);if(f)f.click();}
+async function uploadDocImg(input,key){
+  const file=input.files&&input.files[0];if(!file)return;
+  const fd=new FormData();fd.append("row_key",key);fd.append("file",file);
+  try{
+    const r=await fetch(API+"/api/doc-request-image",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN},body:fd});
+    if(!r.ok){const e=await r.json().catch(()=>({}));showToast("Upload failed: "+(e.detail||r.status));return;}
+    const d=await r.json();
+    const it=drData.find(x=>x.row_key===key);if(it){it.image=d.url;const box=drImgBox(key);if(box)box.innerHTML=drImgHtml(it);}
+    showToast("Screenshot attached \u2713");
+  }catch(e){showToast("Error: "+e.message);}
+}
+async function removeDocImg(key){
+  try{await api("/api/doc-request-image-remove","POST",{row_key:key});
+    const it=drData.find(x=>x.row_key===key);if(it){it.image="";const box=drImgBox(key);if(box)box.innerHTML=drImgHtml(it);}
+    showToast("Screenshot removed");
+  }catch(e){showToast("Error: "+e.message);}
+}
 function toggleDrPrev(btn){
   const card=btn.closest(".dr-card");if(!card)return;
   const prev=card.querySelector(".dr-prev"),ta=card.querySelector(".dr-msg");
-  if(prev.style.display==="none"){prev.textContent=drPrefix.replace("{name}","<student name>")+(ta.value||"…")+drSuffix;prev.style.display="block";btn.textContent="Hide preview";}
+  const hasImg=!!card.querySelector(".dr-img img");
+  if(prev.style.display==="none"){prev.textContent=(hasImg?"[ screenshot will be attached at the top ]\\n\\n":"")+drPrefix.replace("{name}","<student name>")+(ta.value||"…")+drSuffix;prev.style.display="block";btn.textContent="Hide preview";}
   else{prev.style.display="none";btn.textContent="Preview full message";}
 }
-function getDrSelected(){return Array.from(document.querySelectorAll(".dr-cb:checked")).map(c=>c.value);}
-function updateDrCount(){const el=document.getElementById("dr-count");if(el)el.textContent=getDrSelected().length+" selected · "+drData.length+" total";}
-function toggleDrAll(cb){document.querySelectorAll(".dr-cb").forEach(c=>c.checked=cb.checked);updateDrCount();}
+function getDrSelected(){return drData.filter(s=>s._checked&&!s.sent).map(s=>s.row_key);}
+function updateDrCount(){const el=document.getElementById("dr-count");if(el)el.textContent=getDrSelected().length+" selected · "+drData.filter(s=>!s.sent).length+" pending · "+drData.length+" total";}
+function toggleDrAll(cb){drData.forEach(s=>{if(!s.sent)s._checked=cb.checked;});renderDocReq();}
 async function saveDocReqMsg(btn,key){
   const ta=document.querySelector('.dr-msg[data-key="'+key+'"]');if(!ta)return;
   try{await api("/api/doc-request-save","POST",{row_key:key,message:ta.value});
@@ -1711,13 +1771,13 @@ async function sendDocReqOne(btn,key){
 async function sendDocReq(mode,btn){
   let keys=[];
   if(mode==="selected"){keys=getDrSelected();if(!keys.length){showToast("Select at least one student");return;}}
-  const n=mode==="all"?drData.filter(s=>!s.sent).length:keys.length;
-  if(!n){showToast("Nothing to send");return;}
-  if(!confirm("Send document request on WhatsApp to "+n+" student(s)?"))return;
+  else{keys=drData.filter(s=>!s.sent).map(s=>s.row_key);}
+  if(!keys.length){showToast("Nothing to send");return;}
+  if(!confirm("Send document request on WhatsApp to "+keys.length+" student(s)?"))return;
   if(btn)btn.disabled=true;
   try{
-    const edits=Array.from(document.querySelectorAll(".dr-msg")).map(ta=>({row_key:ta.dataset.key,message:ta.value}));
-    for(const e of edits){try{await api("/api/doc-request-save","POST",e);}catch(_){}}
+    // persist each message from drData (covers edits on any page)
+    for(const k of keys){const it=drItem(k);if(it){try{await api("/api/doc-request-save","POST",{row_key:k,message:it.message||""});}catch(_){}}}
     const payload=mode==="all"?{all:true}:{row_keys:keys};
     const r=await api("/api/doc-request-send","POST",payload);
     showToast("Sent: "+r.sent+(r.failed?(" · Failed: "+r.failed):""));
@@ -5553,7 +5613,7 @@ DOCREQ_SUFFIX = ("\n\nJab aapko suvidha ho, kripya ye MVS Foundation ko bhej dij
 
 def _docreq_rows(conn, keys=None, pending_only=False):
     q = ("SELECT row_key, student_name, mobile, alt_mobile, session, remark, required_msg, "
-         "required_notified, required_notified_at FROM student_status "
+         "required_img, required_notified, required_notified_at FROM student_status "
          "WHERE COALESCE(deleted,0)=0 AND current_status='Document Required' "
          "AND COALESCE(is_confirmed,0)=0 AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0")
     params = []
@@ -5581,6 +5641,7 @@ async def doc_requests(user=Depends(verify_token)):
             "row_key": r["row_key"], "student_name": r["student_name"] or "\u2014",
             "mobile": r["mobile"] or "\u2014", "session": r["session"] or "\u2014",
             "remark": r["remark"] or "", "message": draft,
+            "image": (r["required_img"] if ("required_img" in r.keys()) else "") or "",
             "edited": bool(saved), "auto_blank": (not saved and not draft),
             "sent": bool(r["required_notified"] == 1), "sent_at": r["required_notified_at"] or "",
         })
@@ -5606,7 +5667,8 @@ async def doc_request_save(body: dict, user=Depends(verify_token)):
 async def doc_request_send(body: dict, user=Depends(verify_token)):
     """Send the reviewed document-request WhatsApp message to selected (or all pending)
     Document-Required students. Routes per session (public -> public API; others -> main API).
-    Marks each as sent so it isn't messaged twice."""
+    Attaches the uploaded screenshot via the IMAGE template variant when present, else sends the
+    text-only template. Marks each as sent so it isn't messaged twice."""
     if get_setting("wa_required_enabled", "0") != "1":
         raise HTTPException(status_code=400, detail="Document-request reminders are turned OFF in Settings — turn them on first.")
     import whatsapp
@@ -5623,11 +5685,12 @@ async def doc_request_send(body: dict, user=Depends(verify_token)):
     sent, failed, results = 0, 0, []
     for r in rows:
         msg = (r["required_msg"] or "").strip() or _humanize_remark(r["remark"] or "")
+        media = (r["required_img"] if ("required_img" in r.keys()) else "") or None
         ok, info = whatsapp.send_required_reminder({
             "row_key": r["row_key"], "student_name": r["student_name"] or "",
             "mobile": r["mobile"] or "", "session": r["session"] or "",
             "alt_mobile": (r["alt_mobile"] if ("alt_mobile" in r.keys()) else "") or "",
-        }, msg)
+        }, msg, media_url=media)
         if ok:
             conn.execute("UPDATE student_status SET required_notified=1, required_notified_at=?, "
                          "required_msg=? WHERE row_key=?", (now_s, msg[:1000], r["row_key"]))
@@ -5638,6 +5701,60 @@ async def doc_request_send(body: dict, user=Depends(verify_token)):
     conn.commit()
     conn.close()
     return {"ok": True, "sent": sent, "failed": failed, "results": results}
+
+
+import os as _os_docreq
+DOCREQ_MEDIA_DIR = "/tmp/docreq_media"
+
+@app.get("/media/docreq/{fname}")
+async def docreq_media(fname: str):
+    """Serve an uploaded screenshot publicly (no auth) so the WhatsApp gateway can fetch it."""
+    safe = _os_docreq.path.basename(fname)
+    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, safe)
+    if not _os_docreq.path.isfile(path):
+        raise HTTPException(status_code=404, detail="not found")
+    ext = safe.rsplit(".", 1)[-1].lower() if "." in safe else ""
+    mt = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+          "webp": "image/webp"}.get(ext, "application/octet-stream")
+    return FileResponse(path, media_type=mt, headers={"Cache-Control": "public, max-age=3600"})
+
+@app.post("/api/doc-request-image")
+async def doc_request_image(request: Request, row_key: str = Form(...),
+                            file: UploadFile = File(...), user=Depends(verify_token)):
+    """Upload a demo screenshot for a Document-Required student. Stored on disk and served at a
+    public URL, which is attached as the WhatsApp message's image header when you send."""
+    import uuid as _uuid
+    fn = file.filename or ""
+    ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else "jpg"
+    if ext not in ("jpg", "jpeg", "png", "webp"):
+        raise HTTPException(status_code=400, detail="Only JPG / PNG / WEBP images are allowed.")
+    data = await file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image too large (max 5 MB).")
+    _os_docreq.makedirs(DOCREQ_MEDIA_DIR, exist_ok=True)
+    fname = f"{_uuid.uuid4().hex}.{ext}"
+    with open(_os_docreq.path.join(DOCREQ_MEDIA_DIR, fname), "wb") as f:
+        f.write(data)
+    base = str(request.base_url).rstrip("/")
+    if base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
+        base = "https://" + base[len("http://"):]
+    url = f"{base}/media/docreq/{fname}"
+    conn = get_db()
+    conn.execute("UPDATE student_status SET required_img=? WHERE row_key=?", (url, row_key))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "url": url}
+
+@app.post("/api/doc-request-image-remove")
+async def doc_request_image_remove(body: dict, user=Depends(verify_token)):
+    rk = body.get("row_key", "")
+    if not rk:
+        raise HTTPException(status_code=400, detail="row_key required")
+    conn = get_db()
+    conn.execute("UPDATE student_status SET required_img=NULL WHERE row_key=?", (rk,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 def _wa_send_one(row_key, verify=False):
     """(Re)send the documents for ONE confirmed student. Opens its own DB connection so it
