@@ -458,9 +458,9 @@ function applySidebarPref(){
     <label>Username</label>
     <input type="text" id="lg-user" placeholder="admin" autocomplete="username">
     <label>Password</label>
-    <div style="position:relative">
+    <div style="position:relative;margin-bottom:16px">
       <input type="password" id="lg-pass" placeholder="enter password" autocomplete="current-password"
-        style="padding-right:44px" onkeydown="if(event.key==='Enter')doLogin()">
+        style="padding-right:44px;margin-bottom:0" onkeydown="if(event.key==='Enter')doLogin()">
       <button type="button" id="lg-pass-toggle" onclick="toggleLgPass()" aria-label="Show password"
         style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:auto!important;min-width:0;margin:0!important;background:none!important;border:none;cursor:pointer;padding:6px;color:#94a3b8;display:flex;align-items:center;justify-content:center">
         <svg id="lg-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="19" height="19"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -811,7 +811,7 @@ function applySidebarPref(){
           <div id="r-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="r-selcount">0</span> selected</span><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('r')">&#128465; Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('r')">Clear</button></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
-              <th style="width:34px"><input type="checkbox" id="r-selall" onclick="selAll('r',this)" title="Select all on this page"></th><th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th><th>RC Comment / Remark</th>
+              <th style="width:34px"><input type="checkbox" id="r-selall" onclick="selAll('r',this)" title="Select all on this page"></th><th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th><th>RC Comment / Remark</th><th>Action</th>
             </tr></thead><tbody id="r-body"></tbody></table>
           </div>
           <div class="pg-bar" id="r-pg"></div>
@@ -1670,8 +1670,8 @@ function renderDocReq(){
       '<label style="font-size:12px;font-weight:600">Message to send (edit if needed)'+(blank?' <span style="color:#b91c1c">&mdash; please write what to ask for</span>':'')+'</label>'+
       '<textarea class="dr-msg" data-key="'+s.row_key+'" rows="2" oninput="drDirty(this)" style="width:100%;margin-top:5px;padding:10px;border:2px solid var(--border);border-radius:9px;font-size:13.5px;font-family:inherit;resize:vertical">'+drEsc(s.message||"")+'</textarea>'+
       '<div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">'+
-        '<button class="btn btn-outline btn-sm" onclick="saveDocReqMsg(this,\''+s.row_key+'\')">Save</button>'+
-        '<button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="sendDocReqOne(this,\''+s.row_key+'\')">Send now</button>'+
+        '<button class="btn btn-outline btn-sm" onclick="saveDocReqMsg(this,&quot;'+s.row_key+'&quot;)">Save</button>'+
+        '<button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="sendDocReqOne(this,&quot;'+s.row_key+'&quot;)">Send now</button>'+
         '<span class="dr-saved" data-key="'+s.row_key+'" style="font-size:12px;color:var(--success)"></span>'+
         '<button type="button" onclick="toggleDrPrev(this)" style="margin-left:auto;background:none;border:none;color:#2563eb;font-size:12px;cursor:pointer;text-decoration:underline">Preview full message</button>'+
       '</div>'+
@@ -2399,8 +2399,9 @@ async function loadRequired(page){
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
-      '<td style="font-size:13px;color:var(--warn);max-width:420px">'+(s.remark||"(no comment captured)")+'</td></tr>').join("")
-      :'<tr><td colspan="6" class="empty">No pending documents</td></tr>';
+      '<td style="font-size:13px;color:var(--warn);max-width:420px">'+(s.remark||"(no comment captured)")+'</td>'+
+      '<td><button onclick="editStudent(&quot;'+s.row_key+'&quot;)" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">&#9998; Edit</button></td></tr>').join("")
+      :'<tr><td colspan="7" class="empty">No pending documents</td></tr>';
     renderPg("r-pg",page,d.pages,"loadRequired");
     const sa=document.getElementById("r-selall");if(sa)sa.checked=false;
     selBar("r");
