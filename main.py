@@ -2077,7 +2077,9 @@ function waBtn(s){
     badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:#B45309">Sent to WhatsApp'+(at?' &middot; '+at:'')+' <span style="font-weight:400;color:var(--muted)">(delivery not yet confirmed)</span></div>';
   }else{
     var why=(s.whatsapp_info||"");
-    if(why && why.indexOf("2 numbers")<0){
+    if(why && why.toLowerCase().indexOf("accepted")>=0){
+      badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:#B45309">Sent to WhatsApp'+(at?' &middot; '+at:'')+' <span style="font-weight:400;color:var(--muted)">(gateway accepted, delivery pending)</span></div>';
+    }else if(why && why.indexOf("2 numbers")<0){
       badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">&#9888; Not sent &middot; '+why.replace(/</g,"&lt;").slice(0,150)+'</div>';
     }else{
       badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:var(--muted)">Not sent yet</div>';
@@ -5570,6 +5572,55 @@ async def run_logs_clear(user=Depends(verify_token)):
 # ─────────────────────────────────────────────────────────────────────────────
 # WhatsApp (AiSensy) — settings, test, manual resend
 # ─────────────────────────────────────────────────────────────────────────────
+@app.get("/api/wa-diagnose")
+def wa_diagnose(user=Depends(verify_token)):
+    """One-shot health check for the whole WhatsApp pipeline — never raises, returns plain JSON
+    so the exact broken piece (module import / API key / campaign env / DB lock) is obvious."""
+    import os
+    d = {}
+    try:
+        import whatsapp
+        d["whatsapp_module"] = "imported OK"
+        try:
+            d["is_configured"] = whatsapp.is_configured()
+        except Exception as e:
+            d["is_configured"] = f"ERROR: {e}"
+        for g in ("ondemand", "stream2", "public", "syc"):
+            try:
+                d[f"campaign_{g}"] = whatsapp.campaign_for(g) or "(empty)"
+            except Exception as e:
+                d[f"campaign_{g}"] = f"ERROR: {e}"
+    except Exception as e:
+        d["whatsapp_module"] = f"IMPORT FAILED: {e}"
+    d["env_AISENSY_API_KEY_set"] = bool(os.environ.get("AISENSY_API_KEY", "").strip())
+    d["env_AISENSY_API_KEY_PUBLIC_set"] = bool(os.environ.get("AISENSY_API_KEY_PUBLIC", "").strip())
+    d["env_CAMPAIGN_REQUIRED"] = os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip() or "(empty)"
+    d["env_CAMPAIGN_REQUIRED_PUBLIC"] = os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip() or "(empty)"
+    try:
+        d["wa_enabled_setting"] = get_setting("wa_enabled", "0")
+        d["wa_required_enabled_setting"] = get_setting("wa_required_enabled", "0")
+        d["db_read"] = "OK"
+    except Exception as e:
+        d["db_read"] = f"ERROR: {e}"
+    try:
+        conn = get_db()
+        d["journal_mode"] = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        conn.close()
+    except Exception as e:
+        d["journal_mode"] = f"ERROR: {e}"
+    try:
+        conn = get_db()
+        rows = conn.execute("SELECT student_name, COALESCE(whatsapp_sent,0) AS s, whatsapp_info "
+                            "FROM student_status WHERE is_confirmed=1 AND COALESCE(whatsapp_info,'')!='' "
+                            "ORDER BY whatsapp_sent_at DESC LIMIT 5").fetchall()
+        conn.close()
+        d["recent_send_results"] = [{"name": r["student_name"], "sent_flag": r["s"],
+                                     "info": (r["whatsapp_info"] or "")[:140]} for r in rows]
+    except Exception as e:
+        d["recent_send_results"] = f"ERROR: {e}"
+    return d
+
+
 @app.get("/api/wa-settings")
 def wa_settings_get(user=Depends(verify_token)):
     """Always returns 200 with valid JSON — campaigns come straight from env vars, so even if

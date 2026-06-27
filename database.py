@@ -32,14 +32,26 @@ def get_db():
 def init_db():
     conn = get_db()
     c = conn.cursor()
-    # WAL mode: readers and writers can work concurrently, so the background WhatsApp
-    # auto-send sweep (which writes) never blocks the UI (which reads), and vice versa.
-    # This eliminates the "database is locked" 500s under load. WAL persists on the DB file.
+    # WAL mode lets readers and writers work concurrently, so the background WhatsApp sweep
+    # never blocks the UI. BUT some container filesystems (overlayfs) don't support WAL's
+    # shared-memory file — so we PROBE it with a real write and fall back to normal mode if it
+    # doesn't actually work, guaranteeing the DB keeps functioning either way.
     try:
         c.execute("PRAGMA journal_mode=WAL")
-        c.execute("PRAGMA synchronous=NORMAL")
+        mode = (c.execute("PRAGMA journal_mode").fetchone() or [""])[0]
+        if str(mode).lower() == "wal":
+            c.execute("CREATE TABLE IF NOT EXISTS _wal_probe (x INTEGER)")
+            c.execute("INSERT INTO _wal_probe VALUES (1)")
+            conn.commit()
+            c.execute("DELETE FROM _wal_probe")
+            conn.commit()
+            c.execute("PRAGMA synchronous=NORMAL")
     except Exception:
-        pass
+        try:
+            c.execute("PRAGMA journal_mode=DELETE")
+            conn.commit()
+        except Exception:
+            pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS run_logs (
