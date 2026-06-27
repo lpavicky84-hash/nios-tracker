@@ -3348,7 +3348,15 @@ async function saveIntervals(){
 }
 
 async function loadWa(){
-  try{const r=await api("/api/wa-settings");
+  let r=null;
+  for(let attempt=0;attempt<2;attempt++){
+    try{r=await api("/api/wa-settings");break;}
+    catch(e){
+      if(attempt>=1){const cfg=document.getElementById("wa-config");if(cfg)cfg.innerHTML='<span style="color:var(--danger)">&#10007; Could not load WhatsApp settings: '+(e.message||e)+'. <a href="#" onclick="loadWa();return false;" style="color:#2563eb;font-weight:600">Retry</a></span>';break;}
+      await new Promise(s=>setTimeout(s,900));
+    }
+  }
+  if(r){try{
     document.getElementById("wa-enabled").checked=r.enabled;
     var re=document.getElementById("wa-required-enabled");if(re)re.checked=!!r.required_enabled;
     const cfg=document.getElementById("wa-config");
@@ -3363,7 +3371,7 @@ async function loadWa(){
         '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)"><b style="font-size:12px;color:var(--muted)">Document-Required reminder</b></div>'+
         row("Reminder &middot; main (On Demand/Stream 2)",rc.main)+row("Reminder &middot; public",rc.public);
     }
-  }catch(e){const cfg=document.getElementById("wa-config");if(cfg)cfg.innerHTML='<span style="color:var(--danger)">&#10007; Could not load WhatsApp settings: '+(e.message||e)+'. Refresh to retry.</span>';}
+  }catch(e){}}
   try{const w=await api("/api/webhook-url");const el=document.getElementById("wh-url");if(el)el.value=w.url||"";}catch(e){}
 }
 function copyWebhook(btn){
@@ -5563,7 +5571,7 @@ async def run_logs_clear(user=Depends(verify_token)):
 # WhatsApp (AiSensy) — settings, test, manual resend
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/api/wa-settings")
-async def wa_settings_get(user=Depends(verify_token)):
+def wa_settings_get(user=Depends(verify_token)):
     import whatsapp, os
     return {
         "enabled": get_setting("wa_enabled", "0") == "1",
@@ -5582,7 +5590,7 @@ async def wa_settings_get(user=Depends(verify_token)):
     }
 
 @app.post("/api/wa-settings")
-async def wa_settings_set(body: dict, user=Depends(verify_token)):
+def wa_settings_set(body: dict, user=Depends(verify_token)):
     if "enabled" in body:
         set_setting("wa_enabled", "1" if body.get("enabled") else "0")
     if "required_enabled" in body:
@@ -5592,7 +5600,7 @@ async def wa_settings_set(body: dict, user=Depends(verify_token)):
             "required_enabled": get_setting("wa_required_enabled", "0") == "1"}
 
 @app.post("/api/wa-test")
-async def wa_test(body: dict, user=Depends(verify_token)):
+def wa_test(body: dict, user=Depends(verify_token)):
     """Send a test message of a chosen template group to any number."""
     import whatsapp
     number = body.get("number", "")
