@@ -1447,7 +1447,7 @@ async function api(path,method="GET",body=null){
   if(body){opt.headers["Content-Type"]="application/json";opt.body=JSON.stringify(body);}
   const r=await fetch(API+path,opt);
   if(r.status===401){location.reload();throw new Error("Session expired");}
-  if(!r.ok){const e=await r.json().catch(()=>({detail:"Error"}));throw new Error(e.detail||"Request failed");}
+  if(!r.ok){const e=await r.json().catch(()=>({detail:"HTTP "+r.status}));throw new Error(e.detail||("HTTP "+r.status));}
   return r.json();
 }
 
@@ -5572,27 +5572,41 @@ async def run_logs_clear(user=Depends(verify_token)):
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/api/wa-settings")
 def wa_settings_get(user=Depends(verify_token)):
-    import whatsapp, os
-    def _safe(fn, default=""):
+    """Always returns 200 with valid JSON — campaigns come straight from env vars, so even if
+    the DB is busy or the whatsapp module hiccups, the panel still loads and shows what's set."""
+    import os
+    def env(k):
         try:
-            return fn()
+            return os.environ.get(k, "").strip()
         except Exception:
-            return default
-    return {
-        "enabled": _safe(lambda: get_setting("wa_enabled", "0") == "1", False),
-        "required_enabled": _safe(lambda: get_setting("wa_required_enabled", "0") == "1", False),
-        "configured": _safe(lambda: whatsapp.is_configured(), False),
-        "campaigns": {
-            "ondemand": _safe(lambda: whatsapp.campaign_for("ondemand")),
-            "stream2": _safe(lambda: whatsapp.campaign_for("stream2")),
-            "public": _safe(lambda: whatsapp.campaign_for("public")),
-            "syc": _safe(lambda: whatsapp.campaign_for("syc")),
-        },
+            return ""
+    out = {
+        "enabled": False,
+        "required_enabled": False,
+        "configured": bool(env("AISENSY_API_KEY") or env("AISENSY_API_KEY_PUBLIC")),
+        "campaigns": {"ondemand": "", "stream2": "", "public": "", "syc": ""},
         "required_campaigns": {
-            "main": _safe(lambda: os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip()),
-            "public": _safe(lambda: os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip()),
+            "main": env("AISENSY_CAMPAIGN_REQUIRED"),
+            "public": env("AISENSY_CAMPAIGN_REQUIRED_PUBLIC"),
         },
     }
+    try:
+        out["enabled"] = get_setting("wa_enabled", "0") == "1"
+        out["required_enabled"] = get_setting("wa_required_enabled", "0") == "1"
+    except Exception:
+        pass
+    try:
+        import whatsapp
+        out["configured"] = whatsapp.is_configured()
+        out["campaigns"] = {
+            "ondemand": whatsapp.campaign_for("ondemand"),
+            "stream2": whatsapp.campaign_for("stream2"),
+            "public": whatsapp.campaign_for("public"),
+            "syc": whatsapp.campaign_for("syc"),
+        }
+    except Exception:
+        pass
+    return out
 
 @app.post("/api/wa-settings")
 def wa_settings_set(body: dict, user=Depends(verify_token)):
