@@ -244,55 +244,46 @@ def send_for_student(student, only_number=None):
     return ok, info
 
 
-def required_campaign_for(group, with_image=False):
-    """The document-request reminder has its OWN approved template/campaign, one per AiSensy
-    account: the main account (on-demand + stream2) vs the public account. When a screenshot is
-    attached we use the IMAGE-header variant of the template (a separate approved campaign),
-    falling back to the text-only campaign if the image one isn't set."""
-    if with_image:
-        img = (os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC_IMG", "").strip() if group == "public"
-               else os.environ.get("AISENSY_CAMPAIGN_REQUIRED_IMG", "").strip())
-        if img:
-            return img, True
+def required_campaign_for(group):
+    """ONE universal document-request template per AiSensy account (image-header type):
+    main account (on-demand + stream2) vs public account. Same template design on both, so
+    only TWO campaigns are ever needed."""
     if group == "public":
-        return os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip(), False
-    return os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip(), False
+        return os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip()
+    return os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip()
 
 
-def send_required_reminder(student, message=None, media_url=None):
+def send_required_reminder(student, message=None, media_url=None, default_img=None):
     """Polite reminder sent when a student is 'Document Required'. The counsellor reviews/edits
     the document line on the portal first; that text goes into the approved template as {{2}}
-    ({{1}} = name). If a demo screenshot is attached, the IMAGE-header template variant is used;
-    otherwise the text-only template is used. Routing: public -> public API; on-demand/stream2 ->
-    main API. Sends to primary + alternate. Returns (ok, info)."""
+    ({{1}} = name). The template is a single UNIVERSAL image-header template, so it ALWAYS
+    carries an image: the uploaded demo screenshot when present, otherwise the default MVS
+    banner. Routing: public -> public API; on-demand/stream2 -> main API. Sends to primary +
+    alternate. Returns (ok, info)."""
     group = group_of(student.get("session"))
-    want_img = bool(media_url)
-    campaign, img_ok = required_campaign_for(group, with_image=want_img)
+    campaign = required_campaign_for(group)
     if not campaign:
         return False, f"no document-required campaign set for {group}"
-    # Screenshot attached but no image-template campaign configured -> send text-only and tell
-    # the counsellor the image was skipped (rather than silently dropping it).
-    note_suffix = ""
-    if want_img and not img_ok:
-        media_url = None
-        note_suffix = " (screenshot skipped — image template not set up)"
     name = (str(student.get("student_name") or "Student").strip() or "Student")
     msg = (str(message or "").strip()
            or "kuch zaroori documents jinki aapke admission ko poora karne ke liye zarurat hai")
     params = [name, msg]   # approved template: {{1}} = name, {{2}} = document request
+    # Universal image-header template -> always send an image: screenshot if attached,
+    # else the default MVS banner. This lets ONE template (per account) cover every case.
+    media = (str(media_url or "").strip() or str(default_img or "").strip() or None)
     primary = student.get("mobile")
-    ok, info = _post(campaign, primary, name, params, group=group, media_url=media_url)
+    ok, info = _post(campaign, primary, name, params, group=group, media_url=media)
     alt = str(student.get("alt_mobile") or "").strip()
     pn, an = normalize_number(primary), normalize_number(alt)
     if an and len(an) >= 11 and an != pn:
-        ok2, info2 = _post(campaign, alt, name, params, group=group, media_url=media_url)
+        ok2, info2 = _post(campaign, alt, name, params, group=group, media_url=media)
         if ok or ok2:
             note = "Reminder sent to 2 numbers (own + alternate)"
             if not (ok and ok2):
                 note += " — one still pending"
-            return True, note + note_suffix
+            return True, note
         return False, f"both numbers failed: {info} | {info2}"
-    return ok, (str(info) + note_suffix) if ok else info
+    return ok, info
 
 
 def send_test(number, name="Test Student", group="ondemand"):

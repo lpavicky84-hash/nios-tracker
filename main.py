@@ -1172,7 +1172,8 @@ function applySidebarPref(){
             When ON, every <b>Document Required</b> student appears on the <b>Doc Requests</b> page with a simple, friendly
             message prepared from the NIOS remark. <b>The counsellor reviews/edits and sends manually</b> &mdash; nothing goes
             out automatically. Routing: <b>Public &#8594; public number</b>; <b>On Demand &amp; Stream 2 &#8594; main number</b>.<br>
-            <span style="color:#15803d">Templates ({{1}} = name, {{2}} = document request) &amp; campaigns in Railway &mdash; <b>text-only:</b> AISENSY_CAMPAIGN_REQUIRED / _PUBLIC; <b>image-header (for screenshots):</b> AISENSY_CAMPAIGN_REQUIRED_IMG / _PUBLIC_IMG. No screenshot &#8594; text-only template; screenshot attached &#8594; image template.</span>
+            <span style="color:#15803d">Needs just <b>2 image-header templates</b> ({{1}} = name, {{2}} = document request) &mdash; one per account &mdash; with campaigns in Railway:
+            <b>AISENSY_CAMPAIGN_REQUIRED</b> (main account) and <b>AISENSY_CAMPAIGN_REQUIRED_PUBLIC</b> (public account). Every message carries an image: the attached screenshot, or a default MVS banner when none.</span>
           </div>
           <div style="border-top:1px solid var(--border);padding-top:16px">
             <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
@@ -5699,16 +5700,20 @@ async def doc_request_save(body: dict, user=Depends(verify_token)):
 
 
 @app.post("/api/doc-request-send")
-async def doc_request_send(body: dict, user=Depends(verify_token)):
+async def doc_request_send(body: dict, request: Request, user=Depends(verify_token)):
     """Send the reviewed document-request WhatsApp message to selected (or all pending)
     Document-Required students. Routes per session (public -> public API; others -> main API).
-    Attaches the uploaded screenshot via the IMAGE template variant when present, else sends the
-    text-only template. Marks each as sent so it isn't messaged twice."""
+    Uses ONE universal image-header template: sends the uploaded screenshot when present,
+    otherwise the default MVS banner. Marks each as sent so it isn't messaged twice."""
     if get_setting("wa_required_enabled", "0") != "1":
         raise HTTPException(status_code=400, detail="Document-request reminders are turned OFF in Settings — turn them on first.")
     import whatsapp
     if not whatsapp.is_configured():
         raise HTTPException(status_code=400, detail="AISENSY_API_KEY is not set.")
+    base = str(request.base_url).rstrip("/")
+    if base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
+        base = "https://" + base[len("http://"):]
+    default_img = f"{base}/media/docreq-default.png"
     send_all = bool(body.get("all"))
     keys = [k for k in (body.get("row_keys", []) or []) if k][:500]
     conn = get_db()
@@ -5725,7 +5730,7 @@ async def doc_request_send(body: dict, user=Depends(verify_token)):
             "row_key": r["row_key"], "student_name": r["student_name"] or "",
             "mobile": r["mobile"] or "", "session": r["session"] or "",
             "alt_mobile": (r["alt_mobile"] if ("alt_mobile" in r.keys()) else "") or "",
-        }, msg, media_url=media)
+        }, msg, media_url=media, default_img=default_img)
         if ok:
             conn.execute("UPDATE student_status SET required_notified=1, required_notified_at=?, "
                          "required_msg=? WHERE row_key=?", (now_s, msg[:1000], r["row_key"]))
@@ -5752,6 +5757,52 @@ async def docreq_media(fname: str):
     mt = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
           "webp": "image/webp"}.get(ext, "application/octet-stream")
     return FileResponse(path, media_type=mt, headers={"Cache-Control": "public, max-age=3600"})
+
+def _make_default_banner(path):
+    """A friendly MVS-branded banner used as the image header whenever no screenshot is
+    attached — so the universal image-template always has an image to show."""
+    from PIL import Image, ImageDraw, ImageFont
+    W, H = 800, 418
+    img = Image.new("RGB", (W, H))
+    d = ImageDraw.Draw(img)
+    c1, c2 = (79, 70, 229), (147, 51, 234)
+    for y in range(H):
+        t = y / H
+        d.line([(0, y), (W, y)], fill=(int(c1[0] + (c2[0]-c1[0])*t),
+                                       int(c1[1] + (c2[1]-c1[1])*t),
+                                       int(c1[2] + (c2[2]-c1[2])*t)))
+    def font(sz, bold=True):
+        for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+                  else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                  "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"):
+            try:
+                return ImageFont.truetype(p, sz)
+            except Exception:
+                pass
+        return ImageFont.load_default()
+    def center(text, y, f, fill=(255, 255, 255)):
+        bb = d.textbbox((0, 0), text, font=f)
+        d.text(((W - (bb[2]-bb[0])) / 2, y), text, font=f, fill=fill)
+    d.rounded_rectangle([W/2-46, 54, W/2+46, 146], radius=22, fill=(255, 255, 255))
+    center("MVS", 78, font(46), fill=(79, 70, 229))
+    center("MVS Foundation", 168, font(30))
+    center("Admission Document Update", 230, font(40))
+    center("Aapke admission ke liye ek zaroori update", 300, font(22, bold=False),
+           fill=(233, 213, 255))
+    img.save(path, "PNG")
+
+@app.get("/media/docreq-default.png")
+async def docreq_default_banner():
+    """Default branded banner image (generated once, cached) for document requests with no
+    screenshot attached. Public (no auth) so the WhatsApp gateway can fetch it."""
+    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner.png")
+    if not _os_docreq.path.isfile(path):
+        _os_docreq.makedirs(DOCREQ_MEDIA_DIR, exist_ok=True)
+        try:
+            _make_default_banner(path)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"banner generation failed: {e}")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 @app.post("/api/doc-request-image")
 async def doc_request_image(request: Request, row_key: str = Form(...),
