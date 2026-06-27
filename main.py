@@ -5834,7 +5834,7 @@ def doc_request_send(body: dict, request: Request, user=Depends(verify_token)):
     base = str(request.base_url).rstrip("/")
     if base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
         base = "https://" + base[len("http://"):]
-    default_img = f"{base}/media/docreq-banner-v8.png"
+    default_img = f"{base}/media/docreq-banner-v9.png"
     send_all = bool(body.get("all"))
     keys = [k for k in (body.get("row_keys", []) or []) if k][:500]
     conn = get_db()
@@ -5894,11 +5894,11 @@ def _make_default_banner(path):
         d.line([(0, y), (W, y)], fill=(int(top[0] + (bot[0]-top[0])*t),
                                        int(top[1] + (bot[1]-top[1])*t),
                                        int(top[2] + (bot[2]-top[2])*t)))
-    cx, cy = W // 2, 104
+    cx, cy = W // 2, 130
     # soft teal glow behind the logo for depth
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse([cx - 124, cy - 116, cx + 124, cy + 128], fill=(45, 212, 191, 50))
-    glow = glow.filter(ImageFilter.GaussianBlur(44))
+    ImageDraw.Draw(glow).ellipse([cx - 134, cy - 124, cx + 134, cy + 140], fill=(45, 212, 191, 50))
+    glow = glow.filter(ImageFilter.GaussianBlur(46))
     img = Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
     d = ImageDraw.Draw(img)
     # refined double border frame
@@ -5923,8 +5923,8 @@ def _make_default_banner(path):
         except Exception:
             return ImageFont.load_default()
     # real MVS logo in a white circle with a soft outer ring
-    d.ellipse([cx - 72, cy - 72, cx + 72, cy + 72], fill=(36, 52, 98))     # ring
-    r = 60
+    d.ellipse([cx - 82, cy - 82, cx + 82, cy + 82], fill=(36, 52, 98))     # ring
+    r = 68
     d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255))
     try:
         import base64, io
@@ -5937,37 +5937,33 @@ def _make_default_banner(path):
         img.paste(logo, (cx - ls // 2, cy - ls // 2), mask)
     except Exception:
         pass
-    # title on two lines so each line can be much bigger and fill the frame
-    lines = ["MVS Foundation", "Team"]
-    target = int(W * 0.86)
-    fsize = 120
+    # title on a single line, auto-fit to ~90% width with a soft shadow
+    txt = "MVS Foundation Team"
+    target = int(W * 0.90)
+    fsize = 96
     f = font(fsize)
-    while fsize > 30:
+    while fsize > 28:
         f = font(fsize)
-        bb = d.textbbox((0, 0), lines[0], font=f)
+        bb = d.textbbox((0, 0), txt, font=f)
         if (bb[2] - bb[0]) <= target:
             break
         fsize -= 2
-    h1 = d.textbbox((0, 0), "MVS Foundation", font=f)
-    line_h = (h1[3] - h1[1]) + 16
-    ty = 192
-    for i, ln in enumerate(lines):
-        bb = d.textbbox((0, 0), ln, font=f)
-        tx = (W - (bb[2] - bb[0])) / 2 - bb[0]
-        yy = ty + i * line_h
-        d.text((tx + 3, yy + 3), ln, font=f, fill=(5, 9, 24))       # shadow
-        d.text((tx, yy), ln, font=f, fill=(246, 249, 255))          # main
+    bb = d.textbbox((0, 0), txt, font=f)
+    tx = (W - (bb[2] - bb[0])) / 2 - bb[0]
+    ty = 250
+    d.text((tx + 3, ty + 3), txt, font=f, fill=(5, 9, 24))       # shadow
+    d.text((tx, ty), txt, font=f, fill=(246, 249, 255))          # main
     # teal accent underline
-    ay = ty + 2 * line_h + 4
-    d.rounded_rectangle([cx - 90, ay, cx + 90, ay + 6], radius=3, fill=(45, 212, 191))
+    ay = ty + (bb[3] - bb[1]) + 26
+    d.rounded_rectangle([cx - 84, ay, cx + 84, ay + 6], radius=3, fill=(45, 212, 191))
     img.save(path, "PNG")
 
-@app.get("/media/docreq-banner-v8.png")
+@app.get("/media/docreq-banner-v9.png")
 async def docreq_default_banner():
     """Default branded banner image (regenerated when missing) for document requests with no
     screenshot attached. Public (no auth) so the WhatsApp gateway can fetch it. The versioned
     URL (v3) forces WhatsApp/AiSensy to fetch the new image instead of a cached old one."""
-    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner_v8.png")
+    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner_v9.png")
     if not _os_docreq.path.isfile(path):
         _os_docreq.makedirs(DOCREQ_MEDIA_DIR, exist_ok=True)
         try:
