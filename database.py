@@ -21,10 +21,10 @@ def now_ist_str():
     return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA busy_timeout=8000")
+        conn.execute("PRAGMA busy_timeout=15000")
     except Exception:
         pass
     return conn
@@ -32,6 +32,14 @@ def get_db():
 def init_db():
     conn = get_db()
     c = conn.cursor()
+    # WAL mode: readers and writers can work concurrently, so the background WhatsApp
+    # auto-send sweep (which writes) never blocks the UI (which reads), and vice versa.
+    # This eliminates the "database is locked" 500s under load. WAL persists on the DB file.
+    try:
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS run_logs (

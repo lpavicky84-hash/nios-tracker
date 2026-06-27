@@ -5573,19 +5573,24 @@ async def run_logs_clear(user=Depends(verify_token)):
 @app.get("/api/wa-settings")
 def wa_settings_get(user=Depends(verify_token)):
     import whatsapp, os
+    def _safe(fn, default=""):
+        try:
+            return fn()
+        except Exception:
+            return default
     return {
-        "enabled": get_setting("wa_enabled", "0") == "1",
-        "required_enabled": get_setting("wa_required_enabled", "0") == "1",
-        "configured": whatsapp.is_configured(),
+        "enabled": _safe(lambda: get_setting("wa_enabled", "0") == "1", False),
+        "required_enabled": _safe(lambda: get_setting("wa_required_enabled", "0") == "1", False),
+        "configured": _safe(lambda: whatsapp.is_configured(), False),
         "campaigns": {
-            "ondemand": whatsapp.campaign_for("ondemand"),
-            "stream2": whatsapp.campaign_for("stream2"),
-            "public": whatsapp.campaign_for("public"),
-            "syc": whatsapp.campaign_for("syc"),
+            "ondemand": _safe(lambda: whatsapp.campaign_for("ondemand")),
+            "stream2": _safe(lambda: whatsapp.campaign_for("stream2")),
+            "public": _safe(lambda: whatsapp.campaign_for("public")),
+            "syc": _safe(lambda: whatsapp.campaign_for("syc")),
         },
         "required_campaigns": {
-            "main": os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip(),
-            "public": os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip(),
+            "main": _safe(lambda: os.environ.get("AISENSY_CAMPAIGN_REQUIRED", "").strip()),
+            "public": _safe(lambda: os.environ.get("AISENSY_CAMPAIGN_REQUIRED_PUBLIC", "").strip()),
         },
     }
 
