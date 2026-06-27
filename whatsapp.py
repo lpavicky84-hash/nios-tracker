@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 AISENSY_URL = "https://backend.aisensy.com/campaign/t1/api/v2"
 
 _CAMPAIGN_ENV = {
-    "ondemand": "AISENSY_CAMPAIGN_ONDEMAND",
+    "ondemand": "AISENSY_CAMPAIGN_ONDEMAND",/Users/manishverma/Downloads/whatsapp.py
     "stream2":  "AISENSY_CAMPAIGN_STREAM2",
     "public":   "AISENSY_CAMPAIGN_PUBLIC",
     "syc":      "AISENSY_CAMPAIGN_SYC",
