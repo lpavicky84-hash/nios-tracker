@@ -5834,7 +5834,7 @@ def doc_request_send(body: dict, request: Request, user=Depends(verify_token)):
     base = str(request.base_url).rstrip("/")
     if base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
         base = "https://" + base[len("http://"):]
-    default_img = f"{base}/media/docreq-banner-v5.png"
+    default_img = f"{base}/media/docreq-banner-v6.png"
     send_all = bool(body.get("all"))
     keys = [k for k in (body.get("row_keys", []) or []) if k][:500]
     conn = get_db()
@@ -5881,8 +5881,8 @@ async def docreq_media(fname: str):
 
 def _make_default_banner(path):
     """A clean, professional MVS-branded banner used as the image header when no screenshot is
-    attached: deep-navy backdrop with a soft glow, the real MVS logo, and a refined
-    letter-spaced 'MVS Foundation Team'."""
+    attached: deep-navy backdrop with a soft glow, the real MVS logo, and a large
+    'MVS Foundation Team' that fills the frame so it stays readable when WhatsApp scales it."""
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
     W, H = 800, 418
     img = Image.new("RGB", (W, H))
@@ -5894,16 +5894,16 @@ def _make_default_banner(path):
         d.line([(0, y), (W, y)], fill=(int(top[0] + (bot[0]-top[0])*t),
                                        int(top[1] + (bot[1]-top[1])*t),
                                        int(top[2] + (bot[2]-top[2])*t)))
-    cx, cy = W // 2, 130
+    cx, cy = W // 2, 124
     # soft teal glow behind the logo for depth
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse([cx - 132, cy - 122, cx + 132, cy + 138], fill=(45, 212, 191, 52))
-    glow = glow.filter(ImageFilter.GaussianBlur(48))
+    ImageDraw.Draw(glow).ellipse([cx - 140, cy - 128, cx + 140, cy + 144], fill=(45, 212, 191, 50))
+    glow = glow.filter(ImageFilter.GaussianBlur(46))
     img = Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
     d = ImageDraw.Draw(img)
     # refined double border frame
-    d.rectangle([20, 20, W - 20, H - 20], outline=(72, 94, 150), width=2)
-    d.rectangle([27, 27, W - 27, H - 27], outline=(40, 58, 108), width=1)
+    d.rectangle([18, 18, W - 18, H - 18], outline=(72, 94, 150), width=2)
+    d.rectangle([25, 25, W - 25, H - 25], outline=(40, 58, 108), width=1)
 
     def font(sz):
         for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans-Bold.ttf"):
@@ -5912,9 +5912,9 @@ def _make_default_banner(path):
             except Exception:
                 pass
         return ImageFont.load_default()
-    # real MVS logo in a white circle with a soft outer ring
-    d.ellipse([cx - 80, cy - 80, cx + 80, cy + 80], fill=(36, 52, 98))     # ring
-    r = 64
+    # real MVS logo in a white circle with a soft outer ring — larger
+    d.ellipse([cx - 88, cy - 88, cx + 88, cy + 88], fill=(36, 52, 98))     # ring
+    r = 74
     d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255))
     try:
         import base64, io
@@ -5927,20 +5927,20 @@ def _make_default_banner(path):
         img.paste(logo, (cx - ls // 2, cy - ls // 2), mask)
     except Exception:
         pass
-    # title with letter-spacing, auto-fit, soft shadow
+    # large, auto-fit title (fills ~90% width) with a soft shadow — minimal tracking
     txt = "MVS Foundation Team"
-    tracking = 5
+    tracking = 2
     def spaced_w(f):
         return sum(f.getlength(c) + tracking for c in txt) - tracking
-    fsize = 80
+    fsize = 96
     f = font(fsize)
-    while fsize > 28:
+    while fsize > 30:
         f = font(fsize)
-        if spaced_w(f) <= int(W * 0.80):
+        if spaced_w(f) <= int(W * 0.90):
             break
         fsize -= 2
     x0 = (W - spaced_w(f)) / 2
-    ty = 250
+    ty = 252
     xx = x0
     for c in txt:                                  # shadow
         d.text((xx + 2, ty + 3), c, font=f, fill=(5, 9, 24))
@@ -5950,15 +5950,15 @@ def _make_default_banner(path):
         d.text((xx, ty), c, font=f, fill=(246, 249, 255))
         xx += f.getlength(c) + tracking
     # teal accent underline
-    d.rounded_rectangle([cx - 70, 356, cx + 70, 361], radius=3, fill=(45, 212, 191))
+    d.rounded_rectangle([cx - 84, 368, cx + 84, 374], radius=3, fill=(45, 212, 191))
     img.save(path, "PNG")
 
-@app.get("/media/docreq-banner-v5.png")
+@app.get("/media/docreq-banner-v6.png")
 async def docreq_default_banner():
     """Default branded banner image (regenerated when missing) for document requests with no
     screenshot attached. Public (no auth) so the WhatsApp gateway can fetch it. The versioned
     URL (v3) forces WhatsApp/AiSensy to fetch the new image instead of a cached old one."""
-    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner_v5.png")
+    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner_v6.png")
     if not _os_docreq.path.isfile(path):
         _os_docreq.makedirs(DOCREQ_MEDIA_DIR, exist_ok=True)
         try:
