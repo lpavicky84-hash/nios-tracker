@@ -3365,12 +3365,22 @@ async function loadWa(){
     if(!r.configured){
       cfg.innerHTML='<span style="color:var(--danger)">&#10007; AISENSY_API_KEY is not set in Railway environment variables</span>';
     }else{
-      const c=r.campaigns||{};const rc=r.required_campaigns||{};
+      const c=r.campaigns||{};const rc=r.required_campaigns||{};const ce=r.campaigns_env||{};
+      const esc=(v)=>(v||"").replace(/"/g,"&quot;");
       const row=(lbl,v)=>'<div style="margin:2px 0">'+lbl+': '+
         (v?'<b style="color:var(--success)">'+v+'</b>':'<span style="color:var(--warn)">not set</span>')+'</div>';
-      cfg.innerHTML='<div style="color:var(--success);margin-bottom:6px">&#10003; API key configured</div>'+
-        row("On Demand",c.ondemand)+row("Stream 2",c.stream2)+row("Public",c.public)+row("SYC",c.syc)+
-        '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)"><b style="font-size:12px;color:var(--muted)">Document-Required reminder</b></div>'+
+      const camp=(lbl,key,v)=>'<div style="display:flex;align-items:center;gap:8px;margin:5px 0;flex-wrap:wrap">'+
+        '<span style="width:96px;font-size:12.5px;color:var(--muted)">'+lbl+'</span>'+
+        '<input class="wa-camp" data-g="'+key+'" value="'+esc(v)+'" placeholder="AiSensy campaign name" '+
+        'style="flex:1;max-width:300px;padding:6px 9px;border:1px solid '+(v?'var(--border)':'#fca5a5')+';border-radius:7px;font-size:13px">'+
+        '<span style="font-size:11px;font-weight:600;color:'+(ce[key]?'#15803d':'#b91c1c')+'">Railway: '+(ce[key]?'seen &#10003;':'empty &#10007;')+'</span>'+
+        '</div>';
+      cfg.innerHTML='<div style="color:var(--success);margin-bottom:8px">&#10003; API key configured</div>'+
+        '<div style="font-size:12px;color:var(--muted);margin-bottom:4px"><b>Confirmed-send campaigns</b> — type the AiSensy campaign name for each and Save (works even if Railway shows empty):</div>'+
+        camp("On Demand","ondemand",c.ondemand)+camp("Stream 2","stream2",c.stream2)+
+        camp("Public","public",c.public)+camp("SYC","syc",c.syc)+
+        '<button class="btn btn-sm" style="background:var(--primary);color:#fff;margin-top:6px" onclick="saveCampaigns(this)">Save campaigns</button>'+
+        '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)"><b style="font-size:12px;color:var(--muted)">Document-Required reminder</b></div>'+
         row("Reminder &middot; main (On Demand/Stream 2)",rc.main)+row("Reminder &middot; public",rc.public);
     }
   }catch(e){}}
@@ -3381,6 +3391,14 @@ function copyWebhook(btn){
   el.select();el.setSelectionRange(0,99999);
   try{navigator.clipboard.writeText(el.value);}catch(e){try{document.execCommand("copy");}catch(_){}}
   if(btn){const o=btn.textContent;btn.textContent="Copied!";setTimeout(()=>{btn.textContent=o;},1500);}
+}
+async function saveCampaigns(btn){
+  const body={};
+  document.querySelectorAll(".wa-camp").forEach(i=>{body[i.dataset.g]=i.value.trim();});
+  if(btn)btn.disabled=true;
+  try{await api("/api/wa-campaigns","POST",body);showToast("Campaigns saved \u2713");loadWa();}
+  catch(e){showToast("Error: "+e.message);}
+  finally{if(btn)btn.disabled=false;}
 }
 async function saveWa(){
   const en=document.getElementById("wa-enabled").checked;
@@ -5636,6 +5654,12 @@ def wa_settings_get(user=Depends(verify_token)):
         "required_enabled": False,
         "configured": bool(env("AISENSY_API_KEY") or env("AISENSY_API_KEY_PUBLIC")),
         "campaigns": {"ondemand": "", "stream2": "", "public": "", "syc": ""},
+        "campaigns_env": {
+            "ondemand": bool(env("AISENSY_CAMPAIGN_ONDEMAND")),
+            "stream2": bool(env("AISENSY_CAMPAIGN_STREAM2")),
+            "public": bool(env("AISENSY_CAMPAIGN_PUBLIC")),
+            "syc": bool(env("AISENSY_CAMPAIGN_SYC")),
+        },
         "required_campaigns": {
             "main": env("AISENSY_CAMPAIGN_REQUIRED"),
             "public": env("AISENSY_CAMPAIGN_REQUIRED_PUBLIC"),
@@ -5668,6 +5692,22 @@ def wa_settings_set(body: dict, user=Depends(verify_token)):
     return {"message": "saved",
             "enabled": get_setting("wa_enabled", "0") == "1",
             "required_enabled": get_setting("wa_required_enabled", "0") == "1"}
+
+@app.post("/api/wa-campaigns")
+def wa_campaigns_set(body: dict, user=Depends(verify_token)):
+    """Save the confirmed-send campaign names from the Settings page. Stored in the DB and used
+    in preference to the Railway env vars, so campaigns can be fixed in-app. Empty value clears
+    the override (falls back to the env var)."""
+    for g in ("ondemand", "stream2", "public", "syc"):
+        if g in body:
+            set_setting("wa_campaign_" + g, str(body.get(g) or "").strip())
+    import whatsapp
+    return {"ok": True, "campaigns": {
+        "ondemand": whatsapp.campaign_for("ondemand"),
+        "stream2": whatsapp.campaign_for("stream2"),
+        "public": whatsapp.campaign_for("public"),
+        "syc": whatsapp.campaign_for("syc"),
+    }}
 
 @app.post("/api/wa-test")
 def wa_test(body: dict, user=Depends(verify_token)):

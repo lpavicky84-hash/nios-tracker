@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 AISENSY_URL = "https://backend.aisensy.com/campaign/t1/api/v2"
 
 _CAMPAIGN_ENV = {
-    "ondemand": "AISENSY_CAMPAIGN_ONDEMAND",/Users/manishverma/Downloads/whatsapp.py
+    "ondemand": "AISENSY_CAMPAIGN_ONDEMAND",
     "stream2":  "AISENSY_CAMPAIGN_STREAM2",
     "public":   "AISENSY_CAMPAIGN_PUBLIC",
     "syc":      "AISENSY_CAMPAIGN_SYC",
@@ -53,6 +53,18 @@ def _api_key_for(group: str) -> str:
 
 
 def campaign_for(group: str) -> str:
+    # A campaign name set from the Settings page (stored in the DB) takes priority over the
+    # Railway env var — so campaigns can be fixed right in the app without touching Railway.
+    try:
+        from database import get_db
+        conn = get_db()
+        row = conn.execute("SELECT value FROM settings WHERE key=?", ("wa_campaign_" + group,)).fetchone()
+        conn.close()
+        ov = ((row["value"] if row else "") or "").strip()
+        if ov:
+            return ov
+    except Exception:
+        pass
     return os.environ.get(_CAMPAIGN_ENV.get(group, ""), "").strip()
 
 
