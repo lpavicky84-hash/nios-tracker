@@ -5834,7 +5834,7 @@ def doc_request_send(body: dict, request: Request, user=Depends(verify_token)):
     base = str(request.base_url).rstrip("/")
     if base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
         base = "https://" + base[len("http://"):]
-    default_img = f"{base}/media/docreq-banner-v7.png"
+    default_img = f"{base}/media/docreq-banner-v8.png"
     send_all = bool(body.get("all"))
     keys = [k for k in (body.get("row_keys", []) or []) if k][:500]
     conn = get_db()
@@ -5906,12 +5906,22 @@ def _make_default_banner(path):
     d.rectangle([25, 25, W - 25, H - 25], outline=(40, 58, 108), width=1)
 
     def font(sz):
-        for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans-Bold.ttf"):
+        import os as _o
+        here = _o.path.dirname(_o.path.abspath(__file__))
+        for p in (_o.path.join(here, "DejaVuSans-Bold.ttf"),
+                  _o.path.join(here, "assets", "DejaVuSans-Bold.ttf"),
+                  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                  "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+                  "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+                  "DejaVuSans-Bold.ttf"):
             try:
                 return ImageFont.truetype(p, sz)
             except Exception:
                 pass
-        return ImageFont.load_default()
+        try:
+            return ImageFont.load_default(size=sz)   # Pillow >= 10.1 scales the default font
+        except Exception:
+            return ImageFont.load_default()
     # real MVS logo in a white circle with a soft outer ring
     d.ellipse([cx - 72, cy - 72, cx + 72, cy + 72], fill=(36, 52, 98))     # ring
     r = 60
@@ -5952,12 +5962,12 @@ def _make_default_banner(path):
     d.rounded_rectangle([cx - 90, ay, cx + 90, ay + 6], radius=3, fill=(45, 212, 191))
     img.save(path, "PNG")
 
-@app.get("/media/docreq-banner-v7.png")
+@app.get("/media/docreq-banner-v8.png")
 async def docreq_default_banner():
     """Default branded banner image (regenerated when missing) for document requests with no
     screenshot attached. Public (no auth) so the WhatsApp gateway can fetch it. The versioned
     URL (v3) forces WhatsApp/AiSensy to fetch the new image instead of a cached old one."""
-    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner_v7.png")
+    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner_v8.png")
     if not _os_docreq.path.isfile(path):
         _os_docreq.makedirs(DOCREQ_MEDIA_DIR, exist_ok=True)
         try:
