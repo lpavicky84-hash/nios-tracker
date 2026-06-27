@@ -5880,8 +5880,8 @@ async def docreq_media(fname: str):
     return FileResponse(path, media_type=mt, headers={"Cache-Control": "public, max-age=3600"})
 
 def _make_default_banner(path):
-    """A friendly MVS-branded banner used as the image header whenever no screenshot is
-    attached — so the universal image-template always has an image to show."""
+    """A clean MVS-branded banner used as the image header when no screenshot is attached:
+    the real MVS logo + 'MVS Foundation Team' only — nothing else on it."""
     from PIL import Image, ImageDraw, ImageFont
     W, H = 800, 418
     img = Image.new("RGB", (W, H))
@@ -5892,31 +5892,41 @@ def _make_default_banner(path):
         d.line([(0, y), (W, y)], fill=(int(c1[0] + (c2[0]-c1[0])*t),
                                        int(c1[1] + (c2[1]-c1[1])*t),
                                        int(c1[2] + (c2[2]-c1[2])*t)))
-    def font(sz, bold=True):
-        for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
-                  else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                  "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"):
+    def font(sz):
+        for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans-Bold.ttf"):
             try:
                 return ImageFont.truetype(p, sz)
             except Exception:
                 pass
         return ImageFont.load_default()
-    def center(text, y, f, fill=(255, 255, 255)):
-        bb = d.textbbox((0, 0), text, font=f)
-        d.text(((W - (bb[2]-bb[0])) / 2, y), text, font=f, fill=fill)
-    d.rounded_rectangle([W/2-46, 54, W/2+46, 146], radius=22, fill=(255, 255, 255))
-    center("MVS", 78, font(46), fill=(79, 70, 229))
-    center("MVS Foundation", 168, font(30))
-    center("Admission Document Update", 230, font(40))
-    center("Aapke admission ke liye ek zaroori update", 300, font(22, bold=False),
-           fill=(233, 213, 255))
+    # real MVS logo inside a clean white circle, centred
+    cx, cy, r = W // 2, 158, 84
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255))
+    try:
+        import base64, io
+        from assets import LOGO_B64
+        logo = Image.open(io.BytesIO(base64.b64decode(LOGO_B64))).convert("RGBA")
+        ls = int(r * 1.64)
+        logo = logo.resize((ls, ls))
+        mask = Image.new("L", (ls, ls), 0)
+        ImageDraw.Draw(mask).ellipse([0, 0, ls, ls], fill=255)
+        img.paste(logo, (cx - ls // 2, cy - ls // 2), mask)
+    except Exception:
+        f0 = font(46)
+        b0 = d.textbbox((0, 0), "MVS", font=f0)
+        d.text((cx - (b0[2]-b0[0]) / 2, cy - (b0[3]-b0[1]) / 2 - b0[1]), "MVS", font=f0, fill=(79, 70, 229))
+    # the only text on the banner
+    txt = "MVS Foundation Team"
+    f = font(48)
+    bb = d.textbbox((0, 0), txt, font=f)
+    d.text(((W - (bb[2]-bb[0])) / 2, 292), txt, font=f, fill=(255, 255, 255))
     img.save(path, "PNG")
 
 @app.get("/media/docreq-default.png")
 async def docreq_default_banner():
     """Default branded banner image (generated once, cached) for document requests with no
     screenshot attached. Public (no auth) so the WhatsApp gateway can fetch it."""
-    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner.png")
+    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner_v2.png")
     if not _os_docreq.path.isfile(path):
         _os_docreq.makedirs(DOCREQ_MEDIA_DIR, exist_ok=True)
         try:
