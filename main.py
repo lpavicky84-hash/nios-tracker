@@ -5834,7 +5834,7 @@ def doc_request_send(body: dict, request: Request, user=Depends(verify_token)):
     base = str(request.base_url).rstrip("/")
     if base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
         base = "https://" + base[len("http://"):]
-    default_img = f"{base}/media/docreq-default.png"
+    default_img = f"{base}/media/docreq-banner-v3.png"
     send_all = bool(body.get("all"))
     keys = [k for k in (body.get("row_keys", []) or []) if k][:500]
     conn = get_db()
@@ -5922,18 +5922,19 @@ def _make_default_banner(path):
     d.text(((W - (bb[2]-bb[0])) / 2, 292), txt, font=f, fill=(255, 255, 255))
     img.save(path, "PNG")
 
-@app.get("/media/docreq-default.png")
+@app.get("/media/docreq-banner-v3.png")
 async def docreq_default_banner():
-    """Default branded banner image (generated once, cached) for document requests with no
-    screenshot attached. Public (no auth) so the WhatsApp gateway can fetch it."""
-    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner_v2.png")
+    """Default branded banner image (regenerated when missing) for document requests with no
+    screenshot attached. Public (no auth) so the WhatsApp gateway can fetch it. The versioned
+    URL (v3) forces WhatsApp/AiSensy to fetch the new image instead of a cached old one."""
+    path = _os_docreq.path.join(DOCREQ_MEDIA_DIR, "_default_banner_v3.png")
     if not _os_docreq.path.isfile(path):
         _os_docreq.makedirs(DOCREQ_MEDIA_DIR, exist_ok=True)
         try:
             _make_default_banner(path)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"banner generation failed: {e}")
-    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
 
 @app.post("/api/doc-request-image")
 async def doc_request_image(request: Request, row_key: str = Form(...),
