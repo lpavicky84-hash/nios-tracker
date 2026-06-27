@@ -3363,7 +3363,7 @@ async function loadWa(){
         '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)"><b style="font-size:12px;color:var(--muted)">Document-Required reminder</b></div>'+
         row("Reminder &middot; main (On Demand/Stream 2)",rc.main)+row("Reminder &middot; public",rc.public);
     }
-  }catch(e){}
+  }catch(e){const cfg=document.getElementById("wa-config");if(cfg)cfg.innerHTML='<span style="color:var(--danger)">&#10007; Could not load WhatsApp settings: '+(e.message||e)+'. Refresh to retry.</span>';}
   try{const w=await api("/api/webhook-url");const el=document.getElementById("wh-url");if(el)el.value=w.url||"";}catch(e){}
 }
 function copyWebhook(btn){
@@ -5700,11 +5700,14 @@ async def doc_request_save(body: dict, user=Depends(verify_token)):
 
 
 @app.post("/api/doc-request-send")
-async def doc_request_send(body: dict, request: Request, user=Depends(verify_token)):
+def doc_request_send(body: dict, request: Request, user=Depends(verify_token)):
     """Send the reviewed document-request WhatsApp message to selected (or all pending)
     Document-Required students. Routes per session (public -> public API; others -> main API).
     Uses ONE universal image-header template: sends the uploaded screenshot when present,
-    otherwise the default MVS banner. Marks each as sent so it isn't messaged twice."""
+    otherwise the default MVS banner. Marks each as sent so it isn't messaged twice.
+    NOTE: this is a *sync* endpoint on purpose — the AiSensy HTTP calls are blocking, so running
+    them in FastAPI's threadpool keeps the event loop free (otherwise the whole app freezes and
+    even the banner image can't be served back to AiSensy while a send is in progress)."""
     if get_setting("wa_required_enabled", "0") != "1":
         raise HTTPException(status_code=400, detail="Document-request reminders are turned OFF in Settings — turn them on first.")
     import whatsapp
