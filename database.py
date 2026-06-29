@@ -181,6 +181,15 @@ def init_db():
         except Exception:
             pass
 
+    # "Both" system removed: a student belongs to ONE data source. Any student already
+    # transferred to the Portal (legacy cross_dup=1) becomes MVS Portal data. Idempotent —
+    # affects 0 rows once migrated, so it is safe to run on every startup.
+    try:
+        c.execute("UPDATE student_status SET source='mvs_portal' "
+                  "WHERE COALESCE(cross_dup,0)=1 AND COALESCE(source,'')!='mvs_portal'")
+    except Exception:
+        pass
+
     # Settings table for interval config
     c.execute("""
         CREATE TABLE IF NOT EXISTS settings (

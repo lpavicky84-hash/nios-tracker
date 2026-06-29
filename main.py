@@ -648,7 +648,7 @@ function applySidebarPref(){
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
-            <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
+            <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="s-datepreset" onchange="onDatePreset('s',()=>loadStudents(1))">
               <option value="">All dates</option>
               <option value="today">Today</option>
@@ -713,7 +713,7 @@ function applySidebarPref(){
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
-            <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
+            <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="c-datepreset" onchange="onDatePreset('c',()=>loadConfirmed(1))">
               <option value="">All dates</option>
               <option value="today">Today</option>
@@ -800,7 +800,7 @@ function applySidebarPref(){
               <option>Document Required</option>
             </select>
             <select id="r-session" onchange="loadRequired(1)"><option value="">All Sessions</option></select>
-            <select id="r-source" onchange="loadRequired(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
+            <select id="r-source" onchange="loadRequired(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <button class="btn btn-primary btn-sm" onclick="runRequired(this)">
               <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               Re-check Required</button>
@@ -851,7 +851,7 @@ function applySidebarPref(){
             Use <b>Re-check all (auto-fix)</b> below to apply this to the current list in one go.</p>
           <div class="filter-bar">
             <input type="text" id="f-search" placeholder="Search name / reference / email..." oninput="debounceFailed()">
-            <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
+            <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <button class="btn btn-outline btn-sm" onclick="loadFailed(1)">Refresh</button>
             <button class="btn btn-success btn-sm" id="f-runall-btn" onclick="runAllFailed(this)" title="Re-run every failed student with auto-retry + DOB date/month auto-swap">&#8635; Re-check all (auto-fix)</button>
           </div>
@@ -911,7 +911,7 @@ function applySidebarPref(){
               <option>Approved</option><option>Rejected</option>
               <option>Unknown</option><option>Fetch Error</option>
             </select>
-            <select id="h-source" onchange="loadHistory(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option><option value="both">Both (Tracker + Portal)</option></select>
+            <select id="h-source" onchange="loadHistory(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <input id="h-search" type="text" placeholder="Search name / reference / email…" oninput="histSearchDebounced()"
               style="padding:9px 12px;border:2px solid var(--border);border-radius:9px;font-size:13.5px;min-width:230px">
             <button class="btn btn-outline btn-sm" onclick="exportHistory()">
@@ -972,7 +972,7 @@ function applySidebarPref(){
             <h3>Transfer Data — Tracker &#8594; Portal</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn btn-primary btn-sm" id="tr-match-btn" onclick="matchTransfers(this)" title="Match Portal data to your already-checked Tracker data by Reference No and push it to the Portal WITHOUT using CapSolver">&#9889; Match &amp; Transfer (no CapSolver)</button>
-              <button class="btn btn-success btn-sm" id="tr-sync-btn" onclick="syncTransfers(this)" title="Push the current status of every matched (Both) student to MVS Portal now">&#8635; Sync matched to Portal</button>
+              <button class="btn btn-success btn-sm" id="tr-sync-btn" onclick="syncTransfers(this)" title="Push the current status of every transferred Portal student to MVS Portal now">&#8635; Sync matched to Portal</button>
             </div>
           </div>
           <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
@@ -1842,7 +1842,7 @@ async function loadDashboard(){
       statCard("In Verification",c.doc_verification||0,SI.loader,"#D97706");
     renderDistribution(d.status_distribution,d.total_students);
     renderSessionCounts(d.session_counts||[]);
-    renderSourceCounts(d.source_counts||[]);
+    renderSourceCounts(d.source_counts||[], d.transfer_count||0);
     // Recent Runs is now a scrollable list (no page/limit dropdown) — load a healthy
     // window and let the user scroll; ~7-8 rows are visible at a time.
     try{const rr=await api("/api/run-logs?limit=30");renderRuns(rr,"recent-runs");}
@@ -1869,13 +1869,22 @@ function renderSessionCounts(arr){
         cell("Required",s.required,"#EA580C")+
       '</div></div>').join("")+'</div>';
 }
-function renderSourceCounts(arr){
+function renderSourceCounts(arr,tcount){
   const el=document.getElementById("source-counts");
   if(!el)return;
   if(!arr.length){el.innerHTML="";return;}
   const cell=(label,val,color)=>'<div style="text-align:center;flex:1;min-width:0">'+
     '<div style="font-size:17px;font-weight:800;color:'+color+';line-height:1.1">'+(val||0)+'</div>'+
     '<div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">'+label+'</div></div>';
+  var transferCard='<div style="padding:15px 16px;background:var(--soft);border:1px solid var(--border);border-radius:13px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
+      '<span style="font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px">'+
+        '<span style="width:9px;height:9px;border-radius:50%;background:#16A34A;display:inline-block;flex:none"></span>Tracker \u2192 Portal Transfer</span>'+
+      '<span style="font-size:12.5px;color:var(--muted);font-weight:600">Total&nbsp;<b style="color:var(--text);font-size:17px">'+(tcount||0)+'</b></span></div>'+
+    '<div style="display:flex;align-items:center;gap:8px;padding-top:11px;border-top:1px solid var(--border);font-size:11.5px;color:var(--muted)">'+
+      '<span style="flex:1">Already-checked students pushed to the Portal (no CapSolver, no duplicates).</span>'+
+      '<button onclick="nav(&quot;transfers&quot;)" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">View</button>'+
+    '</div></div>';
   el.innerHTML='<div style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">By Data Source</div>'+
     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-bottom:18px">'+
     arr.map(s=>{
@@ -1897,7 +1906,7 @@ function renderSourceCounts(arr){
           cell("Active",s.active,"#7C3AED")+
           cell("Required",s.required,"#EA580C")+
         '</div>'+pnrow+'</div>';
-    }).join("")+'</div>'+
+    }).join("")+transferCard+'</div>'+
     '<div style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">By Session</div>';
   updatePnTimer();
 }
@@ -2030,10 +2039,6 @@ function badge(s){
   return '<span class="badge '+(m[s]||'b-error')+'">'+(s||'Unknown')+'</span>';
 }
 function srcBadge(s){
-  var dup=(s.cross_dup==1||s.cross_dup===true);
-  if(dup){
-    return '<span title="This student exists in BOTH MVS Tracker and MVS Portal — merged into one record" style="display:inline-block;white-space:nowrap;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:linear-gradient(135deg,#EDE9FE,#E0F2FE);color:#5B21B6;border:1px solid #C4B5FD">&#8651; Both (Tracker + Portal)</span>';
-  }
   var p=(s.source||"mvs_tracker")==="mvs_portal";
   return '<span style="display:inline-block;white-space:nowrap;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;'+
     (p?'background:#EDE9FE;color:#5B21B6':'background:#E0F2FE;color:#075985')+'">'+
@@ -2890,7 +2895,7 @@ async function removeStalePortal(btn){
   }catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.textContent="Move selected to Trash";}}
 }
 async function syncTransfers(btn){
-  if(!confirm("Push the current status of every matched (Both) student to MVS Portal now?\\n\\nThis re-sends each Both-student's latest NIOS status + document links to the portal and logs them as Manual transfers."))return;
+  if(!confirm("Push the current status of every transferred Portal student to MVS Portal now?\\n\\nThis re-sends each transferred student's latest NIOS status + document links to the portal and logs them as Manual transfers."))return;
   const old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Syncing\u2026";}
   try{
@@ -2943,7 +2948,7 @@ function _updMatchBar(p){
   const sub=document.getElementById("tm-sub");if(sub)sub.textContent=txt;
 }
 async function matchTransfers(btn){
-  if(!confirm("Match live MVS Portal students to your already-checked Tracker data by Reference No, and push their status to the Portal WITHOUT using CapSolver?\\n\\nMatched = status pushed now + marked Both (managed as Portal, still re-checked normally). Unmatched = left for New Fetch."))return;
+  if(!confirm("Match live MVS Portal students to your already-checked Tracker data by Reference No, and push their status to the Portal WITHOUT using CapSolver?\\n\\nMatched = status pushed now + moved to Portal data (still re-checked normally). Unmatched = left for New Fetch."))return;
   const old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Matching\u2026";}
   const box=document.getElementById("tr-match-result");
@@ -3814,12 +3819,9 @@ async def dashboard(user=Depends(verify_token)):
         f"SELECT student_name, reference_no, remark FROM student_status WHERE {ND} AND current_status='Document Required' ORDER BY last_changed DESC LIMIT 50"
     ).fetchall()
 
-    # Cross-source duplicates: same student present in BOTH MVS Portal & MVS Tracker
-    # (kept once, as MVS Portal). Surfaced in the bell so the counsellor is aware.
-    dup_notifs = conn.execute(
-        f"SELECT student_name, reference_no, enrollment_no FROM student_status "
-        f"WHERE {ND} AND COALESCE(cross_dup,0)=1 ORDER BY student_name LIMIT 50"
-    ).fetchall()
+    # "Both" (cross-source) system removed: a student now belongs to ONE data source
+    # (transferred students are Portal). No cross-source duplicate notification is shown.
+    dup_notifs = []
 
     # Failed-to-run students: NIOS login failed OR status check failed -> need edit/re-run
     login_issues = conn.execute(
@@ -3863,6 +3865,13 @@ async def dashboard(user=Depends(verify_token)):
         f"FROM student_status WHERE {ND} AND {NFAIL} GROUP BY source"
     ).fetchall()
 
+    # How many students have been transferred Tracker -> Portal (distinct, no duplicates) —
+    # surfaced as a small card on the dashboard so the count is visible at a glance.
+    try:
+        transfer_count = conn.execute("SELECT COUNT(DISTINCT row_key) FROM transfer_log").fetchone()[0] or 0
+    except Exception:
+        transfer_count = 0
+
     conn.close()
     _nexts = [j.next_run_time for j in (scheduler.get_job(jid) for _g, jid, _d in RUN_GROUPS)
               if j and j.next_run_time]
@@ -3882,6 +3891,7 @@ async def dashboard(user=Depends(verify_token)):
         "login_issues": [dict(li) for li in login_issues],
         "session_counts": _normalized_session_counts(sess_counts),
         "source_counts": _normalized_source_counts(src_counts),
+        "transfer_count": transfer_count,
     }
 
 def _normalized_source_counts(raw_rows):
@@ -4485,7 +4495,7 @@ def _do_transfer_match():
     conn = get_db(); c = conn.cursor()
     for i, t in enumerate(okrows):
         trow = t["trow"]; rk = trow["row_key"]; status = t["status"]
-        c.execute("UPDATE student_status SET cross_dup=1 WHERE row_key=?", (rk,))
+        c.execute("UPDATE student_status SET source='mvs_portal', cross_dup=1 WHERE row_key=?", (rk,))
         c.execute("DELETE FROM transfer_log WHERE row_key=? AND mode='manual'", (rk,))
         c.execute("""INSERT INTO transfer_log
             (row_key, reference_no, enrollment_no, student_name, mobile, session,
