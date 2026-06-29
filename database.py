@@ -172,6 +172,7 @@ def init_db():
                       ("required_notified_at", "TEXT"),
                       ("required_msg", "TEXT"),
                       ("required_img", "TEXT"),
+                      ("no_recheck", "INTEGER DEFAULT 0"),
                       ("deleted", "INTEGER DEFAULT 0"),
                       ("deleted_at", "TEXT")):
         try:

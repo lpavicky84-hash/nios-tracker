@@ -969,12 +969,16 @@ function applySidebarPref(){
         <div class="card">
           <div class="card-head">
             <h3>Transfer Data — Tracker &#8594; Portal</h3>
-            <button class="btn btn-success btn-sm" id="tr-sync-btn" onclick="syncTransfers(this)" title="Push the current status of every matched (Both) student to MVS Portal now">&#8635; Sync matched to Portal</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm" id="tr-match-btn" onclick="matchTransfers(this)" title="Match Portal data to your already-checked Tracker data by Reference No and push it to the Portal WITHOUT using CapSolver">&#9889; Match &amp; Transfer (no CapSolver)</button>
+              <button class="btn btn-success btn-sm" id="tr-sync-btn" onclick="syncTransfers(this)" title="Push the current status of every matched (Both) student to MVS Portal now">&#8635; Sync matched to Portal</button>
+            </div>
           </div>
-          <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
-            Every student that existed in <b>MVS Tracker</b> and was then matched to <b>MVS Portal</b> appears here — it now lives in
-            <b>Both</b> and is run/managed as Portal, with its status pushed to the portal. Shows the status it had before (Old)
-            vs after the Portal check (New), so you can see exactly which &amp; how many records moved.</p>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
+            <b>Match &amp; Transfer</b> matches your already-checked Tracker data to the Portal <b>by Reference No</b> and pushes the
+            status across <b>without using CapSolver</b> — so data you already checked never costs credits again. Unmatched students
+            are listed with a reason and are left for the normal <b>New Fetch</b>. Every transfer is logged below (Old &#8594; New status).</p>
+          <div id="tr-match-result" style="margin-bottom:10px"></div>
           <div class="filter-bar">
             <input id="tr-search" type="text" placeholder="Master search — name / reference / enrollment / mobile…" oninput="trSearchDebounced()"
               style="padding:9px 12px;border:2px solid var(--border);border-radius:9px;font-size:13.5px;min-width:280px">
@@ -984,6 +988,7 @@ function applySidebarPref(){
               <option value="manual">Manual (Sync button)</option>
             </select>
             <button class="btn btn-outline btn-sm" onclick="loadTransfers(1)">Refresh</button>
+            <button class="btn btn-outline btn-sm" onclick="downloadTransfers()" title="Download the Transfer Data sheet (.xlsx)">&#11015; Download sheet</button>
           </div>
           <div id="tr-count" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
           <div style="overflow-x:auto">
@@ -2750,6 +2755,7 @@ let transPerPage=10,_trSearchT=null;
 function trSearchDebounced(){clearTimeout(_trSearchT);_trSearchT=setTimeout(()=>loadTransfers(1),350);}
 async function loadTransfers(page){
   page=page||1;
+  loadLastMatch();
   const q=new URLSearchParams({page:page,per_page:transPerPage,
     search:fval("tr-search"),mode:fval("tr-mode")});
   try{
@@ -2872,6 +2878,57 @@ async function syncTransfers(btn){
     loadTransfers(1);
   }catch(e){showToast(""+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+function renderMatchResult(r){
+  const box=document.getElementById("tr-match-result");
+  if(!box||!r||!r.ok)return;
+  const esc=(v)=>(""+(v==null?"":v)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  let html='<div style="background:var(--primary-light);border:1px solid var(--primary);border-radius:10px;padding:12px 14px">'+
+    '<div style="font-weight:700;color:var(--primary-dark)">\u2713 '+(r.transferred||0)+' transferred to Portal (no CapSolver used)'+(r.at?' \u00b7 <span style="font-weight:500;color:var(--muted);font-size:12px">'+esc(r.at)+'</span>':'')+'</div>'+
+    '<div style="font-size:13px;color:var(--muted);margin-top:2px">'+(r.new_fetch||0)+' student(s) not transferred \u2014 will be picked up by New Fetch.</div></div>';
+  const nm=r.not_matched||[];
+  if(nm.length){
+    html+='<div style="margin-top:12px;font-weight:600;font-size:13.5px">Not transferred yet \u2014 reason ('+nm.length+'):</div>'+
+      '<div style="overflow-x:auto;margin-top:6px;max-height:340px;overflow-y:auto"><table><thead><tr><th>Student</th><th>Reference No</th><th>Why not checked</th></tr></thead><tbody>';
+    nm.forEach(function(x){
+      html+='<tr><td>'+esc(x.student_name||"\u2014")+'</td><td>'+esc(x.reference_no||"\u2014")+'</td>'+
+        '<td style="color:var(--warn);font-size:12.5px">'+esc(x.reason||"")+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+  box.innerHTML=html;
+}
+async function loadLastMatch(){
+  try{const r=await api("/api/transfer-match-last");if(r&&r.ok)renderMatchResult(r);}catch(e){}
+}
+async function matchTransfers(btn){
+  if(!confirm("Match live MVS Portal students to your already-checked Tracker data by Reference No, and push their status to the Portal WITHOUT using CapSolver?\\n\\nMatched = status pushed now + marked Both (managed as Portal, still re-checked normally). Unmatched = left for New Fetch."))return;
+  const old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Matching\u2026";}
+  const box=document.getElementById("tr-match-result");
+  if(box)box.innerHTML='<div style="color:var(--muted);font-size:13px">Working\u2026 fetching Portal data and matching by Reference No.</div>';
+  try{
+    const r=await api("/api/transfer-match","POST");
+    showToast(r.message||"Done");
+    renderMatchResult(r);
+    loadTransfers(1);
+  }catch(e){
+    showToast(""+e.message);
+    if(box)box.innerHTML='<div style="color:var(--danger);font-size:13px">Error: '+(""+e.message).replace(/</g,"&lt;")+'</div>';
+  }
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function downloadTransfers(){
+  const q=new URLSearchParams();
+  const s=document.getElementById("tr-search");if(s&&s.value)q.set("search",s.value);
+  const m=document.getElementById("tr-mode");if(m&&m.value)q.set("mode",m.value);
+  try{
+    const r=await fetch(API+"/api/transfers-download?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
+    if(!r.ok){showToast("Download failed");return;}
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download="mvs_transfer_data.xlsx";a.click();
+    URL.revokeObjectURL(url);
+  }catch(e){showToast(""+e.message);}
 }
 
 const drop=document.getElementById("drop");
@@ -4258,6 +4315,145 @@ async def transfer_sync(user=Depends(verify_token)):
             logger.warning(f"transfer-sync push failed {rk}: {e}")
     conn.commit(); conn.close()
     return {"message": f"Synced {pushed} matched student(s) to MVS Portal.", "count": pushed}
+
+def _do_transfer_match():
+    """Worker (runs in a threadpool): match every live MVS Portal student to an ALREADY-CHECKED
+    Tracker student by Reference No, and push the existing Tracker status + document links to the
+    Portal WITHOUT running a fresh CapSolver check. Each match is logged as a Manual transfer.
+    Portal students with no usable checked Tracker record are returned in 'not_matched' (with a
+    reason) and are left for the normal New Fetch run."""
+    import mvs_sync
+    try:
+        portal = mvs_sync.fetch_students_for_tracker(include_done=True)
+    except Exception as e:
+        return {"ok": False, "message": f"Could not reach MVS Portal: {e}",
+                "transferred": 0, "new_fetch": 0, "not_matched": []}
+    if not portal:
+        return {"ok": False, "message": "MVS Portal returned 0 students — try again later.",
+                "transferred": 0, "new_fetch": 0, "not_matched": []}
+    conn = get_db(); c = conn.cursor()
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    BAD = ("", "unknown", "fetch error")
+    transferred = 0
+    not_matched = []
+    for p in portal:
+        ref  = (p.get("reference_no") or "").strip()
+        sid  = (p.get("student_id") or "").strip()
+        name = (p.get("student_name") or "").strip() or "—"
+        rk_p = p.get("row_key", "")
+        # Locate an already-checked Tracker student for this Portal student — Reference No first.
+        trow = None
+        if ref:
+            trow = c.execute(
+                "SELECT * FROM student_status WHERE reference_no=? AND COALESCE(deleted,0)=0 "
+                "ORDER BY (current_status IS NOT NULL AND "
+                "current_status NOT IN ('','Unknown','Fetch Error')) DESC, last_checked DESC LIMIT 1",
+                (ref,)).fetchone()
+        if not trow and rk_p:
+            trow = c.execute("SELECT * FROM student_status WHERE row_key=? AND COALESCE(deleted,0)=0",
+                             (rk_p,)).fetchone()
+        status = ((trow["current_status"] if trow else "") or "").strip()
+        if not sid:
+            not_matched.append({"student_name": name, "reference_no": ref,
+                                "reason": "Portal record has no studentId — cannot push"}); continue
+        if not trow:
+            not_matched.append({"student_name": name, "reference_no": ref,
+                                "reason": "Not on Tracker / no Reference match — will run in New Fetch"}); continue
+        if status.lower() in BAD:
+            not_matched.append({"student_name": name, "reference_no": ref,
+                                "reason": f"Tracker status still '{status or 'blank'}' — will run in New Fetch"}); continue
+        rk = trow["row_key"]
+        student = {"student_id": sid, "row_key": rk,
+                   "reference_no": trow["reference_no"] or ref,
+                   "enrollment_no": trow["enrollment_no"] or "",
+                   "session": trow["session"] or "", "remark": trow["remark"] or ""}
+        try:
+            mvs_sync.push_student(student, status, conn)
+            c.execute("UPDATE student_status SET cross_dup=1 WHERE row_key=?", (rk,))
+            c.execute("""INSERT INTO transfer_log
+                (row_key, reference_no, enrollment_no, student_name, mobile, session,
+                 old_status, new_status, transferred_at, mode)
+                VALUES (?,?,?,?,?,?,?,?,?,'manual')""",
+                (rk, trow["reference_no"] or ref, trow["enrollment_no"] or "",
+                 trow["student_name"] or name, trow["mobile"] or "", trow["session"] or "",
+                 status, status, now_s))
+            transferred += 1
+        except Exception as e:
+            not_matched.append({"student_name": name, "reference_no": ref,
+                                "reason": f"Push failed: {e}"})
+    conn.commit(); conn.close()
+    msg = (f"Transferred {transferred} already-checked student(s) to Portal — no CapSolver used. "
+           f"{len(not_matched)} left for New Fetch.")
+    result = {"ok": True, "message": msg, "transferred": transferred,
+              "new_fetch": len(not_matched), "not_matched": not_matched[:1000]}
+    try:
+        import json as _json
+        set_setting("last_transfer_match", _json.dumps({**result, "at": now_s}))
+    except Exception:
+        pass
+    return result
+
+
+@app.post("/api/transfer-match")
+async def transfer_match(user=Depends(verify_token)):
+    """Match live MVS Portal students to ALREADY-CHECKED Tracker students by Reference No and push
+    the existing Tracker status + document links to the Portal WITHOUT a fresh CapSolver check — so
+    data you already checked on the Tracker never burns CapSolver credits again. Matches are logged
+    as Manual transfers; the rest are returned (with a reason) and left for the normal New Fetch."""
+    import mvs_sync
+    from fastapi.concurrency import run_in_threadpool
+    if not mvs_sync.enabled():
+        raise HTTPException(status_code=400, detail="MVS Portal bridge is not enabled (set MVS_MODE).")
+    return await run_in_threadpool(_do_transfer_match)
+
+
+@app.get("/api/transfers-download")
+async def transfers_download(search: str = "", mode: str = "", user=Depends(verify_token)):
+    """Download the Transfer Data (Tracker -> Portal) log as an .xlsx sheet."""
+    import io, openpyxl
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    conn = get_db()
+    wc, params = [], []
+    if search:
+        like = f"%{search.strip()}%"
+        wc.append("(student_name LIKE ? OR reference_no LIKE ? OR enrollment_no LIKE ? OR mobile LIKE ?)")
+        params += [like, like, like, like]
+    if mode in ("auto", "manual"):
+        wc.append("mode=?"); params.append(mode)
+    where = ("WHERE " + " AND ".join(wc)) if wc else ""
+    rows = conn.execute(f"SELECT * FROM transfer_log {where} ORDER BY id DESC", params).fetchall()
+    conn.close()
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Transfer Data"
+    ws.append(["#", "Student", "Reference No", "Enroll No", "Mobile", "Session",
+               "Old Status", "New Status", "Transferred At", "Mode"])
+    for i, r in enumerate(rows, 1):
+        ws.append([i, r["student_name"] or "", r["reference_no"] or "", r["enrollment_no"] or "",
+                   r["mobile"] or "", r["session"] or "", r["old_status"] or "",
+                   r["new_status"] or "", r["transferred_at"] or "", r["mode"] or ""])
+    fill = PatternFill("solid", fgColor="4F46E5")
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF"); cell.fill = fill
+    for idx, w in enumerate([5, 24, 18, 16, 14, 14, 24, 24, 20, 10], 1):
+        ws.column_dimensions[get_column_letter(idx)].width = w
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=mvs_transfer_data.xlsx"})
+
+@app.get("/api/transfer-match-last")
+async def transfer_match_last(user=Depends(verify_token)):
+    """The most recent Match & Transfer result, so the 'not transferred / why' list stays
+    visible on the Transfer Data page even after a page refresh."""
+    import json as _json
+    raw = get_setting("last_transfer_match", "")
+    if not raw:
+        return {"ok": False}
+    try:
+        return _json.loads(raw)
+    except Exception:
+        return {"ok": False}
 
 @app.get("/api/portal-stale")
 async def portal_stale(user=Depends(verify_token)):
