@@ -2,7 +2,7 @@ import os
 import logging
 import requests
 
-from excel_handler import canonicalize_session
+from excel_handler import canonicalize_session, normalize_toc
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,8 @@ def fetch_students_for_tracker(session=None, include_done=False):
                               or s.get("whatsappNumber") or s.get("alternate_number") or "").strip(),
             "session": canonicalize_session(str(s.get("examSession") or "").strip()), "row_key": rk,
             "student_id": str(s.get("studentId") or "").strip(),
+            "toc_status": normalize_toc(s.get("tocStatus") or s.get("tocstatus")
+                                        or s.get("toc_status") or s.get("toc") or ""),
         })
     logger.info(f"MVS: fetched {len(rows)} students")
     return rows

@@ -5147,19 +5147,19 @@ async def sample_sheet(type: str = "regular", user=Depends(verify_token)):
     ws = wb.active
     ws.title = "Students"
     headers = ["STUDENT NAME", "MOBILE NO", "ALTERNATE NUMBER (optional)", "CLASS", "REFERENCE NUMBER", "Enrol No", "Email",
-               "Date of Birth", "ADMISSION SESSION", "ADMISSION STATUS", "REMARKS",
+               "Date of Birth", "ADMISSION SESSION", "tocStatus", "ADMISSION STATUS", "REMARKS",
                "DOWNLOAD ID CARD", "DOWNLOAD APPLICATION FORM", "HALL TICKET"]
     ws.append(headers)
     if type == "syc":
         rows = [
-            ["AYUSH KUMAR", "9876543210", "9988776655", "12TH", "", "220004253089", "", "19-06-2006", "SYC"],
-            ["PETER RANA", "7428240153", "", "12TH", "", "50258253204", "peter@example.com", "17-05-2001", "SYC"],
+            ["AYUSH KUMAR", "9876543210", "9988776655", "12TH", "", "220004253089", "", "19-06-2006", "SYC", ""],
+            ["PETER RANA", "7428240153", "", "12TH", "", "50258253204", "peter@example.com", "17-05-2001", "SYC", ""],
         ]
     else:
         rows = [
-            ["SABBA NOOR", "6205148930", "8123456789", "12TH", "D1026300062", "", "", "05-02-2010", "On Demand"],
-            ["DEVRAJ JAT", "7737485139", "", "10TH", "B0926200020", "", "", "01-07-2004", "Stream 2"],
-            ["SANA PARWEEN", "9523534252", "9012345678", "12TH", "A1026300040", "", "sana@example.com", "28-02-2009", "April"],
+            ["SABBA NOOR", "6205148930", "8123456789", "12TH", "D1026300062", "", "", "05-02-2010", "On Demand", "yes"],
+            ["DEVRAJ JAT", "7737485139", "", "10TH", "B0926200020", "", "", "01-07-2004", "Stream 2", "no"],
+            ["SANA PARWEEN", "9523534252", "9012345678", "12TH", "A1026300040", "", "sana@example.com", "28-02-2009", "April", ""],
         ]
     for r in rows:
         ws.append(r)

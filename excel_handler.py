@@ -111,6 +111,18 @@ def canonicalize_session(raw):
         return month
     return t        # genuinely unknown — keep as typed
 
+def normalize_toc(v):
+    """Bulletproof TOC-status reader. Returns 'yes' or 'no' (lowercase) from any reasonable
+    spelling/format, else '' (unknown). '' is treated as 'yes' at send time = current behaviour,
+    so existing data never breaks. Accepts: yes/y/true/1/with toc | no/n/false/0/non toc ..."""
+    s = str(v if v is not None else "").strip().lower().replace("_", " ").replace("-", " ")
+    s = " ".join(s.split())   # collapse internal spaces
+    if s in ("yes", "y", "true", "1", "1.0", "toc", "yes toc", "toc yes", "with toc", "took toc"):
+        return "yes"
+    if s in ("no", "n", "false", "0", "0.0", "non toc", "no toc", "without toc", "nontoc", "not toc"):
+        return "no"
+    return ""
+
 def _clean(val):
     if not val:
         return ""
@@ -152,6 +164,7 @@ def read_students_from_excel(filepath):
     session_col = _find_col(hc, ["admission session", "session"])
     enroll_col  = _find_col(hc, ["enrollment number", "enrolment number", "enrollment no",
                                  "enrolment no", "enrol no", "enroll no", "enrol", "enrolment", "enrollment"])
+    toc_col     = _find_col(hc, ["tocstatus", "toc status", "toc"])
 
     logger.info(f"Cols ref:{ref_col} name:{name_col} email:{email_col} dob:{dob_col} session:{session_col} enroll:{enroll_col}")
 
@@ -217,6 +230,7 @@ def read_students_from_excel(filepath):
             "student_name": cell(row, name_col),
             "mobile":       cell(row, mobile_col),
             "alt_mobile":   cell(row, alt_col),
+            "toc_status":   normalize_toc(cell(row, toc_col)),
             "class_level":  cell(row, class_col),
             "session":      session_cell(row, session_col),
             "source":       source,
