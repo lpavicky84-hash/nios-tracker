@@ -2901,41 +2901,46 @@ function renderMatchResult(r){
 async function loadLastMatch(){
   try{const r=await api("/api/transfer-match-last");if(r&&r.ok)renderMatchResult(r);}catch(e){}
 }
-let _matchPollTimer=null;
-async function pollMatchProgress(){
-  try{
-    const p=await api("/api/transfer-match-progress");
-    const pct=(p.total>0)?Math.round(p.done*100/p.total):0;
-    const fill=document.getElementById("tm-fill");if(fill)fill.style.width=pct+"%";
-    const pe=document.getElementById("tm-pct");if(pe)pe.textContent=(p.phase==="Matching")?(pct+"%"):"\u2026";
-    const sub=document.getElementById("tm-sub");
-    if(sub)sub.textContent=(p.phase==="Matching")?(p.done+" / "+p.total+" checked \u00b7 "+p.transferred+" transferred"):"Fetching Portal data\u2026";
-  }catch(e){}
+function _matchBarHTML(){
+  return '<div style="background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px">'+
+    '<div style="font-weight:600;font-size:13.5px">Match &amp; Transfer running\u2026 <span id="tm-pct">\u2026</span></div>'+
+    '<div style="height:9px;background:var(--border);border-radius:6px;overflow:hidden;margin-top:8px"><div id="tm-fill" style="height:100%;width:0%;background:var(--primary);transition:width .3s"></div></div>'+
+    '<div id="tm-sub" style="font-size:12px;color:var(--muted);margin-top:6px">Starting\u2026</div></div>';
+}
+function _updMatchBar(p){
+  const pct=(p.total>0)?Math.round(p.done*100/p.total):0;
+  const fill=document.getElementById("tm-fill");if(fill)fill.style.width=pct+"%";
+  const pe=document.getElementById("tm-pct");if(pe)pe.textContent=(p.phase==="Matching")?(pct+"%"):"\u2026";
+  const sub=document.getElementById("tm-sub");
+  if(sub)sub.textContent=(p.phase==="Matching")?(p.done+" / "+p.total+" checked \u00b7 "+p.transferred+" transferred"):((p.phase||"Working")+"\u2026");
 }
 async function matchTransfers(btn){
   if(!confirm("Match live MVS Portal students to your already-checked Tracker data by Reference No, and push their status to the Portal WITHOUT using CapSolver?\\n\\nMatched = status pushed now + marked Both (managed as Portal, still re-checked normally). Unmatched = left for New Fetch."))return;
   const old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Matching\u2026";}
   const box=document.getElementById("tr-match-result");
-  if(box)box.innerHTML='<div style="background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px">'+
-    '<div style="font-weight:600;font-size:13.5px">Match &amp; Transfer running\u2026 <span id="tm-pct">\u2026</span></div>'+
-    '<div style="height:9px;background:var(--border);border-radius:6px;overflow:hidden;margin-top:8px"><div id="tm-fill" style="height:100%;width:0%;background:var(--primary);transition:width .3s"></div></div>'+
-    '<div id="tm-sub" style="font-size:12px;color:var(--muted);margin-top:6px">Fetching Portal data\u2026</div></div>';
-  if(_matchPollTimer)clearInterval(_matchPollTimer);
-  _matchPollTimer=setInterval(pollMatchProgress,700);pollMatchProgress();
+  if(box)box.innerHTML=_matchBarHTML();
   try{
-    const r=await api("/api/transfer-match","POST");
-    showToast(r.message||"Done");
-    renderMatchResult(r);
-    loadTransfers(1);
+    const start=await api("/api/transfer-match","POST");
+    if(start&&start.started===false){showToast(start.message||"Already running");}
+    let guard=0;
+    while(guard++<4000){
+      await new Promise(r=>setTimeout(r,800));
+      let p;
+      try{p=await api("/api/transfer-match-progress");}catch(e){continue;}
+      _updMatchBar(p);
+      if(p.finished){
+        if(p.error){if(box)box.innerHTML='<div style="color:var(--danger);font-size:13px">Error: '+(""+p.error).replace(/</g,"&lt;")+'</div>';showToast("Error: "+p.error);}
+        else if(p.result){showToast(p.result.message||"Done");renderMatchResult(p.result);loadTransfers(1);}
+        break;
+      }
+      if(!p.running&&!p.finished&&guard>2){break;}
+    }
   }catch(e){
     showToast(""+e.message);
     if(box)box.innerHTML='<div style="color:var(--danger);font-size:13px">Error: '+(""+e.message).replace(/</g,"&lt;")+'</div>';
   }
-  finally{
-    if(_matchPollTimer){clearInterval(_matchPollTimer);_matchPollTimer=null;}
-    if(btn){btn.disabled=false;btn.textContent=old;}
-  }
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 async function downloadTransfers(){
   const q=new URLSearchParams();
@@ -4335,7 +4340,8 @@ async def transfer_sync(user=Depends(verify_token)):
     conn.commit(); conn.close()
     return {"message": f"Synced {pushed} matched student(s) to MVS Portal.", "count": pushed}
 
-_MATCH_PROGRESS = {"running": False, "phase": "", "total": 0, "done": 0, "transferred": 0}
+_MATCH_PROGRESS = {"running": False, "finished": False, "phase": "", "total": 0,
+                   "done": 0, "transferred": 0, "result": None, "error": ""}
 
 def _do_transfer_match():
     """Worker (runs in a threadpool): match every live MVS Portal student to an ALREADY-CHECKED
@@ -4344,16 +4350,13 @@ def _do_transfer_match():
     Portal students with no usable checked Tracker record are returned in 'not_matched' (with a
     reason) and are left for the normal New Fetch run. Progress is reported in _MATCH_PROGRESS."""
     import mvs_sync
-    _MATCH_PROGRESS.update({"running": True, "phase": "Fetching Portal data",
-                            "total": 0, "done": 0, "transferred": 0})
+    _MATCH_PROGRESS["phase"] = "Fetching Portal data"
     try:
         portal = mvs_sync.fetch_students_for_tracker(include_done=True)
     except Exception as e:
-        _MATCH_PROGRESS["running"] = False
         return {"ok": False, "message": f"Could not reach MVS Portal: {e}",
                 "transferred": 0, "new_fetch": 0, "not_matched": []}
     if not portal:
-        _MATCH_PROGRESS["running"] = False
         return {"ok": False, "message": "MVS Portal returned 0 students — try again later.",
                 "transferred": 0, "new_fetch": 0, "not_matched": []}
     conn = get_db(); c = conn.cursor()
@@ -4410,7 +4413,6 @@ def _do_transfer_match():
             not_matched.append({"student_name": name, "reference_no": ref,
                                 "reason": f"Push failed: {e}"})
     conn.commit(); conn.close()
-    _MATCH_PROGRESS["running"] = False
     msg = (f"Transferred {transferred} already-checked student(s) to Portal — no CapSolver used. "
            f"{len(not_matched)} left for New Fetch.")
     result = {"ok": True, "message": msg, "transferred": transferred,
@@ -4423,22 +4425,42 @@ def _do_transfer_match():
     return result
 
 
+def _run_transfer_match_bg():
+    """Background worker so the HTTP request returns instantly (a large match can take minutes —
+    holding the request open would hit the gateway timeout = HTTP 502). The UI polls progress."""
+    try:
+        res = _do_transfer_match()
+        _MATCH_PROGRESS["result"] = res
+        _MATCH_PROGRESS["error"] = "" if res.get("ok") else (res.get("message") or "")
+    except Exception as e:
+        logger.warning(f"transfer-match background error: {e}")
+        _MATCH_PROGRESS["result"] = None
+        _MATCH_PROGRESS["error"] = str(e)
+    finally:
+        _MATCH_PROGRESS["running"] = False
+        _MATCH_PROGRESS["finished"] = True
+
+
 @app.post("/api/transfer-match")
 async def transfer_match(user=Depends(verify_token)):
-    """Match live MVS Portal students to ALREADY-CHECKED Tracker students by Reference No and push
-    the existing Tracker status + document links to the Portal WITHOUT a fresh CapSolver check — so
-    data you already checked on the Tracker never burns CapSolver credits again. Matches are logged
-    as Manual transfers; the rest are returned (with a reason) and left for the normal New Fetch."""
-    import mvs_sync
-    from fastapi.concurrency import run_in_threadpool
+    """Start a Match & Transfer in the BACKGROUND and return immediately. Matching live MVS Portal
+    students to ALREADY-CHECKED Tracker students by Reference No and pushing the existing status to
+    the Portal (no CapSolver) can take minutes for large data, so it runs in a background thread
+    and the UI polls /api/transfer-match-progress for the % bar and the final result."""
+    import mvs_sync, threading
     if not mvs_sync.enabled():
         raise HTTPException(status_code=400, detail="MVS Portal bridge is not enabled (set MVS_MODE).")
-    return await run_in_threadpool(_do_transfer_match)
+    if _MATCH_PROGRESS.get("running"):
+        return {"started": False, "message": "A Match & Transfer is already running."}
+    _MATCH_PROGRESS.update({"running": True, "finished": False, "phase": "Starting",
+                            "total": 0, "done": 0, "transferred": 0, "result": None, "error": ""})
+    threading.Thread(target=_run_transfer_match_bg, daemon=True).start()
+    return {"started": True}
 
 
 @app.get("/api/transfer-match-progress")
 async def transfer_match_progress(user=Depends(verify_token)):
-    """Live progress of the running Match & Transfer (polled by the UI for the % bar)."""
+    """Live progress + final result of the running/last Match & Transfer (polled by the UI)."""
     return dict(_MATCH_PROGRESS)
 
 
