@@ -989,6 +989,7 @@ function applySidebarPref(){
             </select>
             <button class="btn btn-outline btn-sm" onclick="loadTransfers(1)">Refresh</button>
             <button class="btn btn-outline btn-sm" onclick="downloadTransfers()" title="Download the Transfer Data sheet (.xlsx)">&#11015; Download sheet</button>
+            <button class="btn btn-outline btn-sm" onclick="clearTransferLog()" title="Reset this transfer history list. Students already transferred to the Portal stay transferred — only the log is cleared.">&#128465; Clear log</button>
           </div>
           <div id="tr-count" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
           <div style="overflow-x:auto">
@@ -2753,6 +2754,14 @@ async function loadRunLogs(){
 }
 let transPerPage=10,_trSearchT=null;
 function trSearchDebounced(){clearTimeout(_trSearchT);_trSearchT=setTimeout(()=>loadTransfers(1),350);}
+async function clearTransferLog(){
+  if(!confirm("Clear the transfer history list? Students already transferred to the Portal stay transferred \u2014 only this log below is reset.")) return;
+  try{
+    const r=await api("/api/transfers-clear","POST");
+    showToast(((r&&r.deleted!=null)?r.deleted:0)+" log record(s) cleared");
+  }catch(e){showToast("Could not clear log");}
+  loadTransfers(1);
+}
 async function loadTransfers(page){
   page=page||1;
   loadLastMatch();
@@ -4308,6 +4317,19 @@ async def get_transfers(page: int = 1, per_page: int = 10, search: str = "",
     return {"items": [dict(r) for r in rows], "total": total, "page": page,
             "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page)}
 
+@app.post("/api/transfers-clear")
+async def transfers_clear(mode: str = "", user=Depends(verify_token)):
+    """Reset the Tracker -> Portal transfer log. This ONLY clears the history list — students
+    already pushed to the Portal stay transferred (their cross_dup flag is untouched). Pass
+    mode=auto|manual to clear just that kind, else the whole log is cleared."""
+    conn = get_db()
+    if mode in ("auto", "manual"):
+        n = conn.execute("DELETE FROM transfer_log WHERE mode=?", (mode,)).rowcount
+    else:
+        n = conn.execute("DELETE FROM transfer_log").rowcount
+    conn.commit(); conn.close()
+    return {"deleted": int(n or 0)}
+
 @app.post("/api/transfer-sync")
 async def transfer_sync(user=Depends(verify_token)):
     """Manually push the current NIOS status + document links of every matched (Both /
@@ -4450,6 +4472,7 @@ def _do_transfer_match():
     for i, t in enumerate(okrows):
         trow = t["trow"]; rk = trow["row_key"]; status = t["status"]
         c.execute("UPDATE student_status SET cross_dup=1 WHERE row_key=?", (rk,))
+        c.execute("DELETE FROM transfer_log WHERE row_key=? AND mode='manual'", (rk,))
         c.execute("""INSERT INTO transfer_log
             (row_key, reference_no, enrollment_no, student_name, mobile, session,
              old_status, new_status, transferred_at, mode)
