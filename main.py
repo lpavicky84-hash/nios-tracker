@@ -2883,9 +2883,10 @@ function renderMatchResult(r){
   const box=document.getElementById("tr-match-result");
   if(!box||!r||!r.ok)return;
   const esc=(v)=>(""+(v==null?"":v)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const scanned=(r.transferred||0)+(r.new_fetch||0);
   let html='<div style="background:var(--primary-light);border:1px solid var(--primary);border-radius:10px;padding:12px 14px">'+
-    '<div style="font-weight:700;color:var(--primary-dark)">\u2713 '+(r.transferred||0)+' transferred to Portal (no CapSolver used)'+(r.at?' \u00b7 <span style="font-weight:500;color:var(--muted);font-size:12px">'+esc(r.at)+'</span>':'')+'</div>'+
-    '<div style="font-size:13px;color:var(--muted);margin-top:2px">'+(r.new_fetch||0)+' student(s) not transferred \u2014 will be picked up by New Fetch.</div></div>';
+    '<div style="font-weight:700;color:var(--primary-dark)">\u2713 '+(r.transferred||0)+' matched & transferred to Portal (no CapSolver used)'+(r.at?' \u00b7 <span style="font-weight:500;color:var(--muted);font-size:12px">'+esc(r.at)+'</span>':'')+'</div>'+
+    '<div style="font-size:13px;color:var(--muted);margin-top:2px">Scanned '+scanned+' portal students \u00b7 '+(r.new_fetch||0)+' not matched (left for New Fetch).</div></div>';
   const nm=r.not_matched||[];
   if(nm.length){
     html+='<div style="margin-top:12px;font-weight:600;font-size:13.5px">Not transferred yet \u2014 reason ('+nm.length+'):</div>'+
@@ -2912,7 +2913,7 @@ function _updMatchBar(p){
   const fill=document.getElementById("tm-fill");if(fill)fill.style.width=pct+"%";
   const pe=document.getElementById("tm-pct");if(pe)pe.textContent=(p.phase==="Matching")?(pct+"%"):"\u2026";
   const sub=document.getElementById("tm-sub");
-  if(sub)sub.textContent=(p.phase==="Matching")?(p.done+" / "+p.total+" checked \u00b7 "+p.transferred+" transferred"):((p.phase||"Working")+"\u2026");
+  if(sub)sub.textContent=(p.phase==="Matching")?(p.done+" / "+p.total+" portal students scanned \u00b7 "+p.transferred+" matched & transferred"):((p.phase||"Working")+"\u2026");
 }
 async function matchTransfers(btn){
   if(!confirm("Match live MVS Portal students to your already-checked Tracker data by Reference No, and push their status to the Portal WITHOUT using CapSolver?\\n\\nMatched = status pushed now + marked Both (managed as Portal, still re-checked normally). Unmatched = left for New Fetch."))return;
