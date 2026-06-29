@@ -2901,12 +2901,28 @@ function renderMatchResult(r){
 async function loadLastMatch(){
   try{const r=await api("/api/transfer-match-last");if(r&&r.ok)renderMatchResult(r);}catch(e){}
 }
+let _matchPollTimer=null;
+async function pollMatchProgress(){
+  try{
+    const p=await api("/api/transfer-match-progress");
+    const pct=(p.total>0)?Math.round(p.done*100/p.total):0;
+    const fill=document.getElementById("tm-fill");if(fill)fill.style.width=pct+"%";
+    const pe=document.getElementById("tm-pct");if(pe)pe.textContent=(p.phase==="Matching")?(pct+"%"):"\u2026";
+    const sub=document.getElementById("tm-sub");
+    if(sub)sub.textContent=(p.phase==="Matching")?(p.done+" / "+p.total+" checked \u00b7 "+p.transferred+" transferred"):"Fetching Portal data\u2026";
+  }catch(e){}
+}
 async function matchTransfers(btn){
   if(!confirm("Match live MVS Portal students to your already-checked Tracker data by Reference No, and push their status to the Portal WITHOUT using CapSolver?\\n\\nMatched = status pushed now + marked Both (managed as Portal, still re-checked normally). Unmatched = left for New Fetch."))return;
   const old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Matching\u2026";}
   const box=document.getElementById("tr-match-result");
-  if(box)box.innerHTML='<div style="color:var(--muted);font-size:13px">Working\u2026 fetching Portal data and matching by Reference No.</div>';
+  if(box)box.innerHTML='<div style="background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px">'+
+    '<div style="font-weight:600;font-size:13.5px">Match &amp; Transfer running\u2026 <span id="tm-pct">\u2026</span></div>'+
+    '<div style="height:9px;background:var(--border);border-radius:6px;overflow:hidden;margin-top:8px"><div id="tm-fill" style="height:100%;width:0%;background:var(--primary);transition:width .3s"></div></div>'+
+    '<div id="tm-sub" style="font-size:12px;color:var(--muted);margin-top:6px">Fetching Portal data\u2026</div></div>';
+  if(_matchPollTimer)clearInterval(_matchPollTimer);
+  _matchPollTimer=setInterval(pollMatchProgress,700);pollMatchProgress();
   try{
     const r=await api("/api/transfer-match","POST");
     showToast(r.message||"Done");
@@ -2916,7 +2932,10 @@ async function matchTransfers(btn){
     showToast(""+e.message);
     if(box)box.innerHTML='<div style="color:var(--danger);font-size:13px">Error: '+(""+e.message).replace(/</g,"&lt;")+'</div>';
   }
-  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+  finally{
+    if(_matchPollTimer){clearInterval(_matchPollTimer);_matchPollTimer=null;}
+    if(btn){btn.disabled=false;btn.textContent=old;}
+  }
 }
 async function downloadTransfers(){
   const q=new URLSearchParams();
@@ -4316,19 +4335,25 @@ async def transfer_sync(user=Depends(verify_token)):
     conn.commit(); conn.close()
     return {"message": f"Synced {pushed} matched student(s) to MVS Portal.", "count": pushed}
 
+_MATCH_PROGRESS = {"running": False, "phase": "", "total": 0, "done": 0, "transferred": 0}
+
 def _do_transfer_match():
     """Worker (runs in a threadpool): match every live MVS Portal student to an ALREADY-CHECKED
     Tracker student by Reference No, and push the existing Tracker status + document links to the
     Portal WITHOUT running a fresh CapSolver check. Each match is logged as a Manual transfer.
     Portal students with no usable checked Tracker record are returned in 'not_matched' (with a
-    reason) and are left for the normal New Fetch run."""
+    reason) and are left for the normal New Fetch run. Progress is reported in _MATCH_PROGRESS."""
     import mvs_sync
+    _MATCH_PROGRESS.update({"running": True, "phase": "Fetching Portal data",
+                            "total": 0, "done": 0, "transferred": 0})
     try:
         portal = mvs_sync.fetch_students_for_tracker(include_done=True)
     except Exception as e:
+        _MATCH_PROGRESS["running"] = False
         return {"ok": False, "message": f"Could not reach MVS Portal: {e}",
                 "transferred": 0, "new_fetch": 0, "not_matched": []}
     if not portal:
+        _MATCH_PROGRESS["running"] = False
         return {"ok": False, "message": "MVS Portal returned 0 students — try again later.",
                 "transferred": 0, "new_fetch": 0, "not_matched": []}
     conn = get_db(); c = conn.cursor()
@@ -4336,7 +4361,9 @@ def _do_transfer_match():
     BAD = ("", "unknown", "fetch error")
     transferred = 0
     not_matched = []
-    for p in portal:
+    _MATCH_PROGRESS.update({"phase": "Matching", "total": len(portal)})
+    for idx_p, p in enumerate(portal):
+        _MATCH_PROGRESS["done"] = idx_p + 1
         ref  = (p.get("reference_no") or "").strip()
         sid  = (p.get("student_id") or "").strip()
         name = (p.get("student_name") or "").strip() or "—"
@@ -4378,10 +4405,12 @@ def _do_transfer_match():
                  trow["student_name"] or name, trow["mobile"] or "", trow["session"] or "",
                  status, status, now_s))
             transferred += 1
+            _MATCH_PROGRESS["transferred"] = transferred
         except Exception as e:
             not_matched.append({"student_name": name, "reference_no": ref,
                                 "reason": f"Push failed: {e}"})
     conn.commit(); conn.close()
+    _MATCH_PROGRESS["running"] = False
     msg = (f"Transferred {transferred} already-checked student(s) to Portal — no CapSolver used. "
            f"{len(not_matched)} left for New Fetch.")
     result = {"ok": True, "message": msg, "transferred": transferred,
@@ -4405,6 +4434,12 @@ async def transfer_match(user=Depends(verify_token)):
     if not mvs_sync.enabled():
         raise HTTPException(status_code=400, detail="MVS Portal bridge is not enabled (set MVS_MODE).")
     return await run_in_threadpool(_do_transfer_match)
+
+
+@app.get("/api/transfer-match-progress")
+async def transfer_match_progress(user=Depends(verify_token)):
+    """Live progress of the running Match & Transfer (polled by the UI for the % bar)."""
+    return dict(_MATCH_PROGRESS)
 
 
 @app.get("/api/transfers-download")
