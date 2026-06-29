@@ -2911,9 +2911,15 @@ function _matchBarHTML(){
 function _updMatchBar(p){
   const pct=(p.total>0)?Math.round(p.done*100/p.total):0;
   const fill=document.getElementById("tm-fill");if(fill)fill.style.width=pct+"%";
-  const pe=document.getElementById("tm-pct");if(pe)pe.textContent=(p.phase==="Matching")?(pct+"%"):"\u2026";
-  const sub=document.getElementById("tm-sub");
-  if(sub)sub.textContent=(p.phase==="Matching")?(p.done+" / "+p.total+" portal students scanned \u00b7 "+p.transferred+" matched & transferred"):((p.phase||"Working")+"\u2026");
+  const showPct=(p.phase==="Pushing"||p.phase==="Matching");
+  const pe=document.getElementById("tm-pct");if(pe)pe.textContent=showPct?(pct+"%"):"\u2026";
+  let txt;
+  if(p.phase==="Pushing")txt=p.done+" / "+p.total+" matched students transferred to Portal";
+  else if(p.phase==="Matching")txt="Scanning "+p.total+" portal students\u2026";
+  else if(p.phase==="Loading Tracker data")txt="Loading Tracker data\u2026";
+  else if(p.phase==="Saving")txt="Saving results\u2026";
+  else txt=(p.phase||"Working")+"\u2026";
+  const sub=document.getElementById("tm-sub");if(sub)sub.textContent=txt;
 }
 async function matchTransfers(btn){
   if(!confirm("Match live MVS Portal students to your already-checked Tracker data by Reference No, and push their status to the Portal WITHOUT using CapSolver?\\n\\nMatched = status pushed now + marked Both (managed as Portal, still re-checked normally). Unmatched = left for New Fetch."))return;
@@ -4343,13 +4349,14 @@ async def transfer_sync(user=Depends(verify_token)):
 
 _MATCH_PROGRESS = {"running": False, "finished": False, "phase": "", "total": 0,
                    "done": 0, "transferred": 0, "result": None, "error": ""}
+_MATCH_WORKERS = 4   # parallel pushes to the Portal (each push is a different student row)
 
 def _do_transfer_match():
-    """Worker (runs in a threadpool): match every live MVS Portal student to an ALREADY-CHECKED
-    Tracker student by Reference No, and push the existing Tracker status + document links to the
-    Portal WITHOUT running a fresh CapSolver check. Each match is logged as a Manual transfer.
-    Portal students with no usable checked Tracker record are returned in 'not_matched' (with a
-    reason) and are left for the normal New Fetch run. Progress is reported in _MATCH_PROGRESS."""
+    """Background worker: match every live MVS Portal student to an ALREADY-CHECKED Tracker student
+    by Reference No and push the existing status to the Portal WITHOUT a CapSolver check. Optimised
+    for big data: (1) all Tracker students are loaded ONCE into memory (no per-student DB query),
+    (2) the slow network pushes run in parallel and hold NO DB lock (so the portal UI stays fast),
+    (3) the DB writes (cross_dup + transfer_log) are done in one short batch AFTER the pushes."""
     import mvs_sync
     _MATCH_PROGRESS["phase"] = "Fetching Portal data"
     try:
@@ -4360,29 +4367,37 @@ def _do_transfer_match():
     if not portal:
         return {"ok": False, "message": "MVS Portal returned 0 students — try again later.",
                 "transferred": 0, "new_fetch": 0, "not_matched": []}
-    conn = get_db(); c = conn.cursor()
     now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     BAD = ("", "unknown", "fetch error")
-    transferred = 0
     not_matched = []
-    _MATCH_PROGRESS.update({"phase": "Matching", "total": len(portal)})
-    for idx_p, p in enumerate(portal):
-        _MATCH_PROGRESS["done"] = idx_p + 1
+
+    # 1) CACHE all Tracker students once (reference_no -> best row, row_key -> row). No more
+    #    per-student DB queries during the loop, and the read connection is closed immediately.
+    _MATCH_PROGRESS["phase"] = "Loading Tracker data"
+    conn = get_db()
+    trk_by_ref, trk_by_rk = {}, {}
+    for r in conn.execute(
+            "SELECT row_key, reference_no, enrollment_no, student_name, mobile, session, remark, "
+            "current_status FROM student_status WHERE COALESCE(deleted,0)=0").fetchall():
+        d = {k: r[k] for k in r.keys()}
+        trk_by_rk[d["row_key"]] = d
+        ref = (d["reference_no"] or "").strip()
+        if ref:
+            cur = trk_by_ref.get(ref)
+            d_ok = (d["current_status"] or "").strip().lower() not in BAD
+            if cur is None or (d_ok and (cur["current_status"] or "").strip().lower() in BAD):
+                trk_by_ref[ref] = d
+    conn.close()
+
+    # 2) Decide matches fully in memory (no DB, no network) — instant.
+    _MATCH_PROGRESS.update({"phase": "Matching", "total": len(portal), "done": 0, "transferred": 0})
+    tasks = []
+    for p in portal:
         ref  = (p.get("reference_no") or "").strip()
         sid  = (p.get("student_id") or "").strip()
         name = (p.get("student_name") or "").strip() or "—"
         rk_p = p.get("row_key", "")
-        # Locate an already-checked Tracker student for this Portal student — Reference No first.
-        trow = None
-        if ref:
-            trow = c.execute(
-                "SELECT * FROM student_status WHERE reference_no=? AND COALESCE(deleted,0)=0 "
-                "ORDER BY (current_status IS NOT NULL AND "
-                "current_status NOT IN ('','Unknown','Fetch Error')) DESC, last_checked DESC LIMIT 1",
-                (ref,)).fetchone()
-        if not trow and rk_p:
-            trow = c.execute("SELECT * FROM student_status WHERE row_key=? AND COALESCE(deleted,0)=0",
-                             (rk_p,)).fetchone()
+        trow = (trk_by_ref.get(ref) if ref else None) or (trk_by_rk.get(rk_p) if rk_p else None)
         status = ((trow["current_status"] if trow else "") or "").strip()
         if not sid:
             not_matched.append({"student_name": name, "reference_no": ref,
@@ -4393,27 +4408,60 @@ def _do_transfer_match():
         if status.lower() in BAD:
             not_matched.append({"student_name": name, "reference_no": ref,
                                 "reason": f"Tracker status still '{status or 'blank'}' — will run in New Fetch"}); continue
-        rk = trow["row_key"]
-        student = {"student_id": sid, "row_key": rk,
-                   "reference_no": trow["reference_no"] or ref,
-                   "enrollment_no": trow["enrollment_no"] or "",
-                   "session": trow["session"] or "", "remark": trow["remark"] or ""}
+        tasks.append({"sid": sid, "status": status, "name": name, "ref": ref, "trow": trow,
+                      "student": {"student_id": sid, "row_key": trow["row_key"],
+                                  "reference_no": trow["reference_no"] or ref,
+                                  "enrollment_no": trow["enrollment_no"] or "",
+                                  "session": trow["session"] or "", "remark": trow["remark"] or ""}})
+
+    # 3) Push to the Portal IN PARALLEL — the slow part. No DB lock is held here, so the portal
+    #    UI stays responsive. Each push targets a different student row (safe to parallelise).
+    import threading as _th
+    from concurrent.futures import ThreadPoolExecutor
+    _MATCH_PROGRESS.update({"phase": "Pushing", "total": len(tasks), "done": 0, "transferred": 0})
+    lock = _th.Lock()
+    okrows = []
+    cnt = {"done": 0, "ok": 0}
+
+    def _push_one(t):
         try:
-            mvs_sync.push_student(student, status, conn)
-            c.execute("UPDATE student_status SET cross_dup=1 WHERE row_key=?", (rk,))
-            c.execute("""INSERT INTO transfer_log
-                (row_key, reference_no, enrollment_no, student_name, mobile, session,
-                 old_status, new_status, transferred_at, mode)
-                VALUES (?,?,?,?,?,?,?,?,?,'manual')""",
-                (rk, trow["reference_no"] or ref, trow["enrollment_no"] or "",
-                 trow["student_name"] or name, trow["mobile"] or "", trow["session"] or "",
-                 status, status, now_s))
-            transferred += 1
-            _MATCH_PROGRESS["transferred"] = transferred
+            mvs_sync.push_student(t["student"], t["status"])
+            ok, err = True, None
         except Exception as e:
-            not_matched.append({"student_name": name, "reference_no": ref,
-                                "reason": f"Push failed: {e}"})
+            ok, err = False, str(e)
+        with lock:
+            cnt["done"] += 1
+            _MATCH_PROGRESS["done"] = cnt["done"]
+            if ok:
+                cnt["ok"] += 1
+                _MATCH_PROGRESS["transferred"] = cnt["ok"]
+                okrows.append(t)
+            else:
+                not_matched.append({"student_name": t["name"], "reference_no": t["ref"],
+                                    "reason": f"Push failed: {err}"})
+
+    if tasks:
+        with ThreadPoolExecutor(max_workers=_MATCH_WORKERS) as ex:
+            list(ex.map(_push_one, tasks))
+
+    # 4) Persist the successful transfers to the DB in one short batch (fast, no network).
+    _MATCH_PROGRESS["phase"] = "Saving"
+    conn = get_db(); c = conn.cursor()
+    for i, t in enumerate(okrows):
+        trow = t["trow"]; rk = trow["row_key"]; status = t["status"]
+        c.execute("UPDATE student_status SET cross_dup=1 WHERE row_key=?", (rk,))
+        c.execute("""INSERT INTO transfer_log
+            (row_key, reference_no, enrollment_no, student_name, mobile, session,
+             old_status, new_status, transferred_at, mode)
+            VALUES (?,?,?,?,?,?,?,?,?,'manual')""",
+            (rk, trow["reference_no"] or t["ref"], trow["enrollment_no"] or "",
+             trow["student_name"] or t["name"], trow["mobile"] or "", trow["session"] or "",
+             status, status, now_s))
+        if (i + 1) % 200 == 0:
+            conn.commit()
     conn.commit(); conn.close()
+
+    transferred = cnt["ok"]
     msg = (f"Transferred {transferred} already-checked student(s) to Portal — no CapSolver used. "
            f"{len(not_matched)} left for New Fetch.")
     result = {"ok": True, "message": msg, "transferred": transferred,
