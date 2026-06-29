@@ -68,6 +68,65 @@ def campaign_for(group: str) -> str:
     return os.environ.get(_CAMPAIGN_ENV.get(group, ""), "").strip()
 
 
+# No-TOC variants: students whose tocStatus is 'no' did NOT take Transfer of Credit, so they
+# get a SHORTER document set and need their OWN AiSensy campaign/template:
+#   On Demand no-TOC -> {{1}} name, {{2}} id card, {{3}} hall ticket   (NO application form)
+#   Stream 2  no-TOC -> {{1}} name, {{2}} id card                      (id card only)
+_CAMPAIGN_ENV_NOTOC = {
+    "ondemand": "AISENSY_CAMPAIGN_ONDEMAND_NOTOC",
+    "stream2":  "AISENSY_CAMPAIGN_STREAM2_NOTOC",
+}
+_CAMPAIGN_DEFAULT_NOTOC = {
+    "ondemand": "withouttochallticket",   # template: name + id card + hall ticket
+    "stream2":  "WITHOUT_TOC",            # template "withouttoc2": name + id card
+}
+
+
+def campaign_for_notoc(group: str) -> str:
+    """Campaign for students whose tocStatus is 'no'. A Settings override
+    (wa_campaign_<group>_notoc) wins, then the Railway env var, then the built-in default."""
+    try:
+        from database import get_db
+        conn = get_db()
+        row = conn.execute("SELECT value FROM settings WHERE key=?",
+                           ("wa_campaign_" + group + "_notoc",)).fetchone()
+        conn.close()
+        ov = ((row["value"] if row else "") or "").strip()
+        if ov:
+            return ov
+    except Exception:
+        pass
+    env = os.environ.get(_CAMPAIGN_ENV_NOTOC.get(group, ""), "").strip()
+    return env or _CAMPAIGN_DEFAULT_NOTOC.get(group, "")
+
+
+def allowed_docs(session, toc_status):
+    """Which document kinds a student may download, by session group + tocStatus. Mirrors
+    send_for_student exactly, so once tocStatus is known any OLD/WRONG link a student already
+    received auto-blocks (e.g. an On Demand no-TOC student can no longer open an Application Form).
+      On Demand TOC : id_card + app_form + hall_ticket   | no-TOC: id_card + hall_ticket
+      Stream 2  TOC : id_card + app_form                 | no-TOC: id_card
+      SYC           : hall_ticket   |   Public: id_card"""
+    try:
+        from excel_handler import normalize_toc
+        notoc = (normalize_toc(toc_status) == "no")
+    except Exception:
+        notoc = (str(toc_status or "").strip().lower() == "no")
+    group = group_of(session)
+    if group == "ondemand":
+        return {"id_card", "hall_ticket"} if notoc else {"id_card", "app_form", "hall_ticket"}
+    if group == "stream2":
+        return {"id_card"} if notoc else {"id_card", "app_form"}
+    if group == "syc":
+        return {"hall_ticket"}
+    return {"id_card"}   # public (April / October)
+
+
+def doc_allowed(session, toc_status, kind):
+    """True if this document kind may be served for this student's session + tocStatus."""
+    return kind in allowed_docs(session, toc_status)
+
+
 def is_configured() -> bool:
     return bool(_api_key())
 
@@ -211,28 +270,43 @@ def send_for_student(student, only_number=None):
     alternate number when the primary already received the documents).
     Returns (ok, info)."""
     from links import short_doc_url as doc_file_url
+    from excel_handler import normalize_toc
     group = group_of(student.get("session"))
-    campaign = campaign_for(group)
-    if not campaign:
-        return False, f"no campaign set for {group}"
     name = (str(student.get("student_name") or "Student").strip() or "Student")
     rk = student.get("row_key", "")
+    toc = normalize_toc(student.get("toc_status"))   # 'yes' / 'no' / ''
+    notoc = (toc == "no")                            # blank/unknown -> treated as YES (current)
 
     if group == "ondemand":
-        params = [name, doc_file_url(rk, "id_card"),
-                  doc_file_url(rk, "app_form"), doc_file_url(rk, "hall_ticket")]
+        if notoc:                                    # On Demand, no TOC: id card + hall ticket
+            campaign = campaign_for_notoc("ondemand")
+            params = [name, doc_file_url(rk, "id_card"), doc_file_url(rk, "hall_ticket")]
+        else:                                        # On Demand, TOC: id card + app form + hall ticket
+            campaign = campaign_for("ondemand")
+            params = [name, doc_file_url(rk, "id_card"),
+                      doc_file_url(rk, "app_form"), doc_file_url(rk, "hall_ticket")]
     elif group == "stream2":
-        from nios_login import fetch_regional_address
-        addr = fetch_regional_address(student.get("reference_no"), student.get("dob")) or ""
-        if not addr:
-            # don't send a broken/blank-address message; will retry next run
-            return False, "regional address fetch failed"
-        params = [name, doc_file_url(rk, "id_card"), doc_file_url(rk, "app_form"), addr]
+        if notoc:                                    # Stream 2, no TOC: id card only
+            campaign = campaign_for_notoc("stream2")
+            params = [name, doc_file_url(rk, "id_card")]
+        else:                                        # Stream 2, TOC: id card + app form (+ address)
+            from nios_login import fetch_regional_address
+            addr = fetch_regional_address(student.get("reference_no"), student.get("dob")) or ""
+            if not addr:
+                # don't send a broken/blank-address message; will retry next run
+                return False, "regional address fetch failed"
+            campaign = campaign_for("stream2")
+            params = [name, doc_file_url(rk, "id_card"), doc_file_url(rk, "app_form"), addr]
     elif group == "syc":
+        campaign = campaign_for("syc")
         params = [name, doc_file_url(rk, "hall_ticket")]   # SYC: hall ticket only
     else:  # public (April / October) — template: {{1}} name, {{2}} reference no, {{3}} id card link
+        campaign = campaign_for("public")
         ref = (str(student.get("reference_no") or "").strip())
         params = [name, ref, doc_file_url(rk, "id_card")]
+
+    if not campaign:
+        return False, f"no campaign set for {group}" + (" (no-TOC)" if notoc else "")
 
     primary = student.get("mobile")
     # Targeted send (e.g. only the newly-added alternate number).

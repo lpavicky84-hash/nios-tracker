@@ -722,6 +722,7 @@ function applySidebarPref(){
               <option value="custom">Custom range…</option>
             </select>
             <button class="btn btn-primary btn-sm" onclick="autoSendNow(this)" title="Send WhatsApp now to all pending confirmed students">Send all pending now</button>
+            <button class="btn btn-outline btn-sm" onclick="resendNoTocConfirmed(this)" title="Re-send the CORRECT documents to confirmed students whose tocStatus is NO (they previously received the wrong documents). Their old links stop working.">Resend no-TOC docs</button>
             <button class="btn btn-outline btn-sm" onclick="exportStudents('confirmed')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
@@ -2273,6 +2274,17 @@ async function autoSendNow(btn){
   }catch(e){showToast("Error: "+e.message);}
   finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},2000);}
 }
+async function resendNoTocConfirmed(btn){
+  if(!confirm("Re-send corrected documents to all CONFIRMED no-TOC students? They previously received the wrong documents \u2014 this sends the right ones via the no-TOC campaign, and their old links stop working.")) return;
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    const r=await api("/api/wa-resend-notoc","POST");
+    if(r&&r.already_running){showToast("A send is already running");}
+    else if(r&&r.queued===0){showToast(r.message||"No no-TOC confirmed students to resend");}
+    else{showToast(r.message||("Resending to "+((r&&r.queued)||0)+" students\u2026"));startWaProgressPoll();}
+  }catch(e){showToast("Error: "+e.message);}
+  finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},2000);}
+}
 let WA_POLL=null, WA_SEEN_RUNNING=false;
 function renderWaProgress(p){
   document.getElementById("wap-title").textContent=(p.label||"Sending WhatsApp")+(p.running?"":" — done");
@@ -3476,6 +3488,8 @@ async function loadWa(){
         '<div style="font-size:12px;color:var(--muted);margin-bottom:4px"><b>Confirmed-send campaigns</b> — type the AiSensy campaign name for each and Save (works even if Railway shows empty):</div>'+
         camp("On Demand","ondemand",c.ondemand)+camp("Stream 2","stream2",c.stream2)+
         camp("Public","public",c.public)+camp("SYC","syc",c.syc)+
+        '<div style="font-size:12px;color:var(--muted);margin:8px 0 4px"><b>No-TOC campaigns</b> &middot; for confirmed students whose tocStatus is <b>no</b> (shorter document set):</div>'+
+        camp("On Demand no-TOC","ondemand_notoc",c.ondemand_notoc)+camp("Stream 2 no-TOC","stream2_notoc",c.stream2_notoc)+
         '<button class="btn btn-sm" style="background:var(--primary);color:#fff;margin-top:6px" onclick="saveCampaigns(this)">Save campaigns</button>'+
         '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)"><b style="font-size:12px;color:var(--muted)">Document-Required reminder</b></div>'+
         row("Reminder &middot; main (On Demand/Stream 2)",rc.main)+row("Reminder &middot; public",rc.public);
@@ -5238,6 +5252,7 @@ def _send_alt_to_confirmed(row_keys):
                 "row_key": rk, "student_name": r["student_name"] or "",
                 "mobile": r["mobile"] or "", "alt_mobile": alt,
                 "session": r["session"] or "", "reference_no": r["reference_no"] or "",
+                "toc_status": (r["toc_status"] if "toc_status" in r.keys() else "") or "",
                 "dob": r["dob"] or ""}, only_number=alt)
             if ok:
                 sent += 1
@@ -5978,12 +5993,14 @@ def wa_settings_get(user=Depends(verify_token)):
         "enabled": False,
         "required_enabled": False,
         "configured": bool(env("AISENSY_API_KEY") or env("AISENSY_API_KEY_PUBLIC")),
-        "campaigns": {"ondemand": "", "stream2": "", "public": "", "syc": ""},
+        "campaigns": {"ondemand": "", "stream2": "", "public": "", "syc": "", "ondemand_notoc": "", "stream2_notoc": ""},
         "campaigns_env": {
             "ondemand": bool(env("AISENSY_CAMPAIGN_ONDEMAND")),
             "stream2": bool(env("AISENSY_CAMPAIGN_STREAM2")),
             "public": bool(env("AISENSY_CAMPAIGN_PUBLIC")),
             "syc": bool(env("AISENSY_CAMPAIGN_SYC")),
+            "ondemand_notoc": bool(env("AISENSY_CAMPAIGN_ONDEMAND_NOTOC")),
+            "stream2_notoc": bool(env("AISENSY_CAMPAIGN_STREAM2_NOTOC")),
         },
         "required_campaigns": {
             "main": env("AISENSY_CAMPAIGN_REQUIRED"),
@@ -6003,6 +6020,8 @@ def wa_settings_get(user=Depends(verify_token)):
             "stream2": whatsapp.campaign_for("stream2"),
             "public": whatsapp.campaign_for("public"),
             "syc": whatsapp.campaign_for("syc"),
+            "ondemand_notoc": whatsapp.campaign_for_notoc("ondemand"),
+            "stream2_notoc": whatsapp.campaign_for_notoc("stream2"),
         }
     except Exception:
         pass
@@ -6023,7 +6042,7 @@ def wa_campaigns_set(body: dict, user=Depends(verify_token)):
     """Save the confirmed-send campaign names from the Settings page. Stored in the DB and used
     in preference to the Railway env vars, so campaigns can be fixed in-app. Empty value clears
     the override (falls back to the env var)."""
-    for g in ("ondemand", "stream2", "public", "syc"):
+    for g in ("ondemand", "stream2", "public", "syc", "ondemand_notoc", "stream2_notoc"):
         if g in body:
             set_setting("wa_campaign_" + g, str(body.get(g) or "").strip())
     import whatsapp
@@ -6032,6 +6051,8 @@ def wa_campaigns_set(body: dict, user=Depends(verify_token)):
         "stream2": whatsapp.campaign_for("stream2"),
         "public": whatsapp.campaign_for("public"),
         "syc": whatsapp.campaign_for("syc"),
+        "ondemand_notoc": whatsapp.campaign_for_notoc("ondemand"),
+        "stream2_notoc": whatsapp.campaign_for_notoc("stream2"),
     }}
 
 @app.post("/api/wa-test")
@@ -6347,7 +6368,7 @@ def _wa_send_one(row_key, verify=False):
     import whatsapp
     try:
         conn = get_db()
-        row = conn.execute("SELECT row_key, student_name, mobile, alt_mobile, session, reference_no, dob, enrollment_no "
+        row = conn.execute("SELECT row_key, student_name, mobile, alt_mobile, session, reference_no, dob, enrollment_no, toc_status "
                            "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
         if not row:
             conn.close()
@@ -6457,6 +6478,47 @@ async def wa_autosend_now(background_tasks: BackgroundTasks, user=Depends(verify
         return {"ok": True, "already_running": True, "message": "A send is already running"}
     background_tasks.add_task(auto_send_pending_whatsapp, None, "Send all pending")
     return {"ok": True, "message": "Sending to all pending students…"}
+
+def _resend_notoc_worker(keys, label="Resend no-TOC corrected docs"):
+    """Background worker: re-send to the given confirmed no-TOC students, with WA_PROGRESS so the
+    Confirmed-page progress bar shows live status. Each send now uses the correct no-TOC campaign."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    WA_PROGRESS.update({"running": True, "total": len(keys), "done": 0, "sent": 0,
+                        "failed": 0, "started_at": now, "finished_at": "", "label": label})
+    try:
+        for rk in keys:
+            ok, info, _lf = _wa_send_one(rk)
+            WA_PROGRESS["done"] += 1
+            WA_PROGRESS["sent" if ok else "failed"] += 1
+    finally:
+        WA_PROGRESS["running"] = False
+        WA_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+@app.post("/api/wa-resend-notoc")
+async def wa_resend_notoc(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """One-time correction: re-send the CORRECT documents to every CONFIRMED student whose
+    tocStatus is 'no'. They previously received the wrong (TOC-style) documents. The sent flag is
+    reset so the message goes again — now via the no-TOC campaign with the right documents — while
+    their old document links auto-block at serve time. New confirmations already use the right
+    campaign automatically, so this is only needed for students sent before the TOC fix."""
+    if WA_PROGRESS["running"]:
+        return {"ok": True, "already_running": True, "message": "A send is already running"}
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT row_key FROM student_status WHERE is_confirmed=1 "
+        "AND LOWER(COALESCE(toc_status,''))='no' AND COALESCE(deleted,0)=0 "
+        "AND mobile IS NOT NULL AND TRIM(mobile) != ''").fetchall()
+    keys = [r["row_key"] for r in rows]
+    if keys:
+        conn.executemany("UPDATE student_status SET whatsapp_sent=0, whatsapp_attempts=0, "
+                         "whatsapp_delivery='' WHERE row_key=?", [(k,) for k in keys])
+        conn.commit()
+    conn.close()
+    if not keys:
+        return {"ok": True, "queued": 0, "message": "No confirmed no-TOC students found to resend."}
+    background_tasks.add_task(_resend_notoc_worker, keys)
+    return {"ok": True, "queued": len(keys),
+            "message": f"Resending corrected documents to {len(keys)} no-TOC confirmed student(s)…"}
 
 @app.get("/api/wa-progress")
 async def wa_progress(user=Depends(verify_token)):
@@ -6594,14 +6656,15 @@ async def public_doc_file(token: str, kind: str):
     if not row_key:
         raise HTTPException(status_code=404, detail="invalid link")
     conn = get_db()
-    row = conn.execute("SELECT reference_no, dob, session FROM student_status WHERE row_key=?",
+    row = conn.execute("SELECT reference_no, dob, session, toc_status FROM student_status WHERE row_key=?",
                        (row_key,)).fetchone()
     conn.close()
     if not row or not row["reference_no"]:
         raise HTTPException(status_code=404, detail="student not found")
     import whatsapp
-    if whatsapp.group_of(row["session"]) == "public" and kind != "id_card":
-        raise HTTPException(status_code=404, detail="This document is not available for Public (April / October) admission. Only the ID Card can be opened.")
+    toc_v = (row["toc_status"] if ("toc_status" in row.keys()) else "") or ""
+    if not whatsapp.doc_allowed(row["session"], toc_v, kind):
+        raise HTTPException(status_code=404, detail="This document is no longer available for your admission type. Please open the latest links we sent you on WhatsApp.")
     content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
     if content is None:
         raise HTTPException(status_code=404, detail=ctype)
@@ -6685,20 +6748,21 @@ def _fetch_doc_for(row_key, kind):
     try:
         from nios_login import fetch_document
         conn = get_db()
-        row = conn.execute("SELECT reference_no, enrollment_no, dob, session FROM student_status WHERE row_key=?",
+        row = conn.execute("SELECT reference_no, enrollment_no, dob, session, toc_status FROM student_status WHERE row_key=?",
                            (row_key,)).fetchone()
         conn.close()
         ref = (row["reference_no"] if row else "") or ""
         enroll = (row["enrollment_no"] if row else "") or ""
         if not row or (not ref and not enroll):
             return None, "student not found"
-        # Public-cycle students (April / October) only have an ID Card. If an old/wrong
-        # link for another document is opened, show a clear message instead of serving the
-        # wrong document — this neutralises any links that were sent before the grouping fix.
+        # Serve-time permission: only the documents that match this student's session + tocStatus
+        # may be opened. This auto-blocks any OLD/WRONG link sent before (e.g. an Application Form
+        # link a no-TOC student received) — only the correct, current documents stay downloadable.
         import whatsapp
-        if whatsapp.group_of(row["session"]) == "public" and kind != "id_card":
-            return None, ("This document is not available for Public (April / October) admission. "
-                          "Only the ID Card can be opened for your admission type.")
+        toc_v = (row["toc_status"] if ("toc_status" in row.keys()) else "") or ""
+        if not whatsapp.doc_allowed(row["session"], toc_v, kind):
+            return None, ("This document is no longer available for your admission type. "
+                          "Please open the latest links we sent you on WhatsApp.")
         content, ctype, filename = fetch_document(ref, row["dob"], kind, enrollment_no=enroll)
         if content is None:
             return None, (ctype or "could not load document")

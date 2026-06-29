@@ -171,6 +171,7 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
                         "session": s.get("session", ""),
                         "reference_no": s.get("reference_no", ""),
                         "enrollment_no": s.get("enrollment_no", ""),
+                        "toc_status": s.get("toc_status", ""),
                         "dob": s.get("dob", ""),
                     })
                     if ok:
