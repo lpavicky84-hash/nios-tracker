@@ -100,18 +100,42 @@ def campaign_for_notoc(group: str) -> str:
     return env or _CAMPAIGN_DEFAULT_NOTOC.get(group, "")
 
 
+# Public with-TOC (yes): Public students normally get ref + id card, but a Public student who
+# DID take TOC also gets the Application Form, so they need their own 4-variable campaign.
+_CAMPAIGN_ENV_YESTOC = {"public": "AISENSY_CAMPAIGN_PUBLIC_YESTOC"}
+
+def campaign_for_yestoc(group: str) -> str:
+    """Campaign for Public students whose tocStatus is 'yes' (gets the Application Form too).
+    Settings override (wa_campaign_<group>_yestoc) wins, then the env var. No built-in default —
+    it is set once the campaign is created."""
+    try:
+        from database import get_db
+        conn = get_db()
+        row = conn.execute("SELECT value FROM settings WHERE key=?",
+                           ("wa_campaign_" + group + "_yestoc",)).fetchone()
+        conn.close()
+        ov = ((row["value"] if row else "") or "").strip()
+        if ov:
+            return ov
+    except Exception:
+        pass
+    return os.environ.get(_CAMPAIGN_ENV_YESTOC.get(group, ""), "").strip()
+
+
 def allowed_docs(session, toc_status):
     """Which document kinds a student may download, by session group + tocStatus. Mirrors
     send_for_student exactly, so once tocStatus is known any OLD/WRONG link a student already
-    received auto-blocks (e.g. an On Demand no-TOC student can no longer open an Application Form).
+    received auto-blocks.
       On Demand TOC : id_card + app_form + hall_ticket   | no-TOC: id_card + hall_ticket
       Stream 2  TOC : id_card + app_form                 | no-TOC: id_card
-      SYC           : hall_ticket   |   Public: id_card"""
+      Public    TOC : id_card + app_form                 | no-TOC: id_card
+      SYC           : hall_ticket"""
     try:
         from excel_handler import normalize_toc
-        notoc = (normalize_toc(toc_status) == "no")
+        toc = normalize_toc(toc_status)
     except Exception:
-        notoc = (str(toc_status or "").strip().lower() == "no")
+        toc = str(toc_status or "").strip().lower()
+    notoc = (toc == "no")
     group = group_of(session)
     if group == "ondemand":
         return {"id_card", "hall_ticket"} if notoc else {"id_card", "app_form", "hall_ticket"}
@@ -119,7 +143,8 @@ def allowed_docs(session, toc_status):
         return {"id_card"} if notoc else {"id_card", "app_form"}
     if group == "syc":
         return {"hall_ticket"}
-    return {"id_card"}   # public (April / October)
+    # public: default = ID card only; with-TOC (yes) also gets the Application Form
+    return {"id_card", "app_form"} if (toc == "yes") else {"id_card"}
 
 
 def doc_allowed(session, toc_status, kind):
@@ -300,13 +325,18 @@ def send_for_student(student, only_number=None):
     elif group == "syc":
         campaign = campaign_for("syc")
         params = [name, doc_file_url(rk, "hall_ticket")]   # SYC: hall ticket only
-    else:  # public (April / October) — template: {{1}} name, {{2}} reference no, {{3}} id card link
-        campaign = campaign_for("public")
+    else:  # public (April / October)
         ref = (str(student.get("reference_no") or "").strip())
-        params = [name, ref, doc_file_url(rk, "id_card")]
+        if toc == "yes":          # Public with TOC: name + ref + id card + application form
+            campaign = campaign_for_yestoc("public")
+            params = [name, ref, doc_file_url(rk, "id_card"), doc_file_url(rk, "app_form")]
+        else:                     # Public default: name + ref + id card
+            campaign = campaign_for("public")
+            params = [name, ref, doc_file_url(rk, "id_card")]
 
     if not campaign:
-        return False, f"no campaign set for {group}" + (" (no-TOC)" if notoc else "")
+        tag = " (no-TOC)" if notoc else (" (yes-TOC)" if (toc == "yes" and group == "public") else "")
+        return False, f"no campaign set for {group}{tag}"
 
     primary = student.get("mobile")
     # Targeted send (e.g. only the newly-added alternate number).

@@ -699,9 +699,11 @@ function applySidebarPref(){
         <div class="card">
           <h3>No-TOC Students</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-            Every student whose <b>tocStatus is &quot;no&quot;</b> (from the sheet or the Portal) — <b>any status</b>,
-            active or confirmed. They get the shorter no-TOC document set. If this list is empty even though
-            the Portal shows no-TOC students, the Portal is not yet sending <b>tocStatus</b> in its data.</p>
+            Students whose documents <b>differ from the normal set</b> for their session:
+            <b>On Demand / Stream 2 with tocStatus = &quot;no&quot;</b> (shorter set), and
+            <b>Public with tocStatus = &quot;yes&quot;</b> (gets the Application Form too).
+            Public &quot;no&quot; is the normal Public case, so it is not listed here.
+            If empty even though the Portal has such students, click <b>Sync tocStatus from Portal</b> first.</p>
           <div class="filter-bar">
             <input type="text" id="nt-search" placeholder="Search name / reference / enrollment / mobile..." oninput="debounceNoToc()">
             <select id="nt-session" onchange="loadNoToc(1)"><option value="">All Sessions</option></select>
@@ -2256,7 +2258,9 @@ async function loadNoToc(page){
       '<td>'+(s.student_name||"\u2014")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td>'+
       '<td style="font-size:13px">'+(s.session||"\u2014")+'</td>'+
       '<td>'+badge(s.current_status)+'</td>'+
-      '<td><span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:#FEF3C7;color:#92400E">no</span></td>'+
+      '<td>'+(((s.toc_status||"").toLowerCase()==="yes")
+        ?'<span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:#DCFCE7;color:#15803D">yes</span>'
+        :'<span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:#FEF3C7;color:#92400E">no</span>')+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"\u2014")+'</td></tr>').join("")
       :'<tr><td colspan="7" class="empty">No no-TOC students found. If the Portal shows some, their tocStatus has not reached the Tracker yet \u2014 run a fetch, and if still empty the Portal is not sending tocStatus.</td></tr>';
     renderPg("nt-pg",page,d.pages,"loadNoToc");
@@ -3579,6 +3583,8 @@ async function loadWa(){
         camp("Public","public",c.public)+camp("SYC","syc",c.syc)+
         '<div style="font-size:12px;color:var(--muted);margin:8px 0 4px"><b>No-TOC campaigns</b> &middot; for confirmed students whose tocStatus is <b>no</b> (shorter document set):</div>'+
         camp("On Demand no-TOC","ondemand_notoc",c.ondemand_notoc)+camp("Stream 2 no-TOC","stream2_notoc",c.stream2_notoc)+
+        '<div style="font-size:12px;color:var(--muted);margin:8px 0 4px"><b>Public yes-TOC</b> &middot; Public students whose tocStatus is <b>yes</b> (4 variables: name, reference, id card, application form):</div>'+
+        camp("Public yes-TOC","public_yestoc",c.public_yestoc)+
         '<button class="btn btn-sm" style="background:var(--primary);color:#fff;margin-top:6px" onclick="saveCampaigns(this)">Save campaigns</button>'+
         '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)"><b style="font-size:12px;color:var(--muted)">Document-Required reminder</b></div>'+
         row("Reminder &middot; main (On Demand/Stream 2)",rc.main)+row("Reminder &middot; public",rc.public);
@@ -4047,6 +4053,21 @@ def _session_clause(cat):
         return "(" + " OR ".join(["LOWER(session) LIKE ?"] * len(p)) + ")", p
     return "session = ?", [cat]
 
+# Sessions that are On Demand or Stream 2 (everything else, except SYC, is "public").
+_OD_S2_SQL = ("(LOWER(COALESCE(session,'')) LIKE '%on demand%' OR LOWER(COALESCE(session,'')) LIKE '%ondemand%' "
+              "OR LOWER(COALESCE(session,'')) LIKE '%on-demand%' OR LOWER(COALESCE(session,'')) LIKE '%odes%' "
+              "OR LOWER(COALESCE(session,'')) LIKE '%stream 2%' OR LOWER(COALESCE(session,'')) LIKE '%stream2%' "
+              "OR LOWER(COALESCE(session,'')) LIKE '%stream-2%')")
+_IS_SYC_SQL = "LOWER(COALESCE(session,'')) LIKE '%syc%'"
+# Students who need SPECIAL document handling (the "No-TOC" page / run / resend):
+#   - On Demand / Stream 2 with tocStatus = 'no'   (shorter doc set)
+#   - Public with tocStatus = 'yes'                (gets the Application Form too)
+# Public 'no' is the normal Public case, so it is intentionally excluded.
+_SPECIAL_TOC_CLAUSE = (
+    "( ( " + _OD_S2_SQL + " AND LOWER(COALESCE(toc_status,''))='no' ) "
+    "OR ( NOT " + _OD_S2_SQL + " AND NOT " + _IS_SYC_SQL + " AND LOWER(COALESCE(toc_status,''))='yes' ) )"
+)
+
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to="", source_filter="",
                          wa_status=""):
@@ -4061,10 +4082,8 @@ def _build_student_where(view, search, status_filter, session_filter,
     elif view == "required":
         wc.append("current_status = 'Document Required'")
     elif view == "notoc":
-        # No-TOC page: every student whose tocStatus is 'no', any status (active OR confirmed),
-        # excluding SYC. Used to verify the no-TOC data and run/resend them as one group.
-        wc.append("LOWER(COALESCE(toc_status,'')) = 'no'")
-        wc.append("COALESCE(current_status,'') != 'SYC'")
+        # Special-TOC page: On Demand/Stream 2 no-TOC + Public yes-TOC (any status), never SYC.
+        wc.append(_SPECIAL_TOC_CLAUSE)
         wc.append("(session IS NULL OR session NOT LIKE '%syc%')")
     else:  # normal = active students, exclude confirmed and SYC (NULL-safe)
         wc.append("COALESCE(is_confirmed,0) = 0")
@@ -4234,12 +4253,12 @@ async def run_now_notoc(background_tasks: BackgroundTasks, user=Depends(verify_t
     already have a final status, so only the pending/active no-TOC students are checked here."""
     conn = get_db()
     rows = conn.execute("SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 "
-                        "AND LOWER(COALESCE(toc_status,''))='no' AND COALESCE(is_confirmed,0)=0 "
+                        "AND " + _SPECIAL_TOC_CLAUSE + " AND COALESCE(is_confirmed,0)=0 "
                         "AND COALESCE(current_status,'')!='SYC'").fetchall()
     keys = [r["row_key"] for r in rows]
     conn.close()
     if not keys:
-        return {"message": "No pending no-TOC students to run.", "count": 0}
+        return {"message": "No pending special-TOC students to run.", "count": 0}
     background_tasks.add_task(run_status_check, "all", None, "selected", keys)
     return {"message": f"Running {len(keys)} no-TOC student(s)…", "count": len(keys)}
 
@@ -6146,7 +6165,7 @@ def wa_settings_get(user=Depends(verify_token)):
         "enabled": False,
         "required_enabled": False,
         "configured": bool(env("AISENSY_API_KEY") or env("AISENSY_API_KEY_PUBLIC")),
-        "campaigns": {"ondemand": "", "stream2": "", "public": "", "syc": "", "ondemand_notoc": "", "stream2_notoc": ""},
+        "campaigns": {"ondemand": "", "stream2": "", "public": "", "syc": "", "ondemand_notoc": "", "stream2_notoc": "", "public_yestoc": ""},
         "campaigns_env": {
             "ondemand": bool(env("AISENSY_CAMPAIGN_ONDEMAND")),
             "stream2": bool(env("AISENSY_CAMPAIGN_STREAM2")),
@@ -6154,6 +6173,7 @@ def wa_settings_get(user=Depends(verify_token)):
             "syc": bool(env("AISENSY_CAMPAIGN_SYC")),
             "ondemand_notoc": bool(env("AISENSY_CAMPAIGN_ONDEMAND_NOTOC")),
             "stream2_notoc": bool(env("AISENSY_CAMPAIGN_STREAM2_NOTOC")),
+            "public_yestoc": bool(env("AISENSY_CAMPAIGN_PUBLIC_YESTOC")),
         },
         "required_campaigns": {
             "main": env("AISENSY_CAMPAIGN_REQUIRED"),
@@ -6175,6 +6195,7 @@ def wa_settings_get(user=Depends(verify_token)):
             "syc": whatsapp.campaign_for("syc"),
             "ondemand_notoc": whatsapp.campaign_for_notoc("ondemand"),
             "stream2_notoc": whatsapp.campaign_for_notoc("stream2"),
+            "public_yestoc": whatsapp.campaign_for_yestoc("public"),
         }
     except Exception:
         pass
@@ -6195,7 +6216,7 @@ def wa_campaigns_set(body: dict, user=Depends(verify_token)):
     """Save the confirmed-send campaign names from the Settings page. Stored in the DB and used
     in preference to the Railway env vars, so campaigns can be fixed in-app. Empty value clears
     the override (falls back to the env var)."""
-    for g in ("ondemand", "stream2", "public", "syc", "ondemand_notoc", "stream2_notoc"):
+    for g in ("ondemand", "stream2", "public", "syc", "ondemand_notoc", "stream2_notoc", "public_yestoc"):
         if g in body:
             set_setting("wa_campaign_" + g, str(body.get(g) or "").strip())
     import whatsapp
@@ -6206,6 +6227,7 @@ def wa_campaigns_set(body: dict, user=Depends(verify_token)):
         "syc": whatsapp.campaign_for("syc"),
         "ondemand_notoc": whatsapp.campaign_for_notoc("ondemand"),
         "stream2_notoc": whatsapp.campaign_for_notoc("stream2"),
+        "public_yestoc": whatsapp.campaign_for_yestoc("public"),
     }}
 
 @app.post("/api/wa-test")
@@ -6659,7 +6681,7 @@ async def wa_resend_notoc(background_tasks: BackgroundTasks, user=Depends(verify
     conn = get_db()
     rows = conn.execute(
         "SELECT row_key FROM student_status WHERE is_confirmed=1 "
-        "AND LOWER(COALESCE(toc_status,''))='no' AND COALESCE(deleted,0)=0 "
+        "AND " + _SPECIAL_TOC_CLAUSE + " AND COALESCE(deleted,0)=0 "
         "AND mobile IS NOT NULL AND TRIM(mobile) != ''").fetchall()
     keys = [r["row_key"] for r in rows]
     if keys:
@@ -6668,7 +6690,7 @@ async def wa_resend_notoc(background_tasks: BackgroundTasks, user=Depends(verify
         conn.commit()
     conn.close()
     if not keys:
-        return {"ok": True, "queued": 0, "message": "No confirmed no-TOC students found to resend."}
+        return {"ok": True, "queued": 0, "message": "No confirmed special-TOC students found to resend."}
     background_tasks.add_task(_resend_notoc_worker, keys)
     return {"ok": True, "queued": len(keys),
             "message": f"Resending corrected documents to {len(keys)} no-TOC confirmed student(s)…"}
