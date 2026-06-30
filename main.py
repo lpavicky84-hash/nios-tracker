@@ -705,6 +705,7 @@ function applySidebarPref(){
           <div class="filter-bar">
             <input type="text" id="nt-search" placeholder="Search name / reference / enrollment / mobile..." oninput="debounceNoToc()">
             <select id="nt-session" onchange="loadNoToc(1)"><option value="">All Sessions</option></select>
+            <button class="btn btn-primary btn-sm" onclick="syncToc(this)" title="Pull the latest tocStatus from the Portal and update it on the Tracker — NO CapSolver, no credits used. Run this after updating tocStatus on the Portal.">&#8635; Sync tocStatus from Portal</button>
             <button class="btn btn-success btn-sm" onclick="runNotoc(this)" title="Run a NIOS status check now for the pending (not-yet-confirmed) no-TOC students">
               <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run no-TOC now</button>
             <button class="btn btn-outline btn-sm" onclick="exportNoToc()">
@@ -2262,6 +2263,16 @@ async function loadNoToc(page){
     const nb=document.getElementById("nav-notoc-badge");
     if(nb){if(d.total>0){nb.textContent=d.total;nb.style.display="";}else{nb.style.display="none";}}
   }catch(e){showToast(""+e.message);}
+}
+async function syncToc(btn){
+  var o=btn?btn.innerHTML:"";
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";btn.innerHTML="Syncing\u2026";}
+  try{
+    const r=await api("/api/sync-toc","POST");
+    showToast((r&&r.message)?r.message:"Synced");
+    loadNoToc(1);
+  }catch(e){showToast("Error: "+e.message);}
+  finally{if(btn){btn.disabled=false;btn.style.opacity="";btn.innerHTML=o;}}
 }
 async function runNotoc(btn){
   if(btn){btn.disabled=true;btn.style.opacity="0.6";}
@@ -4178,6 +4189,43 @@ async def unknown_students(page: int = 1, per_page: int = 50, search: str = "",
     return {"students": [dict(r) for r in rows], "total": total, "page": page,
             "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page),
             "sessions": norm_sessions}
+
+@app.post("/api/sync-toc")
+async def sync_toc(user=Depends(verify_token)):
+    """Pull the latest tocStatus from the Portal and update it on the matching Tracker students
+    WITHOUT any CapSolver / NIOS status check — only the toc_status field is touched, so NO credits
+    are used. After this runs, no-TOC students show on the No-TOC page and resend works."""
+    import mvs_sync
+    if not mvs_sync.enabled():
+        return {"ok": False, "message": "MVS Portal is not configured."}
+    try:
+        portal = await run_in_threadpool(mvs_sync.fetch_students_for_tracker, None, True)
+    except Exception as e:
+        return {"ok": False, "message": f"Could not reach Portal: {e}"}
+    if not portal:
+        return {"ok": False, "message": "Portal returned 0 students — try again later."}
+    conn = get_db(); c = conn.cursor()
+    existing = {r["row_key"] for r in
+                c.execute("SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0").fetchall()}
+    updated = no_count = yes_count = not_in_tracker = 0
+    for p in portal:
+        toc = (p.get("toc_status") or "").strip().lower()
+        rk = p.get("row_key", "")
+        if toc not in ("yes", "no"):
+            continue
+        if rk not in existing:
+            not_in_tracker += 1
+            continue
+        c.execute("UPDATE student_status SET toc_status=? WHERE row_key=?", (toc, rk))
+        updated += 1
+        if toc == "no": no_count += 1
+        else: yes_count += 1
+    conn.commit(); conn.close()
+    msg = (f"Synced tocStatus for {updated} student(s) from Portal — no CapSolver used. "
+           f"{no_count} are no-TOC, {yes_count} with-TOC.")
+    if not_in_tracker:
+        msg += f" {not_in_tracker} portal student(s) not on the Tracker yet (will arrive in a normal run)."
+    return {"ok": True, "message": msg, "updated": updated, "no_count": no_count}
 
 @app.post("/api/run-now-notoc")
 async def run_now_notoc(background_tasks: BackgroundTasks, user=Depends(verify_token)):
