@@ -3583,7 +3583,7 @@ async function loadWa(){
         camp("Public","public",c.public)+camp("SYC","syc",c.syc)+
         '<div style="font-size:12px;color:var(--muted);margin:8px 0 4px"><b>No-TOC campaigns</b> &middot; for confirmed students whose tocStatus is <b>no</b> (shorter document set):</div>'+
         camp("On Demand no-TOC","ondemand_notoc",c.ondemand_notoc)+camp("Stream 2 no-TOC","stream2_notoc",c.stream2_notoc)+
-        '<div style="font-size:12px;color:var(--muted);margin:8px 0 4px"><b>Public yes-TOC</b> &middot; Public students whose tocStatus is <b>yes</b> (4 variables: name, reference, id card, application form):</div>'+
+        '<div style="font-size:12px;color:var(--muted);margin:8px 0 4px"><b>Public yes-TOC</b> &middot; Public students whose tocStatus is <b>yes</b> (5 variables: name, reference, id card, registration summary, regional centre address):</div>'+
         camp("Public yes-TOC","public_yestoc",c.public_yestoc)+
         '<button class="btn btn-sm" style="background:var(--primary);color:#fff;margin-top:6px" onclick="saveCampaigns(this)">Save campaigns</button>'+
         '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)"><b style="font-size:12px;color:var(--muted)">Document-Required reminder</b></div>'+

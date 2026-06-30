@@ -327,9 +327,14 @@ def send_for_student(student, only_number=None):
         params = [name, doc_file_url(rk, "hall_ticket")]   # SYC: hall ticket only
     else:  # public (April / October)
         ref = (str(student.get("reference_no") or "").strip())
-        if toc == "yes":          # Public with TOC: name + ref + id card + application form
+        if toc == "yes":          # Public with TOC: name + ref + id card + registration summary + regional address
+            from nios_login import fetch_regional_address
+            addr = fetch_regional_address(student.get("reference_no"), student.get("dob")) or ""
+            if not addr:
+                # same as Stream 2: don't send a blank-address message; retry next run
+                return False, "regional address fetch failed"
             campaign = campaign_for_yestoc("public")
-            params = [name, ref, doc_file_url(rk, "id_card"), doc_file_url(rk, "app_form")]
+            params = [name, ref, doc_file_url(rk, "id_card"), doc_file_url(rk, "app_form"), addr]
         else:                     # Public default: name + ref + id card
             campaign = campaign_for("public")
             params = [name, ref, doc_file_url(rk, "id_card")]
