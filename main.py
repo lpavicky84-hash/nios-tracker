@@ -2091,15 +2091,20 @@ function dlLinks(s){
   const sess=(s.session||"").toLowerCase();
   const isStream2=sess.includes("stream 2")||sess.includes("stream2")||sess.includes("stream-2")||sess.includes("stream ii");
   const isOnDemand=sess.includes("on demand")||sess.includes("ondemand")||sess.includes("on-demand")||sess.includes("odes");
-  const isPublic=!isStream2&&!isOnDemand;   // safe default: April/October/apr-27/unknown = public (ID Card only)
+  const isPublic=!isStream2&&!isOnDemand;   // safe default: April/October/apr-27/unknown = public
+  const toc=(s.toc_status||"").toLowerCase();
+  const notoc=(toc==="no");
+  // Show exactly the documents this student receives (matches the WhatsApp doc set):
+  //   On Demand: id + hall (+ app form if TOC)   | Stream 2: id (+ app form if TOC)
+  //   Public:    id (+ app form / registration summary if TOC=yes)
   let b=[dlBtn(s,"id_card","ID Card")];
-  if(isStream2){
-    b.push(dlBtn(s,"app_form","App Form"));          // Stream 2: ID Card + App Form only (NO hall ticket)
-  }else if(isPublic){
-    // Public exam students: ONLY id card
-  }else{
-    b.push(dlBtn(s,"app_form","App Form"));          // On Demand: all three
+  if(isOnDemand){
+    if(!notoc) b.push(dlBtn(s,"app_form","App Form"));
     b.push(dlBtn(s,"hall_ticket","Hall Ticket"));
+  }else if(isStream2){
+    if(!notoc) b.push(dlBtn(s,"app_form","App Form"));
+  }else{ // public — only TOC=yes also gets the Registration Summary (App Form)
+    if(toc==="yes") b.push(dlBtn(s,"app_form","App Form"));
   }
   return '<div style="display:flex;flex-wrap:wrap;gap:5px">'+b.join("")+'</div>';
 }
