@@ -5825,21 +5825,25 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
     """Login as the student and return their document (PDF or print-ready HTML)."""
     from fastapi import Response
     from nios_login import fetch_document
-    # Public-cycle students (April / October / 'apr-27') only have an ID Card. Block any
-    # other document so a stale/wrong link can never open the wrong file — matches the
-    # student-facing links. (Admins still see every document for On Demand / Stream 2.)
+    # Public-cycle students (April / October / 'apr-27') normally only have an ID Card, but a
+    # Public student who took TOC (tocStatus = 'yes') also gets the Application Form
+    # (Registration Summary). Block anything else so a stale/wrong link can never open the wrong
+    # file — matches the student-facing links. (Admins still see every document for On Demand / Stream 2.)
     if kind != "id_card" and ref:
         try:
             conn = get_db()
-            srow = conn.execute("SELECT session FROM student_status WHERE COALESCE(deleted,0)=0 "
+            srow = conn.execute("SELECT session, toc_status FROM student_status WHERE COALESCE(deleted,0)=0 "
                                 "AND reference_no=? LIMIT 1", (ref,)).fetchone()
             conn.close()
             sess = ((srow["session"] if srow else "") or "").lower()
             is_s2 = ("stream 2" in sess or "stream2" in sess or "stream-2" in sess)
             is_od = ("on demand" in sess or "ondemand" in sess or "on-demand" in sess or "odes" in sess)
+            toc = ((srow["toc_status"] if srow else "") or "").strip().lower()
             if srow is not None and not is_s2 and not is_od:   # public / unknown
-                raise HTTPException(status_code=404,
-                    detail="This document is not available for Public (April / October) admission. Only the ID Card can be opened for this student.")
+                # allow the Application Form only for Public TOC-yes students
+                if not (kind == "app_form" and toc == "yes"):
+                    raise HTTPException(status_code=404,
+                        detail="This document is not available for this Public (April / October) student. Only the ID Card (and the Application Form for TOC-based admissions) can be opened.")
         except HTTPException:
             raise
         except Exception:
