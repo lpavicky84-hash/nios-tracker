@@ -501,6 +501,9 @@ function applySidebarPref(){
     <div class="nav-item" data-page="unknown" onclick="nav('unknown')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span><span class="lbl">Unknown</span>
       <span class="badge-count" id="nav-unknown-badge" style="display:none">0</span></div>
+    <div class="nav-item" data-page="notoc" onclick="nav('notoc')">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span><span class="lbl">No-TOC Students</span>
+      <span class="badge-count" id="nav-notoc-badge" style="display:none;background:#92400e">0</span></div>
     <div class="nav-sep">Activity</div>
     <div class="nav-item" data-page="history" onclick="nav('history')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="lbl">Change History</span></div>
@@ -689,6 +692,33 @@ function applySidebarPref(){
             </tr></thead><tbody id="s-body"></tbody></table>
           </div>
           <div class="pg-bar" id="s-pg"></div>
+        </div>
+      </section>
+
+      <section id="sec-notoc" class="page-section">
+        <div class="card">
+          <h3>No-TOC Students</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+            Every student whose <b>tocStatus is &quot;no&quot;</b> (from the sheet or the Portal) — <b>any status</b>,
+            active or confirmed. They get the shorter no-TOC document set. If this list is empty even though
+            the Portal shows no-TOC students, the Portal is not yet sending <b>tocStatus</b> in its data.</p>
+          <div class="filter-bar">
+            <input type="text" id="nt-search" placeholder="Search name / reference / enrollment / mobile..." oninput="debounceNoToc()">
+            <select id="nt-session" onchange="loadNoToc(1)"><option value="">All Sessions</option></select>
+            <button class="btn btn-success btn-sm" onclick="runNotoc(this)" title="Run a NIOS status check now for the pending (not-yet-confirmed) no-TOC students">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run no-TOC now</button>
+            <button class="btn btn-outline btn-sm" onclick="exportNoToc()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export Excel</button>
+          </div>
+          <div id="nt-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
+              <th>Status</th><th>tocStatus</th><th>Last Checked</th>
+            </tr></thead><tbody id="nt-body"></tbody></table>
+          </div>
+          <div class="pg-bar" id="nt-pg"></div>
         </div>
       </section>
 
@@ -1636,6 +1666,7 @@ function nav(page){
   if(page==="required")loadRequired(1);
   if(page==="failed")loadFailed(1);
   if(page==="unknown")loadUnknown(1);
+  if(page==="notoc")loadNoToc(1);
   if(page==="docreq")loadDocReq();
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
@@ -2168,7 +2199,7 @@ async function downloadDoc(btn,ref,dob,kind,name){
 }
 function fillSessions(arr){
   if(!arr)return;
-  ["s-session","c-session","r-session","u-session"].forEach(id=>{
+  ["s-session","c-session","r-session","u-session","nt-session"].forEach(id=>{
     const sel=document.getElementById(id);
     if(!sel)return;
     const cur=sel.value;
@@ -2206,6 +2237,48 @@ async function loadStudents(page){
   }catch(e){showToast(""+e.message);}
 }
 
+let _ntT;
+function debounceNoToc(){clearTimeout(_ntT);_ntT=setTimeout(()=>loadNoToc(1),350);}
+async function loadNoToc(page){
+  page=page||1;
+  const q=new URLSearchParams({page:page,per_page:perPage,view:"notoc",
+    search:document.getElementById("nt-search").value,
+    session_filter:document.getElementById("nt-session").value});
+  try{
+    const d=await api("/api/students?"+q.toString());
+    fillSessions(d.sessions);
+    document.getElementById("nt-count").textContent="Showing "+d.students.length+" of "+d.total+" no-TOC students";
+    const b=document.getElementById("nt-body");
+    b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
+      '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
+      '<td><span class="ref-tag">'+(s.reference_no||"\u2014")+'</span></td>'+
+      '<td>'+(s.student_name||"\u2014")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td>'+
+      '<td style="font-size:13px">'+(s.session||"\u2014")+'</td>'+
+      '<td>'+badge(s.current_status)+'</td>'+
+      '<td><span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:#FEF3C7;color:#92400E">no</span></td>'+
+      '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"\u2014")+'</td></tr>').join("")
+      :'<tr><td colspan="7" class="empty">No no-TOC students found. If the Portal shows some, their tocStatus has not reached the Tracker yet \u2014 run a fetch, and if still empty the Portal is not sending tocStatus.</td></tr>';
+    renderPg("nt-pg",page,d.pages,"loadNoToc");
+    const nb=document.getElementById("nav-notoc-badge");
+    if(nb){if(d.total>0){nb.textContent=d.total;nb.style.display="";}else{nb.style.display="none";}}
+  }catch(e){showToast(""+e.message);}
+}
+async function runNotoc(btn){
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    const r=await api("/api/run-now-notoc","POST");
+    showToast(r.message||"Running\u2026");
+  }catch(e){showToast("Error: "+e.message);}
+  finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},2000);}
+}
+function exportNoToc(){
+  const q=new URLSearchParams({view:"notoc",search:fval("nt-search"),session_filter:fval("nt-session")});
+  showToast("Preparing Excel\u2026");
+  fetch(API+"/api/export-students?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}})
+    .then(r=>r.ok?r.blob():Promise.reject())
+    .then(blob=>{const u=URL.createObjectURL(blob);const a=document.createElement("a");a.href=u;a.download="no-toc-students.xlsx";a.click();URL.revokeObjectURL(u);})
+    .catch(()=>showToast("Export failed"));
+}
 async function loadConfirmed(page){
   page=page||1;
   const dr=dateRange("c");
@@ -3976,6 +4049,12 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("is_confirmed = 1")
     elif view == "required":
         wc.append("current_status = 'Document Required'")
+    elif view == "notoc":
+        # No-TOC page: every student whose tocStatus is 'no', any status (active OR confirmed),
+        # excluding SYC. Used to verify the no-TOC data and run/resend them as one group.
+        wc.append("LOWER(COALESCE(toc_status,'')) = 'no'")
+        wc.append("COALESCE(current_status,'') != 'SYC'")
+        wc.append("(session IS NULL OR session NOT LIKE '%syc%')")
     else:  # normal = active students, exclude confirmed and SYC (NULL-safe)
         wc.append("COALESCE(is_confirmed,0) = 0")
         wc.append("COALESCE(current_status,'') != 'SYC'")
@@ -4099,6 +4178,21 @@ async def unknown_students(page: int = 1, per_page: int = 50, search: str = "",
     return {"students": [dict(r) for r in rows], "total": total, "page": page,
             "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page),
             "sessions": norm_sessions}
+
+@app.post("/api/run-now-notoc")
+async def run_now_notoc(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Run ONLY the no-TOC students (tocStatus='no') that are not yet confirmed. Confirmed ones
+    already have a final status, so only the pending/active no-TOC students are checked here."""
+    conn = get_db()
+    rows = conn.execute("SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 "
+                        "AND LOWER(COALESCE(toc_status,''))='no' AND COALESCE(is_confirmed,0)=0 "
+                        "AND COALESCE(current_status,'')!='SYC'").fetchall()
+    keys = [r["row_key"] for r in rows]
+    conn.close()
+    if not keys:
+        return {"message": "No pending no-TOC students to run.", "count": 0}
+    background_tasks.add_task(run_status_check, "all", None, "selected", keys)
+    return {"message": f"Running {len(keys)} no-TOC student(s)…", "count": len(keys)}
 
 @app.post("/api/run-now-unknown")
 async def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token)):
