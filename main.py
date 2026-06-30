@@ -4196,6 +4196,7 @@ async def sync_toc(user=Depends(verify_token)):
     WITHOUT any CapSolver / NIOS status check — only the toc_status field is touched, so NO credits
     are used. After this runs, no-TOC students show on the No-TOC page and resend works."""
     import mvs_sync
+    from fastapi.concurrency import run_in_threadpool
     if not mvs_sync.enabled():
         return {"ok": False, "message": "MVS Portal is not configured."}
     try:
