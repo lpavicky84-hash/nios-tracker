@@ -218,7 +218,7 @@ def _post(campaign, phone, name, params, group=None, media_url=None):
             low = body.replace(" ", "").lower()
             if '"success":false' in low or '"error"' in low or "errormessage" in low:
                 return False, f"gateway rejected: {body}"
-            return True, "accepted by WhatsApp gateway (delivery pending)"
+            return True, f"sent via '{campaign}' (delivery pending)"
         return False, f"HTTP {r.status_code}: {body}"
     except Exception as e:
         return False, f"error: {e}"

@@ -2121,6 +2121,8 @@ function waBtn(s){
     badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">&#9888; Delivery FAILED — please resend</div>';
   }else if(sent){
     badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:#B45309">Sent to WhatsApp'+(at?' &middot; '+at:'')+' <span style="font-weight:400;color:var(--muted)">(delivery not yet confirmed)</span></div>';
+    var info2=(s.whatsapp_info||"");
+    if(info2 && info2.indexOf("via")>=0){badge+='<div style="font-size:10.5px;color:var(--muted);margin-top:1px">'+info2.replace(/</g,"&lt;").slice(0,90)+'</div>';}
   }else{
     var why=(s.whatsapp_info||"");
     if(why && why.toLowerCase().indexOf("accepted")>=0){
