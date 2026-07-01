@@ -2653,23 +2653,27 @@ let fTimer=null;
 function debounceFailed(){clearTimeout(fTimer);fTimer=setTimeout(()=>loadFailed(1),400);}
 async function diagnoseLogin(){
   var NL=String.fromCharCode(10);
+  var ref=prompt("To test a REAL login, enter a confirmed student REFERENCE NO (or leave blank to only check reachability):","");
+  if(ref===null) return;
+  ref=(ref||"").trim();
+  var dob="";
+  if(ref){ dob=prompt("Enter that student DATE OF BIRTH (DD-MM-YYYY):",""); if(dob===null) return; dob=(dob||"").trim(); }
   try{
-    var resp=await fetch(API+"/api/nios-reach",{headers:{"Authorization":"Bearer "+TOKEN}});
+    var q=new URLSearchParams(); if(ref)q.set("ref",ref); if(dob)q.set("dob",dob);
+    var resp=await fetch(API+"/api/nios-reach?"+q.toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
     var txt=await resp.text();
     var r={}; try{r=JSON.parse(txt);}catch(e){}
-    if(!resp.ok){
-      alert("Diagnose returned HTTP "+resp.status+NL+"(if this is 404, the new code is NOT deployed yet)"+NL+NL+txt.slice(0,500));
-      return;
-    }
-    var msg="NIOS SERVER-REACHABILITY CHECK"+NL+
-      "(code version: "+(r.endpoint_version||"OLD - redeploy not applied yet")+")"+NL+NL+
+    if(!resp.ok){ alert("Diagnose returned HTTP "+resp.status+NL+NL+txt.slice(0,500)); return; }
+    var msg="NIOS DIAGNOSIS  (code version: "+(r.endpoint_version||"OLD")+")"+NL+NL+
       "Page HTTP status : "+(r.page_status)+NL+
-      "Page length      : "+(r.page_len)+NL+
-      "Looks blocked    : "+(r.looks_blocked?"YES  <-- NIOS is blocking/challenging the server":"no")+NL+
-      "CSRF found       : "+(r.csrf_found?"yes":"NO  <-- server could not load the real login form")+NL+
-      "LIVE site key    : "+(r.live_sitekey||"(none)")+NL+
-      "Built-in key     : "+(r.built_in_sitekey||"(none)")+NL+NL+
-      "Server sees (first 400 chars):"+NL+(r.page_snippet||"(empty)");
+      "Looks blocked    : "+(r.looks_blocked?"YES":"no")+NL+
+      "CSRF found       : "+(r.csrf_found?"yes":"NO")+NL+
+      "Site key OK      : "+((r.live_sitekey&&r.live_sitekey===r.built_in_sitekey)?"yes (same)":(r.live_sitekey?"CHANGED":"(none)"))+NL+NL+
+      "--- LOGIN TEST ---"+NL+
+      "Captcha token : "+(r.captcha_token||"(skipped)")+NL+
+      "Login result  : "+(r.login_result||"")+NL+
+      (r.final_url?("Final URL: "+r.final_url+NL):"")+
+      (r.snippet?(NL+"After login page says: "+r.snippet):"");
     alert(msg);
   }catch(e){ alert("Diagnose failed: "+e); }
 }
@@ -5938,14 +5942,16 @@ async def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=De
         return {"error": str(e)[:200]}
 
 @app.get("/api/nios-reach")
-async def nios_reach_ep(user=Depends(verify_token)):
-    """Diagnose NIOS reachability from the SERVER. The key check: can the server load the real
-    NIOS login page (status code + snippet)? If it can't, NIOS is blocking the server IP.
-    (Unique path — avoids the older /api/debug-login route.)"""
+async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):
+    """Diagnose NIOS reachability from the SERVER. Checks (1) can the server load the real NIOS
+    login page, and (2) if ref+dob given, whether a full login (captcha solve + POST) actually
+    succeeds — pinpointing captcha-token vs score/bounce failures."""
     import requests as _rq
-    out = {"endpoint_version": "v2", "page_status": "", "page_len": 0,
+    out = {"endpoint_version": "v3", "page_status": "", "page_len": 0,
            "looks_blocked": None, "csrf_found": False, "page_snippet": "",
-           "built_in_sitekey": "", "live_sitekey": "", "login_result": "", "final_url": "", "snippet": ""}
+           "built_in_sitekey": "", "live_sitekey": "",
+           "captcha_token": "", "login_result": "(no ref/dob — login test skipped)",
+           "final_url": "", "snippet": ""}
     try:
         import nios_login as nl
         out["built_in_sitekey"] = getattr(nl, "RECAPTCHA_SITE_KEY", "") or ""
@@ -5974,6 +5980,29 @@ async def nios_reach_ep(user=Depends(verify_token)):
             "request blocked", "not allowed", "access to this page has been denied"])
     except Exception as e:
         out["page_status"] = f"FETCH ERROR: {type(e).__name__}: {str(e)[:150]}"
+    # Full login test (only if a real ref+dob is provided) — this reveals the actual failure:
+    #  captcha token not obtained  -> CapSolver/key issue
+    #  BOUNCED back to login       -> captcha score too low OR wrong data
+    #  LOGGED IN OK                -> login works
+    if ref and dob and not str(out.get("page_status")).startswith("FETCH"):
+        try:
+            tok = ""
+            try:
+                tok = nl.solve_recaptcha_v3(LOGIN_URL, site_key=(out.get("live_sitekey") or None))
+            except TypeError:
+                tok = nl.solve_recaptcha_v3(LOGIN_URL)
+            out["captcha_token"] = ("obtained (" + str(len(tok or "")) + " chars)") if tok else "NOT obtained (CapSolver failed)"
+            session, resp = nl.login_student(ref, dob)
+            if resp is None:
+                out["login_result"] = "captcha token NOT obtained (CapSolver/key issue)"
+            else:
+                li = nl.is_logged_in(resp.text)
+                out["login_result"] = "LOGGED IN OK" if li else "BOUNCED back to login (captcha score too low OR wrong ref/DOB)"
+                out["final_url"] = str(getattr(resp, "url", ""))
+                from bs4 import BeautifulSoup as _BS
+                out["snippet"] = _BS(resp.text, "html.parser").get_text(" ", strip=True)[:300]
+        except Exception as e:
+            out["login_result"] = f"login error: {type(e).__name__}: {str(e)[:150]}"
     return out
 
 @app.get("/api/syc")
