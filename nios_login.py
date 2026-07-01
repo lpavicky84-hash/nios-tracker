@@ -26,6 +26,13 @@ CAPSOLVER_API_KEY = os.environ.get("CAPTCHA_API_KEY", "")
 CAPSOLVER_CREATE  = "https://api.capsolver.com/createTask"
 CAPSOLVER_RESULT  = "https://api.capsolver.com/getTaskResult"
 
+# reCAPTCHA v3 is score-based; a single solve can occasionally score low and NIOS bounces it.
+# Retrying with a fresh token (fresh score) makes a valid student almost never fail. Tunable.
+try:
+    _LOGIN_TRIES = max(2, int(os.environ.get("NIOS_LOGIN_TRIES", "4")))
+except Exception:
+    _LOGIN_TRIES = 4
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -395,9 +402,9 @@ def verify_login(reference_no, dob, enrollment_no=""):
     key = ("enr:" + enrollment_no) if enrollment_no else reference_no
     try:
         target = urljoin(BASE, DOC_URLS["id_card"])
-        for attempt in range(2):
+        for attempt in range(_LOGIN_TRIES):
             session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no,
-                                            force=(attempt == 1))
+                                            force=(attempt >= 1))
             if session is None:
                 continue                                   # login page bounce -> retry
             try:
@@ -465,7 +472,7 @@ def fetch_status_via_login(reference_no, dob, enrollment_no=""):
         from scraper import get_status_label
     except Exception:
         return ""
-    for attempt in range(2):
+    for attempt in range(_LOGIN_TRIES):
         try:
             session, resp = login_student(reference_no, dob, enrollment_no=enrollment_no)
         except Exception as e:
@@ -841,9 +848,9 @@ def fetch_document(reference_no, dob, kind, enrollment_no=""):
     # Try twice: NIOS reCAPTCHA v3 is score-based and can intermittently reject an
     # automated login even when the details are correct. On failure we drop the
     # cached session and retry once with a fresh CSRF + captcha.
-    for attempt in range(2):
+    for attempt in range(_LOGIN_TRIES):
         session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no,
-                                        force=(attempt == 1))
+                                        force=(attempt >= 1))
         if session is None:
             if _LAST_FAIL_REASON == "captcha":
                 last_err = ("CAPTCHA_BUSY: could not open the document right now — the captcha/login "
