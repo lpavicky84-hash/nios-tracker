@@ -38,19 +38,21 @@ def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
         logger.error("CAPTCHA_API_KEY not set!")
         return ""
     try:
-        task = {
-            "type": "ReCaptchaV3TaskProxyLess",
-            "websiteURL": page_url,
-            "websiteKey": site_key or RECAPTCHA_SITE_KEY,
-        }
-        # reCAPTCHA v3 is score-based (0.0-1.0). A datacenter-solved token often scores low and
-        # NIOS then rejects the login. Ask CapSolver for a high-score token. Tunable via env.
+        proxy = os.environ.get("CAPSOLVER_PROXY", "").strip()
+        # With a (residential/Indian) proxy CapSolver produces a HIGH-score token that NIOS
+        # accepts. Without one it falls back to proxyless (often low score on datacenter IPs).
+        if proxy:
+            task = {"type": "ReCaptchaV3Task", "websiteURL": page_url,
+                    "websiteKey": site_key or RECAPTCHA_SITE_KEY, "proxy": proxy}
+        else:
+            task = {"type": "ReCaptchaV3TaskProxyLess", "websiteURL": page_url,
+                    "websiteKey": site_key or RECAPTCHA_SITE_KEY}
+        # reCAPTCHA v3 is score-based (0.0-1.0). Ask CapSolver for a high-score token.
         try:
-            task["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.3"))
+            task["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.9"))
         except Exception:
-            task["minScore"] = 0.3
-        # reCAPTCHA v3 always executes with an action; pass the page's action, else a sensible
-        # default ('login') so the token isn't rejected on an action mismatch.
+            task["minScore"] = 0.9
+        # reCAPTCHA v3 always executes with an action; pass the page's action, else 'login'.
         task["pageAction"] = page_action or "login"
         r = requests.post(CAPSOLVER_CREATE,
                           json={"clientKey": CAPSOLVER_API_KEY, "task": task}, timeout=30).json()

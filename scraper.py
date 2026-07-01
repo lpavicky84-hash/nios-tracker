@@ -87,19 +87,19 @@ def solve_recaptcha_v3():
         logger.error("CAPTCHA_API_KEY not set!")
         return ""
     try:
-        payload = {
-            "clientKey": CAPSOLVER_API_KEY,
-            "task": {
-                "type": "ReCaptchaV3TaskProxyLess",
-                "websiteURL": NIOS_URL,
-                "websiteKey": _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY,
-            }
-        }
+        proxy = os.environ.get("CAPSOLVER_PROXY", "").strip()
+        if proxy:
+            task = {"type": "ReCaptchaV3Task", "websiteURL": NIOS_URL,
+                    "websiteKey": _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY, "proxy": proxy}
+        else:
+            task = {"type": "ReCaptchaV3TaskProxyLess", "websiteURL": NIOS_URL,
+                    "websiteKey": _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY}
         try:
-            payload["task"]["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.3"))
+            task["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.9"))
         except Exception:
-            payload["task"]["minScore"] = 0.3
-        payload["task"]["pageAction"] = _SITEKEY_CACHE.get("action") or "login"
+            task["minScore"] = 0.9
+        task["pageAction"] = _SITEKEY_CACHE.get("action") or "login"
+        payload = {"clientKey": CAPSOLVER_API_KEY, "task": task}
         r = requests.post(CAPSOLVER_CREATE, json=payload, timeout=30).json()
         if r.get("errorId") != 0:
             logger.error(f"CapSolver create error: {r.get('errorDescription')}")
