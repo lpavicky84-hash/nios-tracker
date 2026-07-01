@@ -207,6 +207,22 @@ def init_db():
             created TEXT DEFAULT (datetime('now'))
         )
     """)
+    # Saved copies of confirmed students' NIOS documents (id_card / app_form / hall_ticket).
+    # The bytes live on disk (DATA_DIR/doccache); this table just records what we have, so a
+    # student's WhatsApp link can be served straight from OUR copy — no live NIOS/CapSolver hit,
+    # and it keeps working even when NIOS is down.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS document_cache (
+            row_key TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            file_path TEXT,
+            content_type TEXT,
+            filename TEXT,
+            size INTEGER,
+            fetched_at TEXT,
+            PRIMARY KEY (row_key, kind)
+        )
+    """)
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_public', '12')")
     # WhatsApp auto-send disabled until configured + turned on from the portal
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('wa_enabled', '0')")

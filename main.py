@@ -759,6 +759,8 @@ function applySidebarPref(){
             <button class="btn btn-outline btn-sm" onclick="exportStudents('confirmed')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
+            <button class="btn btn-success btn-sm" id="cache-docs-btn" onclick="cacheDocsNow(this)" title="Fetch every confirmed student document from NIOS once and SAVE it in our database. After this, WhatsApp links open straight from our copy — no NIOS/CapSolver needed, and they keep working even if NIOS is down.">&#128190; Save all documents to DB</button>
+            <span id="cache-docs-status" style="font-size:12px;color:var(--muted);align-self:center"></span>
           </div>
           <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <span style="font-weight:700;font-size:13px"><span id="c-selcount">0</span> selected</span>
@@ -2411,6 +2413,36 @@ async function resendNoTocConfirmed(btn){
   finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},2000);}
 }
 let WA_POLL=null, WA_SEEN_RUNNING=false;
+async function cacheDocsNow(btn){
+  if(!confirm("Save every confirmed student document into our database now? This fetches each document from NIOS once and stores our own copy, so WhatsApp links open straight from our copy \u2014 no NIOS/CapSolver, and they keep working even if NIOS is down. Runs in the background; may take a while for many students.")) return;
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    const r=await api("/api/cache-docs","POST");
+    if(r&&r.ok){ startCachePoll(); }
+    else { showToast((r&&r.message)||"Already saving\u2026"); startCachePoll(); }
+  }catch(e){ showToast("Error: "+e.message); if(btn){btn.disabled=false;btn.style.opacity="";} }
+}
+let CACHE_POLL=null;
+function startCachePoll(){
+  if(CACHE_POLL)clearInterval(CACHE_POLL);
+  const el=document.getElementById("cache-docs-status");
+  const btn=document.getElementById("cache-docs-btn");
+  const tick=async()=>{
+    let d; try{ d=await api("/api/cache-docs-progress"); }catch(e){ return; }
+    const p=(d&&d.progress)||{};
+    const pct=p.total?Math.round((p.done/p.total)*100):0;
+    if(el){
+      if(p.running){ el.textContent="Saving: "+p.done+"/"+p.total+" ("+pct+"%) \u00b7 saved "+p.saved+", failed "+p.failed; }
+      else { el.textContent="Saved copies in DB: "+((d&&d.students_cached)||0)+" students / "+((d&&d.total_cached)||0)+" documents"+(p.finished_at?(" \u00b7 last run done"):""); }
+    }
+    if(!p.running){
+      clearInterval(CACHE_POLL); CACHE_POLL=null;
+      if(btn){btn.disabled=false;btn.style.opacity="";}
+      if(p.total){ showToast("Documents saved: "+p.saved+" ("+p.failed+" failed)"); }
+    }
+  };
+  tick(); CACHE_POLL=setInterval(tick,2500);
+}
 function renderWaProgress(p){
   document.getElementById("wap-title").textContent=(p.label||"Sending WhatsApp")+(p.running?"":" — done");
   document.getElementById("wap-pct").textContent=p.pct||0;
@@ -2681,6 +2713,7 @@ async function diagnoseLogin(){
       "CapSolver result: "+(r.capsolver_result||"?")+NL+
       "Captcha token : "+(r.captcha_token||"(skipped)")+NL+
       "DOB format test: "+(r.dob_format_test||"(skipped)")+NL+
+      "verify_login (real path): "+(r.verify_login_test||"(skipped)")+NL+
       "Login result  : "+(r.login_result||"")+NL+
       (r.final_url?("Final URL: "+r.final_url+NL):"")+
       (r.snippet?(NL+"After login page says: "+r.snippet):"");
@@ -5961,7 +5994,7 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
            "looks_blocked": None, "csrf_found": False, "page_snippet": "",
            "built_in_sitekey": "", "live_sitekey": "", "recaptcha_action": "",
            "form_fields": "", "recaptcha_fields": "", "recaptcha_type": "", "action_from_js": "", "dob_format_test": "",
-           "proxy_set": "", "proxy_direct_test": "", "capsolver_create": "", "capsolver_result": "",
+           "proxy_set": "", "proxy_direct_test": "", "capsolver_create": "", "capsolver_result": "", "verify_login_test": "",
            "captcha_token": "", "login_result": "(no ref/dob — login test skipped)",
            "final_url": "", "snippet": ""}
     try:
@@ -6130,6 +6163,12 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
             out["dob_format_test"] = " | ".join(results)
             out["login_result"] = (f"LOGGED IN OK with DOB format '{logged_in_fmt}'" if logged_in_fmt
                                    else "ALL formats BOUNCED -> likely captcha score (needs proxy)")
+            # Also test the REAL path the run uses (login + fetch a protected doc page).
+            try:
+                okv, msgv = nl.verify_login(ref, nl.format_dob(dob))
+                out["verify_login_test"] = "OK (run's login path works — safe to re-run)" if okv else f"FAILED: {str(msgv)[:160]}"
+            except Exception as ev:
+                out["verify_login_test"] = f"error: {type(ev).__name__}: {str(ev)[:120]}"
         except Exception as e:
             out["login_result"] = f"login error: {type(e).__name__}: {str(e)[:150]}"
     return out
@@ -6890,6 +6929,65 @@ def auto_send_pending_whatsapp(batch=None, label="Auto sweep"):
         logger.info(f"WhatsApp {label}: sent {sent}/{len(keys)} pending confirmed student(s)")
     return {"sent": sent, "checked": len(keys)}
 
+CACHE_PROGRESS = {"running": False, "total": 0, "done": 0, "saved": 0, "failed": 0,
+                  "started_at": "", "finished_at": "", "label": ""}
+
+def _cache_all_confirmed_worker():
+    """Fetch + save every confirmed student's allowed documents into OUR database, so their
+    WhatsApp links open straight from our copy (no live NIOS / CapSolver, works if NIOS is down).
+    Skips documents already saved."""
+    if CACHE_PROGRESS["running"]:
+        return
+    try:
+        import whatsapp
+        from nios_login import fetch_document
+        conn = get_db()
+        rows = conn.execute("SELECT row_key, reference_no, enrollment_no, dob, session, toc_status "
+                            "FROM student_status WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 "
+                            "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
+        conn.close()
+        tasks = []
+        for r in rows:
+            allowed = whatsapp.allowed_docs(r["session"], (r["toc_status"] or ""))
+            for kind in allowed:
+                if load_doc_cache(r["row_key"], kind) is None:   # not saved yet
+                    tasks.append((r["row_key"], r["reference_no"] or "", r["enrollment_no"] or "",
+                                  r["dob"] or "", kind))
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        CACHE_PROGRESS.update({"running": True, "total": len(tasks), "done": 0, "saved": 0,
+                               "failed": 0, "started_at": now, "finished_at": "", "label": "Saving documents"})
+        for rk, ref, enroll, dob, kind in tasks:
+            try:
+                content, ctype, filename = fetch_document(ref, dob, kind, enrollment_no=enroll)
+                if content is not None:
+                    save_doc_cache(rk, kind, content, ctype, filename)
+                    CACHE_PROGRESS["saved"] += 1
+                else:
+                    CACHE_PROGRESS["failed"] += 1
+            except Exception:
+                CACHE_PROGRESS["failed"] += 1
+            CACHE_PROGRESS["done"] += 1
+    finally:
+        CACHE_PROGRESS["running"] = False
+        CACHE_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+@app.post("/api/cache-docs")
+async def cache_docs(user=Depends(verify_token)):
+    """Start saving all confirmed students' documents into our database (background)."""
+    if CACHE_PROGRESS["running"]:
+        return {"ok": False, "message": "Already saving — please wait."}
+    import threading
+    threading.Thread(target=_cache_all_confirmed_worker, daemon=True).start()
+    return {"ok": True, "message": "Saving all confirmed documents to the database in the background."}
+
+@app.get("/api/cache-docs-progress")
+async def cache_docs_progress(user=Depends(verify_token)):
+    conn = get_db()
+    total_cached = conn.execute("SELECT COUNT(*) FROM document_cache").fetchone()[0]
+    students_cached = conn.execute("SELECT COUNT(DISTINCT row_key) FROM document_cache").fetchone()[0]
+    conn.close()
+    return {"progress": CACHE_PROGRESS, "total_cached": total_cached, "students_cached": students_cached}
+
 @app.post("/api/wa-resend")
 async def wa_resend(body: dict, user=Depends(verify_token)):
     """Manual (re)send for ONE student. Runs the send in a worker thread (so the event loop
@@ -7111,9 +7209,15 @@ async def public_doc_file(token: str, kind: str):
     toc_v = (row["toc_status"] if ("toc_status" in row.keys()) else "") or ""
     if not whatsapp.doc_allowed(row["session"], toc_v, kind):
         raise HTTPException(status_code=404, detail="This document is no longer available for your admission type. Please open the latest links we sent you on WhatsApp.")
-    content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
-    if content is None:
-        raise HTTPException(status_code=404, detail=ctype)
+    # Serve from OUR saved copy first (no NIOS/CapSolver); else fetch live + save.
+    cached = load_doc_cache(row_key, kind)
+    if cached is not None:
+        content, ctype, filename = cached
+    else:
+        content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
+        if content is None:
+            raise HTTPException(status_code=404, detail=ctype)
+        save_doc_cache(row_key, kind, content, ctype, filename)
     disp = f'attachment; filename="{filename}"' if "pdf" in ctype else "inline"
     return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
 
@@ -7187,6 +7291,53 @@ def _cache_get(key):
         return None
     return v[1], v[2], v[3]
 
+def _doc_cache_dir():
+    try:
+        from database import DATA_DIR as _DD
+    except Exception:
+        _DD = os.environ.get("DATA_DIR", ".")
+    d = os.path.join(_DD, "doccache")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def save_doc_cache(row_key, kind, content, ctype, filename):
+    """Persist a fetched document to disk + record it, so future opens serve from OUR copy."""
+    import re as _re
+    try:
+        ext = "pdf" if "pdf" in (ctype or "").lower() else "html"
+        safe = _re.sub(r'[^A-Za-z0-9_.-]', '_', str(row_key))[:120]
+        path = os.path.join(_doc_cache_dir(), f"{safe}__{kind}.{ext}")
+        with open(path, "wb") as f:
+            f.write(content)
+        conn = get_db()
+        conn.execute("INSERT OR REPLACE INTO document_cache "
+                     "(row_key, kind, file_path, content_type, filename, size, fetched_at) "
+                     "VALUES (?,?,?,?,?,?,?)",
+                     (row_key, kind, path, ctype, filename, len(content or b""),
+                      datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit(); conn.close()
+        return True
+    except Exception as e:
+        logger.warning(f"save_doc_cache failed {row_key}/{kind}: {e}")
+        return False
+
+def load_doc_cache(row_key, kind):
+    """Return (content_bytes, content_type, filename) from our saved copy, or None."""
+    try:
+        conn = get_db()
+        row = conn.execute("SELECT file_path, content_type, filename FROM document_cache "
+                           "WHERE row_key=? AND kind=?", (row_key, kind)).fetchone()
+        conn.close()
+        if not row or not row["file_path"]:
+            return None
+        with open(row["file_path"], "rb") as f:
+            data = f.read()
+        if not data:
+            return None
+        return data, (row["content_type"] or "application/pdf"), (row["filename"] or f"{kind}.pdf")
+    except Exception:
+        return None
+
 def _fetch_doc_for(row_key, kind):
     """Return ((content, ctype, filename), None) or (None, error_message).
     Never raises — a NIOS/network hiccup becomes a clean error so the student
@@ -7209,9 +7360,15 @@ def _fetch_doc_for(row_key, kind):
         if not whatsapp.doc_allowed(row["session"], toc_v, kind):
             return None, ("This document is no longer available for your admission type. "
                           "Please open the latest links we sent you on WhatsApp.")
+        # 1) Serve from OUR saved copy first — no NIOS/CapSolver, works even if NIOS is down.
+        cached = load_doc_cache(row_key, kind)
+        if cached is not None:
+            return cached, None
+        # 2) Not saved yet -> fetch live from NIOS, then save for next time.
         content, ctype, filename = fetch_document(ref, row["dob"], kind, enrollment_no=enroll)
         if content is None:
             return None, (ctype or "could not load document")
+        save_doc_cache(row_key, kind, content, ctype, filename)
         return (content, ctype, filename), None
     except Exception as e:
         logger.warning(f"doc fetch failed for {kind}: {e}")
