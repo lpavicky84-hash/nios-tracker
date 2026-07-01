@@ -2676,6 +2676,7 @@ async function diagnoseLogin(){
       "reCAPTCHA/Login fields: "+(r.recaptcha_fields||"(none)")+NL+NL+
       "--- LOGIN TEST ---"+NL+
       "Captcha token : "+(r.captcha_token||"(skipped)")+NL+
+      "DOB format test: "+(r.dob_format_test||"(skipped)")+NL+
       "Login result  : "+(r.login_result||"")+NL+
       (r.final_url?("Final URL: "+r.final_url+NL):"")+
       (r.snippet?(NL+"After login page says: "+r.snippet):"");
@@ -5955,7 +5956,7 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
     out = {"endpoint_version": "v3", "page_status": "", "page_len": 0,
            "looks_blocked": None, "csrf_found": False, "page_snippet": "",
            "built_in_sitekey": "", "live_sitekey": "", "recaptcha_action": "",
-           "form_fields": "", "recaptcha_fields": "", "recaptcha_type": "", "action_from_js": "",
+           "form_fields": "", "recaptcha_fields": "", "recaptcha_type": "", "action_from_js": "", "dob_format_test": "",
            "captcha_token": "", "login_result": "(no ref/dob — login test skipped)",
            "final_url": "", "snippet": ""}
     try:
@@ -6040,21 +6041,48 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
     #  LOGGED IN OK                -> login works
     if ref and dob and not str(out.get("page_status")).startswith("FETCH"):
         try:
-            tok = ""
-            try:
-                tok = nl.solve_recaptcha_v3(LOGIN_URL, site_key=(out.get("live_sitekey") or None))
-            except TypeError:
-                tok = nl.solve_recaptcha_v3(LOGIN_URL)
-            out["captcha_token"] = ("obtained (" + str(len(tok or "")) + " chars)") if tok else "NOT obtained (CapSolver failed)"
-            session, resp = nl.login_student(ref, dob)
-            if resp is None:
-                out["login_result"] = "captcha token NOT obtained (CapSolver/key issue)"
-            else:
-                li = nl.is_logged_in(resp.text)
-                out["login_result"] = "LOGGED IN OK" if li else "BOUNCED back to login (captcha score too low OR wrong ref/DOB)"
-                out["final_url"] = str(getattr(resp, "url", ""))
-                from bs4 import BeautifulSoup as _BS
-                out["snippet"] = _BS(resp.text, "html.parser").get_text(" ", strip=True)[:300]
+            import re as _re3
+            base = nl.format_dob(dob)                      # DD-MM-YYYY
+            m = _re3.match(r'(\d{2})-(\d{2})-(\d{4})', base or "")
+            cands = [base] if base else []
+            if m:
+                d, mo, y = m.groups()
+                cands += [f"{y}-{mo}-{d}", f"{d}/{mo}/{y}", f"{mo}-{d}-{y}"]   # try 4 formats total
+            results = []
+            logged_in_fmt = ""
+            for fmt in cands[:4]:
+                try:
+                    s = _rq.Session()
+                    csrf = nl.get_login_csrf(s)
+                    try:
+                        tok = nl.solve_recaptcha_v3(LOGIN_URL, site_key=(out.get("live_sitekey") or None))
+                    except TypeError:
+                        tok = nl.solve_recaptcha_v3(LOGIN_URL)
+                    if not out.get("captcha_token"):
+                        out["captcha_token"] = ("obtained (" + str(len(tok or "")) + " chars)") if tok else "NOT obtained"
+                    payload = {
+                        "_csrf": csrf,
+                        "LoginForm[reference_no]": ref,
+                        "LoginForm[application_no]": "",
+                        "LoginForm[date_of_birth]": fmt,
+                        "LoginForm[google_recaptcha_response]": tok,
+                        "LoginForm[google_recapcha_response]": tok,
+                        "LoginForm[rememberMe]": "0",
+                        "login-button": "",
+                    }
+                    rr2 = s.post(LOGIN_URL, data=payload,
+                                 headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded",
+                                          "Origin": "https://sdmis.nios.ac.in"}, timeout=35)
+                    ok = nl.is_logged_in(rr2.text)
+                    results.append(f"{fmt} = {'LOGGED IN' if ok else 'bounce'}")
+                    if ok:
+                        logged_in_fmt = fmt
+                        break
+                except Exception as e:
+                    results.append(f"{fmt} = err({str(e)[:30]})")
+            out["dob_format_test"] = " | ".join(results)
+            out["login_result"] = (f"LOGGED IN OK with DOB format '{logged_in_fmt}'" if logged_in_fmt
+                                   else "ALL formats BOUNCED -> likely captcha score (needs proxy)")
         except Exception as e:
             out["login_result"] = f"login error: {type(e).__name__}: {str(e)[:150]}"
     return out
