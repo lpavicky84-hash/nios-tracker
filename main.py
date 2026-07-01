@@ -887,6 +887,7 @@ function applySidebarPref(){
             <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <button class="btn btn-outline btn-sm" onclick="loadFailed(1)">Refresh</button>
             <button class="btn btn-success btn-sm" id="f-runall-btn" onclick="runAllFailed(this)" title="Re-run every failed student with auto-retry + DOB date/month auto-swap">&#8635; Re-check all (auto-fix)</button>
+            <button class="btn btn-outline btn-sm" onclick="diagnoseLogin()" title="Check why NIOS login is failing (site-key / bounce / captcha)">&#128295; Diagnose NIOS login</button>
           </div>
           <div id="f-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div id="f-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="f-selcount">0</span> selected</span><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('f')">&#128465; Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('f')">Clear</button></div>
@@ -1100,6 +1101,19 @@ function applySidebarPref(){
       </section>
 
       <section id="sec-settings" class="page-section">
+        <div class="card" style="border:2px solid #FECACA;background:#FEF2F2">
+          <div class="set-head">
+            <span class="set-ico" style="background:linear-gradient(135deg,#DC2626,#B91C1C)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg></span>
+            <div class="set-tt"><h3>NIOS Login Diagnostic</h3>
+            <div class="set-sub">Logins failing? Enter a <b>known-confirmed</b> student's Reference No + DOB and click Run — it tells you the REAL cause (site-key change, captcha token, or NIOS rejection).</div></div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px">
+            <input id="dg-ref" placeholder="Reference No" style="padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+            <input id="dg-dob" placeholder="DOB (DD-MM-YYYY)" style="padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+            <button class="btn-primary" onclick="diagnoseLogin()" style="padding:9px 16px">Run diagnostic</button>
+          </div>
+          <pre id="dg-out" style="display:none;margin-top:10px;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto"></pre>
+        </div>
         <div class="card">
           <div class="set-head">
             <span class="set-ico" style="background:linear-gradient(135deg,#4F46E5,#7C3AED)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></span>
@@ -2285,6 +2299,17 @@ async function syncToc(btn){
   }catch(e){showToast("Error: "+e.message);}
   finally{if(btn){btn.disabled=false;btn.style.opacity="";btn.innerHTML=o;}}
 }
+async function diagnoseLogin(){
+  var ref=(fval("dg-ref")||"").trim(), dob=(fval("dg-dob")||"").trim();
+  var out=document.getElementById("dg-out");
+  if(!ref||!dob){showToast("Enter Reference No and DOB");return;}
+  out.style.display="block"; out.textContent="Running live NIOS login test\u2026 (this can take ~20-40s)";
+  try{
+    const q=new URLSearchParams({ref:ref,dob:dob});
+    const r=await api("/api/diagnose-login?"+q.toString(),"GET");
+    out.textContent=JSON.stringify(r,null,2);
+  }catch(e){out.textContent="Error: "+e.message;}
+}
 async function runNotoc(btn){
   if(btn){btn.disabled=true;btn.style.opacity="0.6";}
   try{
@@ -2626,6 +2651,27 @@ async function loadRequired(page){
 
 let fTimer=null;
 function debounceFailed(){clearTimeout(fTimer);fTimer=setTimeout(()=>loadFailed(1),400);}
+async function diagnoseLogin(){
+  var NL=String.fromCharCode(10);
+  var ref=prompt("Diagnose NIOS login. Enter a REFERENCE NO of a confirmed student to test (blank = only check site-key):","");
+  if(ref===null) return;
+  ref=(ref||"").trim();
+  var dob="";
+  if(ref){ dob=prompt("Enter that student DATE OF BIRTH (DD-MM-YYYY):",""); if(dob===null) return; dob=(dob||"").trim(); }
+  try{
+    var q=new URLSearchParams(); if(ref)q.set("ref",ref); if(dob)q.set("dob",dob);
+    var r=await api("/api/debug-login?"+q.toString());
+    var msg="NIOS LOGIN DIAGNOSIS"+NL+NL+
+      "Built-in site key : "+(r.built_in_sitekey||"")+NL+
+      "LIVE site key     : "+(r.live_sitekey||"")+NL+
+      "Site key changed  : "+(r.sitekey_changed?"YES  <-- this was the problem (now auto-fixed)":"no")+NL+
+      "CSRF found        : "+(r.csrf_found?"yes":"no")+NL+NL+
+      "Login result: "+(r.login_result||"")+NL+
+      (r.final_url?("Final URL: "+r.final_url+NL):"")+
+      (r.snippet?(NL+"Page says: "+r.snippet):"");
+    alert(msg);
+  }catch(e){ alert("Diagnose failed: "+e); }
+}
 async function loadFailed(page){
   page=page||1;
   const q=new URLSearchParams({page:page,per_page:perPage,
@@ -5879,6 +5925,51 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
     else:
         disp = "inline"
     return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
+
+@app.get("/api/diagnose-login")
+async def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=Depends(verify_token)):
+    """Live NIOS-login diagnostic — run this when logins are failing to see the REAL cause
+    (site-key change, captcha token, or NIOS rejection). Use a known-good student's ref + DOB."""
+    from nios_login import diagnose_login
+    try:
+        return diagnose_login((ref or "").strip(), (dob or "").strip(), (enr or "").strip())
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+@app.get("/api/debug-login")
+async def debug_login_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):
+    """Diagnose NIOS login: shows the LIVE reCAPTCHA site key vs the built-in one, and the
+    result of an actual login attempt (logged in / bounced / captcha). Open:
+    /api/debug-login?ref=REFERENCE&dob=DD-MM-YYYY"""
+    import nios_login as nl
+    import requests as _rq
+    out = {"built_in_sitekey": nl.RECAPTCHA_SITE_KEY, "live_sitekey": "",
+           "sitekey_changed": None, "csrf_found": False,
+           "login_result": "(no ref/dob given — only site-key checked)",
+           "final_url": "", "snippet": ""}
+    try:
+        s = _rq.Session()
+        csrf = nl.get_login_csrf(s)               # refreshes the live site key
+        out["csrf_found"] = bool(csrf)
+        out["live_sitekey"] = nl.current_login_sitekey()
+        out["sitekey_changed"] = (out["live_sitekey"] != nl.RECAPTCHA_SITE_KEY)
+    except Exception as e:
+        out["login_result"] = f"login-page fetch error: {e}"
+        return out
+    if ref and dob:
+        try:
+            session, resp = nl.login_student(ref, dob)
+            if resp is None:
+                out["login_result"] = "captcha token NOT obtained (CapSolver/key issue)"
+            else:
+                li = nl.is_logged_in(resp.text)
+                out["login_result"] = "LOGGED IN OK" if li else "BOUNCED back to login (NIOS rejected)"
+                out["final_url"] = str(getattr(resp, "url", ""))
+                from bs4 import BeautifulSoup as _BS
+                out["snippet"] = _BS(resp.text, "html.parser").get_text(" ", strip=True)[:300]
+        except Exception as e:
+            out["login_result"] = f"login error: {e}"
+    return out
 
 @app.get("/api/syc")
 async def get_syc(page: int = 1, per_page: int = 20, search: str = "", user=Depends(verify_token)):

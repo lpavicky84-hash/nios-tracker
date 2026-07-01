@@ -9,6 +9,21 @@ logger = logging.getLogger(__name__)
 
 NIOS_URL = "https://sdmis.nios.ac.in/registration/check-admission-status"
 RECAPTCHA_SITE_KEY = "6Lc07T4iAAAAADsnW1ZXbEz0GUissRcasTnSS4Nj"
+_SITEKEY_CACHE = {"key": RECAPTCHA_SITE_KEY}   # refreshed from the live check-status page
+
+def _extract_sitekey(html):
+    """Pull the live reCAPTCHA site key out of the page. NIOS can rotate it; solving for a
+    stale key makes NIOS silently reject the request. Returns '' if not found."""
+    if not html:
+        return ""
+    for pat in (r'api\.js\?render=([\w\-]{20,})',
+                r'data-sitekey=["\']([\w\-]{20,})["\']',
+                r'grecaptcha\.execute\(\s*["\']([\w\-]{20,})["\']',
+                r'["\'](6L[\w\-]{30,})["\']'):
+        m = re.search(pat, html)
+        if m:
+            return m.group(1)
+    return ""
 
 CAPSOLVER_API_KEY = os.environ.get("CAPTCHA_API_KEY", "")
 CAPSOLVER_CREATE  = "https://api.capsolver.com/createTask"
@@ -64,7 +79,7 @@ def solve_recaptcha_v3():
             "task": {
                 "type": "ReCaptchaV3TaskProxyLess",
                 "websiteURL": NIOS_URL,
-                "websiteKey": RECAPTCHA_SITE_KEY,
+                "websiteKey": _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY,
             }
         }
         r = requests.post(CAPSOLVER_CREATE, json=payload, timeout=30).json()
@@ -89,7 +104,13 @@ def solve_recaptcha_v3():
 
 def get_csrf(session):
     resp = session.get(NIOS_URL, headers=HEADERS, timeout=20)
-    soup = BeautifulSoup(resp.text, "html.parser")
+    html = resp.text or ""
+    sk = _extract_sitekey(html)          # keep captcha key in sync with the live page
+    if sk:
+        if sk != _SITEKEY_CACHE.get("key"):
+            logger.info(f"NIOS check-status site-key updated -> {sk}")
+        _SITEKEY_CACHE["key"] = sk
+    soup = BeautifulSoup(html, "html.parser")
     meta = soup.find("meta", {"name": "_csrf"})
     if meta:
         return meta.get("content", "")

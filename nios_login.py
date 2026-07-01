@@ -33,7 +33,7 @@ HEADERS = {
     "Referer": LOGIN_URL,
 }
 
-def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None):
+def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
     if not CAPSOLVER_API_KEY:
         logger.error("CAPTCHA_API_KEY not set!")
         return ""
@@ -41,7 +41,7 @@ def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None):
         task = {
             "type": "ReCaptchaV3TaskProxyLess",
             "websiteURL": page_url,
-            "websiteKey": RECAPTCHA_SITE_KEY,
+            "websiteKey": site_key or RECAPTCHA_SITE_KEY,
         }
         if page_action:
             task["pageAction"] = page_action
@@ -95,9 +95,35 @@ def format_dob(dob):
             continue
     return s   # assume already DD-MM-YYYY
 
+_SITEKEY_CACHE = {"key": RECAPTCHA_SITE_KEY}   # refreshed from the live login page each time
+
+def _extract_sitekey(html):
+    """Pull the current reCAPTCHA site key out of a page's HTML. NIOS can rotate this key;
+    if we keep solving for a stale hard-coded key, NIOS rejects every automated login even
+    though a human (who uses the live key) logs in fine. Returns '' if not found."""
+    if not html:
+        return ""
+    for pat in (r'api\.js\?render=([\w\-]{20,})',
+                r'data-sitekey=["\']([\w\-]{20,})["\']',
+                r'grecaptcha\.execute\(\s*["\']([\w\-]{20,})["\']',
+                r'["\'](6L[\w\-]{30,})["\']'):
+        m = re.search(pat, html)
+        if m:
+            return m.group(1)
+    return ""
+
+def current_login_sitekey():
+    return _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY
+
 def get_login_csrf(session):
     r = session.get(LOGIN_URL, headers=HEADERS, timeout=20)
-    soup = BeautifulSoup(r.text, "html.parser")
+    html = r.text or ""
+    sk = _extract_sitekey(html)          # keep the captcha key in sync with the live page
+    if sk:
+        if sk != _SITEKEY_CACHE.get("key"):
+            logger.info(f"NIOS login site-key updated -> {sk}")
+        _SITEKEY_CACHE["key"] = sk
+    soup = BeautifulSoup(html, "html.parser")
     meta = soup.find("meta", {"name": "_csrf"})
     if meta and meta.get("content"):
         return meta["content"]
@@ -107,8 +133,8 @@ def get_login_csrf(session):
 def login_student(reference_no, dob, page_action=None, enrollment_no=""):
     """Login with reference_no OR enrollment_no (+ DOB). Returns (session, final_response)."""
     session = requests.Session()
-    csrf = get_login_csrf(session)
-    token = solve_recaptcha_v3(LOGIN_URL, page_action)
+    csrf = get_login_csrf(session)   # also refreshes the live reCAPTCHA site key
+    token = solve_recaptcha_v3(LOGIN_URL, page_action, site_key=current_login_sitekey())
     if not token:
         logger.error("Login captcha failed")
         return session, None
@@ -156,6 +182,67 @@ def find_download_links(session, html, base_url=BASE):
         if kind and kind not in found:
             found[kind] = urljoin(base_url, href)
     return found
+
+def diagnose_login(reference_no, dob, enrollment_no=""):
+    """Deep, live diagnostic for a failing NIOS login. Reveals the actual cause: whether the
+    reCAPTCHA site key on the page still matches ours, whether CapSolver returns a token, and
+    exactly how NIOS responds. Read the 'verdict' first."""
+    out = {"capsolver_key_set": bool(CAPSOLVER_API_KEY), "our_sitekey": RECAPTCHA_SITE_KEY,
+           "dob_used": format_dob(dob)}
+    if not CAPSOLVER_API_KEY:
+        out["verdict"] = "CAPTCHA_API_KEY env var is not set on the server."
+        return out
+    try:
+        s = requests.Session()
+        r0 = s.get(LOGIN_URL, headers=HEADERS, timeout=25)
+        out["login_page_status"] = r0.status_code
+        # every reCAPTCHA site key that appears on the login page (keys start with '6L')
+        keys = sorted(set(re.findall(r'6L[0-9A-Za-z_\-]{38}', r0.text)))
+        out["sitekeys_on_page"] = keys
+        out["sitekey_matches"] = (RECAPTCHA_SITE_KEY in keys) if keys else None
+        csrf = get_login_csrf(s)
+        out["csrf_found"] = bool(csrf)
+        token = solve_recaptcha_v3(LOGIN_URL)
+        out["captcha_token_len"] = len(token or "")
+        out["captcha_solved"] = bool(token)
+        if not token:
+            out["verdict"] = "CapSolver did NOT return a token — check CapSolver 'Status'/errors (not a data problem)."
+            return out
+        payload = {
+            "_csrf": csrf,
+            "LoginForm[reference_no]": "" if enrollment_no else reference_no,
+            "LoginForm[enrollment_no]": enrollment_no or "",
+            "LoginForm[application_no]": "",
+            "LoginForm[date_of_birth]": format_dob(dob),
+            "LoginForm[google_recapcha_response]": token,
+            "login-button": "",
+        }
+        r = s.post(LOGIN_URL, data=payload,
+                   headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded", "Origin": BASE},
+                   timeout=30, allow_redirects=True)
+        out["post_status"] = r.status_code
+        out["final_url"] = str(r.url)
+        out["logged_in"] = is_logged_in(r.text)
+        low = r.text.lower()
+        hints = []
+        for kw in ("captcha", "recaptcha", "invalid", "incorrect", "does not match",
+                   "not match", "try again", "expired", "robot"):
+            i = low.find(kw)
+            if i >= 0:
+                hints.append(r.text[max(0, i - 45):i + 65].replace("\n", " ").strip())
+        out["page_hints"] = hints[:6]
+        if out["logged_in"]:
+            out["verdict"] = "LOGGED IN OK — login works for this student."
+        elif out["sitekey_matches"] is False:
+            out["verdict"] = ("NIOS site key CHANGED — our key no longer matches the page. "
+                              "Update RECAPTCHA_SITE_KEY to the one in sitekeys_on_page.")
+        else:
+            out["verdict"] = ("NIOS rejected the login (token score too low or data). See page_hints. "
+                              "If page_hints mention captcha/robot, the v3 score is being rejected.")
+    except Exception as e:
+        out["error"] = str(e)[:200]
+        out["verdict"] = "Exception during diagnosis — see 'error'."
+    return out
 
 def debug_login(reference_no, dob, page_action=None):
     """Test login and return everything we can see, for link discovery."""
