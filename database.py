@@ -223,6 +223,19 @@ def init_db():
             PRIMARY KEY (row_key, kind)
         )
     """)
+    # Indexes to keep list/filter queries fast as the data grows.
+    for _ix in (
+        "CREATE INDEX IF NOT EXISTS idx_ss_confirmed ON student_status(is_confirmed)",
+        "CREATE INDEX IF NOT EXISTS idx_ss_deleted ON student_status(deleted)",
+        "CREATE INDEX IF NOT EXISTS idx_ss_reference ON student_status(reference_no)",
+        "CREATE INDEX IF NOT EXISTS idx_ss_status ON student_status(current_status)",
+        "CREATE INDEX IF NOT EXISTS idx_ss_source ON student_status(source)",
+        "CREATE INDEX IF NOT EXISTS idx_dc_rowkey ON document_cache(row_key)",
+    ):
+        try:
+            c.execute(_ix)
+        except Exception:
+            pass
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_public', '12')")
     # WhatsApp auto-send disabled until configured + turned on from the portal
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('wa_enabled', '0')")

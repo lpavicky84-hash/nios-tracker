@@ -760,6 +760,7 @@ function applySidebarPref(){
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
             <button class="btn btn-success btn-sm" id="cache-docs-btn" onclick="cacheDocsNow(this)" title="Fetch every confirmed student document from NIOS once and SAVE it in our database. After this, WhatsApp links open straight from our copy — no NIOS/CapSolver needed, and they keep working even if NIOS is down.">&#128190; Save all documents to DB</button>
+            <button class="btn btn-outline btn-sm" onclick="cacheDocsNow(this,true)" title="Re-fetch and OVERWRITE all saved documents (use if documents changed on NIOS).">&#8635; Refresh all saved</button>
             <span id="cache-docs-status" style="font-size:12px;color:var(--muted);align-self:center"></span>
           </div>
           <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
@@ -2122,7 +2123,19 @@ function dlLinks(s){
   }else{ // public — only TOC=yes also gets the Registration Summary (App Form)
     if(toc==="yes") b.push(dlBtn(s,"app_form","App Form"));
   }
-  return '<div style="display:flex;flex-wrap:wrap;gap:5px">'+b.join("")+'</div>';
+  return '<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">'+b.join("")+
+    ((s.cached_docs&&s.cached_docs.length&&s.row_key)?('<button class="btn-dl" style="border-color:#FDBA74;color:#9A3412" title="Re-fetch this student documents from NIOS and overwrite the saved copies (use if their documents changed)." onclick="refreshStudentDocs(&quot;'+s.row_key+'&quot;,this)">&#8635; Refresh</button>'):'')+
+    '</div>';
+}
+async function refreshStudentDocs(rowKey,btn){
+  if(!confirm("Re-fetch this student documents from NIOS and overwrite the saved copies?")) return;
+  if(btn){btn.disabled=true;btn.textContent="\u21bb ...";}
+  try{
+    const r=await api("/api/refresh-student-docs","POST",{row_key:rowKey});
+    showToast((r&&r.message)||"Refreshed");
+    if(typeof loadConfirmed==="function")loadConfirmed(); else if(typeof loadStudents==="function")loadStudents();
+  }catch(e){ showToast("Error: "+e.message); }
+  finally{ if(btn){btn.disabled=false;} }
 }
 function dlBtn(s,kind,label){
   var saved=(s.cached_docs&&s.cached_docs.indexOf(kind)>=0);
@@ -2415,11 +2428,12 @@ async function resendNoTocConfirmed(btn){
   finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},2000);}
 }
 let WA_POLL=null, WA_SEEN_RUNNING=false;
-async function cacheDocsNow(btn){
-  if(!confirm("Save every confirmed student document into our database now? This fetches each document from NIOS once and stores our own copy, so WhatsApp links open straight from our copy \u2014 no NIOS/CapSolver, and they keep working even if NIOS is down. Runs in the background; may take a while for many students.")) return;
+async function cacheDocsNow(btn,force){
+  var msg=force?"Re-fetch and OVERWRITE all saved documents from NIOS? Use this if documents changed on NIOS. Runs in the background.":"Save every confirmed student document into our database now? This fetches each document from NIOS once and stores our own copy, so WhatsApp links open straight from our copy \u2014 no NIOS/CapSolver, and they keep working even if NIOS is down. Runs in the background; may take a while for many students.";
+  if(!confirm(msg)) return;
   if(btn){btn.disabled=true;btn.style.opacity="0.6";}
   try{
-    const r=await api("/api/cache-docs","POST");
+    const r=await api("/api/cache-docs","POST",{force:!!force});
     if(r&&r.ok){ startCachePoll(); }
     else { showToast((r&&r.message)||"Already saving\u2026"); startCachePoll(); }
   }catch(e){ showToast("Error: "+e.message); if(btn){btn.disabled=false;btn.style.opacity="";} }
@@ -6917,6 +6931,13 @@ def _wa_send_one(row_key, verify=False):
                          "whatsapp_attempts=COALESCE(whatsapp_attempts,0)+1 WHERE row_key=?",
                          (str(info)[:180], row_key))
         conn.commit(); conn.close()
+        if ok:
+            # Proactively save this confirmed student's documents to our DB (background, capped),
+            # so their WhatsApp link opens from our copy even if NIOS later has issues.
+            try:
+                _threading.Thread(target=_bg_cache_student, args=(row_key,), daemon=True).start()
+            except Exception:
+                pass
         return ok, info, False
     except Exception as e:
         try:
@@ -6970,10 +6991,10 @@ def auto_send_pending_whatsapp(batch=None, label="Auto sweep"):
 CACHE_PROGRESS = {"running": False, "phase": "", "total": 0, "done": 0, "saved": 0, "failed": 0,
                   "confirmed": 0, "last_error": "", "started_at": "", "finished_at": "", "label": ""}
 
-def _cache_all_confirmed_worker():
+def _cache_all_confirmed_worker(force=False):
     """Fetch + save every confirmed student's allowed documents into OUR database, so their
     WhatsApp links open straight from our copy (no live NIOS / CapSolver, works if NIOS is down).
-    Skips documents already saved."""
+    force=False skips documents already saved; force=True re-fetches everything (refresh)."""
     if CACHE_PROGRESS["running"]:
         return
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -6993,7 +7014,7 @@ def _cache_all_confirmed_worker():
         for r in rows:
             allowed = whatsapp.allowed_docs(r["session"], (r["toc_status"] or ""))
             for kind in allowed:
-                if load_doc_cache(r["row_key"], kind) is None:   # not saved yet
+                if force or load_doc_cache(r["row_key"], kind) is None:   # re-fetch when forcing
                     tasks.append((r["row_key"], r["reference_no"] or "", r["enrollment_no"] or "",
                                   r["dob"] or "", kind))
         CACHE_PROGRESS.update({"phase": "saving", "total": len(tasks)})
@@ -7018,13 +7039,28 @@ def _cache_all_confirmed_worker():
         CACHE_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 @app.post("/api/cache-docs")
-async def cache_docs(user=Depends(verify_token)):
-    """Start saving all confirmed students' documents into our database (background)."""
+async def cache_docs(body: dict = None, user=Depends(verify_token)):
+    """Start saving all confirmed students' documents into our database (background).
+    Pass {"force": true} to RE-FETCH everything (refresh), else only missing ones are fetched."""
     if CACHE_PROGRESS["running"]:
         return {"ok": False, "message": "Already saving — please wait."}
+    force = bool((body or {}).get("force"))
     import threading
-    threading.Thread(target=_cache_all_confirmed_worker, daemon=True).start()
-    return {"ok": True, "message": "Saving all confirmed documents to the database in the background."}
+    threading.Thread(target=_cache_all_confirmed_worker, kwargs={"force": force}, daemon=True).start()
+    return {"ok": True, "message": ("Refreshing (re-fetching) all confirmed documents in the background."
+                                    if force else "Saving all confirmed documents to the database in the background.")}
+
+@app.post("/api/refresh-student-docs")
+async def refresh_student_docs(body: dict, user=Depends(verify_token)):
+    """Re-fetch + re-save ONE student's documents (use when their documents changed on NIOS)."""
+    row_key = (body or {}).get("row_key", "")
+    if not row_key:
+        raise HTTPException(status_code=400, detail="row_key required")
+    from fastapi.concurrency import run_in_threadpool
+    saved, failed = await run_in_threadpool(cache_student_docs, row_key, True)
+    return {"ok": True, "saved": saved, "failed": failed,
+            "message": (f"Refreshed {saved} document(s)" + (f", {failed} failed" if failed else "") if saved or failed
+                        else "No documents to refresh for this student")}
 
 @app.get("/api/cache-docs-progress")
 async def cache_docs_progress(user=Depends(verify_token)):
@@ -7385,6 +7421,48 @@ def load_doc_cache(row_key, kind):
         return data, (row["content_type"] or "application/pdf"), (row["filename"] or f"{kind}.pdf")
     except Exception:
         return None
+
+def cache_student_docs(row_key, force=False):
+    """Fetch + save ALL allowed documents for one confirmed student. force=True re-fetches even
+    if already saved (use when a student's documents changed on NIOS). Returns (saved, failed)."""
+    try:
+        import whatsapp
+        from nios_login import fetch_document
+        conn = get_db()
+        r = conn.execute("SELECT reference_no, enrollment_no, dob, session, toc_status "
+                         "FROM student_status WHERE row_key=? AND COALESCE(deleted,0)=0", (row_key,)).fetchone()
+        conn.close()
+        if not r:
+            return (0, 0)
+        allowed = whatsapp.allowed_docs(r["session"], (r["toc_status"] or ""))
+        saved = failed = 0
+        for kind in allowed:
+            if (not force) and load_doc_cache(row_key, kind) is not None:
+                continue
+            content, ctype, filename = fetch_document(r["reference_no"] or "", r["dob"] or "", kind,
+                                                      enrollment_no=(r["enrollment_no"] or ""))
+            if content is not None:
+                save_doc_cache(row_key, kind, content, ctype, filename)
+                saved += 1
+            else:
+                failed += 1
+        return (saved, failed)
+    except Exception as e:
+        logger.warning(f"cache_student_docs {row_key}: {e}")
+        return (0, 0)
+
+import threading as _threading
+_CACHE_SEM = _threading.Semaphore(2)   # cap background auto-caching so runs stay light
+
+def _bg_cache_student(row_key):
+    """Best-effort background cache of one student's docs (used right after a confirmation send).
+    Skips silently if two are already caching — the periodic 'Save all' / lazy-on-click covers the rest."""
+    if not _CACHE_SEM.acquire(blocking=False):
+        return
+    try:
+        cache_student_docs(row_key)
+    finally:
+        _CACHE_SEM.release()
 
 def _fetch_doc_for(row_key, kind):
     """Return ((content, ctype, filename), None) or (None, error_message).
