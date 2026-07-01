@@ -33,17 +33,49 @@ HEADERS = {
     "Referer": LOGIN_URL,
 }
 
+def _parse_proxy_fields(proxy):
+    """Parse CAPSOLVER_PROXY into CapSolver's separate proxy fields. Accepts:
+       'type:host:port:user:pass'  or  'host:port:user:pass'  or  'host:port'.
+    Returns a dict of proxyType/proxyAddress/proxyPort/proxyLogin/proxyPassword, or None."""
+    p = (proxy or "").strip()
+    if not p:
+        return None
+    # allow scheme://user:pass@host:port too
+    m = re.match(r'^(\w+)://([^:]+):([^@]+)@([^:]+):(\d+)$', p)
+    if m:
+        return {"proxyType": m.group(1), "proxyAddress": m.group(4), "proxyPort": int(m.group(5)),
+                "proxyLogin": m.group(2), "proxyPassword": m.group(3)}
+    parts = p.split(":")
+    try:
+        if len(parts) == 5:
+            ptype, host, port, user, pw = parts
+        elif len(parts) == 4:
+            ptype, host, port, user, pw = "http", parts[0], parts[1], parts[2], parts[3]
+        elif len(parts) == 2:
+            ptype, host, port, user, pw = "http", parts[0], parts[1], "", ""
+        else:
+            return None
+        out = {"proxyType": (ptype or "http").lower(), "proxyAddress": host, "proxyPort": int(port)}
+        if user:
+            out["proxyLogin"] = user
+            out["proxyPassword"] = pw
+        return out
+    except Exception:
+        return None
+
 def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
     if not CAPSOLVER_API_KEY:
         logger.error("CAPTCHA_API_KEY not set!")
         return ""
     try:
         proxy = os.environ.get("CAPSOLVER_PROXY", "").strip()
+        pf = _parse_proxy_fields(proxy)
         # With a (residential/Indian) proxy CapSolver produces a HIGH-score token that NIOS
         # accepts. Without one it falls back to proxyless (often low score on datacenter IPs).
-        if proxy:
+        if pf:
             task = {"type": "ReCaptchaV3Task", "websiteURL": page_url,
-                    "websiteKey": site_key or RECAPTCHA_SITE_KEY, "proxy": proxy}
+                    "websiteKey": site_key or RECAPTCHA_SITE_KEY}
+            task.update(pf)
         else:
             task = {"type": "ReCaptchaV3TaskProxyLess", "websiteURL": page_url,
                     "websiteKey": site_key or RECAPTCHA_SITE_KEY}
