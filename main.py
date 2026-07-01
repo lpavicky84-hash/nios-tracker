@@ -2654,7 +2654,13 @@ function debounceFailed(){clearTimeout(fTimer);fTimer=setTimeout(()=>loadFailed(
 async function diagnoseLogin(){
   var NL=String.fromCharCode(10);
   try{
-    var r=await api("/api/debug-login");
+    var resp=await fetch(API+"/api/debug-login",{headers:{"Authorization":"Bearer "+TOKEN}});
+    var txt=await resp.text();
+    var r={}; try{r=JSON.parse(txt);}catch(e){}
+    if(!resp.ok){
+      alert("Diagnose returned HTTP "+resp.status+NL+"(if this is 404, the new code is NOT deployed yet)"+NL+NL+txt.slice(0,500));
+      return;
+    }
     var msg="NIOS SERVER-REACHABILITY CHECK"+NL+
       "(code version: "+(r.endpoint_version||"OLD - redeploy not applied yet")+")"+NL+NL+
       "Page HTTP status : "+(r.page_status)+NL+
@@ -5932,7 +5938,7 @@ async def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=De
         return {"error": str(e)[:200]}
 
 @app.get("/api/debug-login")
-async def debug_login_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):
+async def debug_login_ep(user=Depends(verify_token)):
     """Diagnose NIOS reachability from the SERVER. The key check: can the server load the real
     NIOS login page (status code + snippet)? If it can't, NIOS is blocking the server IP."""
     import requests as _rq
