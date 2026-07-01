@@ -2654,7 +2654,7 @@ function debounceFailed(){clearTimeout(fTimer);fTimer=setTimeout(()=>loadFailed(
 async function diagnoseLogin(){
   var NL=String.fromCharCode(10);
   try{
-    var resp=await fetch(API+"/api/debug-login",{headers:{"Authorization":"Bearer "+TOKEN}});
+    var resp=await fetch(API+"/api/debug-login?ref=x&dob=x",{headers:{"Authorization":"Bearer "+TOKEN}});
     var txt=await resp.text();
     var r={}; try{r=JSON.parse(txt);}catch(e){}
     if(!resp.ok){
@@ -5938,9 +5938,10 @@ async def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=De
         return {"error": str(e)[:200]}
 
 @app.get("/api/debug-login")
-async def debug_login_ep(user=Depends(verify_token)):
+async def debug_login_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):
     """Diagnose NIOS reachability from the SERVER. The key check: can the server load the real
-    NIOS login page (status code + snippet)? If it can't, NIOS is blocking the server IP."""
+    NIOS login page (status code + snippet)? If it can't, NIOS is blocking the server IP.
+    (ref/dob are accepted but unused — kept for backward compatibility.)"""
     import requests as _rq
     out = {"endpoint_version": "v2", "page_status": "", "page_len": 0,
            "looks_blocked": None, "csrf_found": False, "page_snippet": "",
