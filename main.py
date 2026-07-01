@@ -1,5 +1,6 @@
 import os
 import logging
+import threading as _threading
 import time as _time
 os.environ["TZ"] = "Asia/Kolkata"
 try:
@@ -7035,11 +7036,18 @@ def auto_send_pending_whatsapp(batch=None, label="Auto sweep"):
 
 CACHE_PROGRESS = {"running": False, "phase": "", "total": 0, "done": 0, "saved": 0, "failed": 0,
                   "confirmed": 0, "last_error": "", "started_at": "", "finished_at": "", "label": ""}
+_CACHE_LOCK = _threading.Lock()
+try:
+    _CACHE_WORKERS = max(1, min(10, int(os.environ.get("CACHE_WORKERS", "5"))))
+except Exception:
+    _CACHE_WORKERS = 5
+_DB_WRITE_LOCK = _threading.Lock()
 
 def _cache_all_confirmed_worker(force=False):
-    """Fetch + save every confirmed student's allowed documents into OUR database, so their
-    WhatsApp links open straight from our copy (no live NIOS / CapSolver, works if NIOS is down).
-    force=False skips documents already saved; force=True re-fetches everything (refresh)."""
+    """Fetch + save every confirmed student's allowed documents into OUR database (in parallel),
+    so their WhatsApp links open straight from our copy (no live NIOS/CapSolver, works if NIOS is
+    down). Documents of the SAME student are fetched together (one login reused). force=True
+    re-fetches everything; else only missing ones."""
     if CACHE_PROGRESS["running"]:
         return
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -7049,43 +7057,55 @@ def _cache_all_confirmed_worker(force=False):
     try:
         import whatsapp
         from nios_login import fetch_document
+        from concurrent.futures import ThreadPoolExecutor
         conn = get_db()
         rows = conn.execute("SELECT row_key, reference_no, enrollment_no, dob, session, toc_status "
                             "FROM student_status WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 "
                             "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
         conn.close()
         CACHE_PROGRESS["confirmed"] = len(rows)
-        tasks = []
+        # Group missing docs BY STUDENT so each student logs in once and reuses the session.
+        students = []
+        total_docs = 0
         for r in rows:
             allowed = whatsapp.allowed_docs(r["session"], (r["toc_status"] or ""))
-            for kind in allowed:
-                if force or load_doc_cache(r["row_key"], kind) is None:   # re-fetch when forcing
-                    tasks.append((r["row_key"], r["reference_no"] or "", r["enrollment_no"] or "",
-                                  r["dob"] or "", kind))
-        CACHE_PROGRESS.update({"phase": "saving", "total": len(tasks)})
-        for rk, ref, enroll, dob, kind in tasks:
-            try:
-                content, ctype, filename = fetch_document(ref, dob, kind, enrollment_no=enroll)
-                if content is not None:
-                    save_doc_cache(rk, kind, content, ctype, filename)
-                    CACHE_PROGRESS["saved"] += 1
-                else:
-                    CACHE_PROGRESS["failed"] += 1
-                    CACHE_PROGRESS["last_error"] = str(ctype)[:150]
-            except Exception as e:
-                CACHE_PROGRESS["failed"] += 1
-                CACHE_PROGRESS["last_error"] = f"{type(e).__name__}: {str(e)[:110]}"
-            CACHE_PROGRESS["done"] += 1
+            kinds = [k for k in allowed if force or load_doc_cache(r["row_key"], k) is None]
+            if kinds:
+                students.append((r["row_key"], r["reference_no"] or "", r["enrollment_no"] or "",
+                                 r["dob"] or "", kinds))
+                total_docs += len(kinds)
+        CACHE_PROGRESS.update({"phase": "saving", "total": total_docs})
+
+        def _do_student(item):
+            rk, ref, enroll, dob, kinds = item
+            for kind in kinds:
+                try:
+                    content, ctype, filename = fetch_document(ref, dob, kind, enrollment_no=enroll)
+                    if content is not None:
+                        with _DB_WRITE_LOCK:
+                            save_doc_cache(rk, kind, content, ctype, filename)
+                        with _CACHE_LOCK:
+                            CACHE_PROGRESS["saved"] += 1
+                    else:
+                        with _CACHE_LOCK:
+                            CACHE_PROGRESS["failed"] += 1
+                            CACHE_PROGRESS["last_error"] = str(ctype)[:150]
+                except Exception as e:
+                    with _CACHE_LOCK:
+                        CACHE_PROGRESS["failed"] += 1
+                        CACHE_PROGRESS["last_error"] = f"{type(e).__name__}: {str(e)[:110]}"
+                with _CACHE_LOCK:
+                    CACHE_PROGRESS["done"] += 1
+
+        if students:
+            with ThreadPoolExecutor(max_workers=_CACHE_WORKERS) as ex:
+                list(ex.map(_do_student, students))
     except Exception as e:
         CACHE_PROGRESS["last_error"] = f"worker: {type(e).__name__}: {str(e)[:110]}"
     finally:
         CACHE_PROGRESS["running"] = False
         CACHE_PROGRESS["phase"] = "done"
         CACHE_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # Auto-resume control: keep going (across app restarts) until everything is saved.
-        #  - all saved (failed==0)        -> done, stop
-        #  - no progress this run (saved==0) -> the rest are stuck (bad data) -> stop
-        #  - otherwise                    -> leave active so the watchdog retries the failed ones
         try:
             if CACHE_PROGRESS["failed"] == 0 or CACHE_PROGRESS["saved"] == 0:
                 set_setting("cache_docs_active", "0")
@@ -7094,11 +7114,11 @@ def _cache_all_confirmed_worker(force=False):
 
 def _cache_watchdog():
     """Restarts the bulk cache job if it's meant to be running but isn't (e.g. after a Railway
-    restart). Lets 'Save all documents' finish overnight without anyone re-pressing it."""
+    restart), and keeps retrying the failed ones. Lets 'Save all' finish without babysitting."""
     import time as _t
     while True:
         try:
-            _t.sleep(180)
+            _t.sleep(90)
             if get_setting("cache_docs_active", "0") == "1" and not CACHE_PROGRESS["running"]:
                 _cache_all_confirmed_worker(force=False)
         except Exception:
@@ -7555,7 +7575,6 @@ def cache_student_docs(row_key, force=False):
         logger.warning(f"cache_student_docs {row_key}: {e}")
         return (0, 0)
 
-import threading as _threading
 _CACHE_SEM = _threading.Semaphore(2)   # cap background auto-caching so runs stay light
 
 def _bg_cache_student(row_key):
