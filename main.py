@@ -2125,8 +2125,10 @@ function dlLinks(s){
   return '<div style="display:flex;flex-wrap:wrap;gap:5px">'+b.join("")+'</div>';
 }
 function dlBtn(s,kind,label){
+  var saved=(s.cached_docs&&s.cached_docs.indexOf(kind)>=0);
+  var mark=saved?' <span title="Saved in our database \u2014 opens without NIOS" style="color:#15803D;font-weight:700">&#9679;</span>':'';
   return '<button class="btn-dl" onclick="downloadDoc(this,&quot;'+s.reference_no+'&quot;,&quot;'+
-    (s.dob||"")+'&quot;,&quot;'+kind+'&quot;,&quot;'+label+'&quot;)">'+DL_ICON+' '+label+'</button>';
+    (s.dob||"")+'&quot;,&quot;'+kind+'&quot;,&quot;'+label+'&quot;)"'+(saved?' style="border-color:#86EFAC"':'')+'>'+DL_ICON+' '+label+mark+'</button>';
 }
 function waBtn(s){
   if(!s.row_key)return "";
@@ -4248,8 +4250,18 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
     raw_sessions = conn.execute("SELECT DISTINCT session FROM student_status WHERE session != ''").fetchall()
     norm_sessions = sorted({normalize_session(r["session"]) for r in raw_sessions})
     norm_sessions = [x for x in norm_sessions if x and x != "SYC"]   # SYC has its own page
+    slist = [dict(s) for s in students]
+    # attach which documents we have SAVED in our DB for each student (for the "saved" badge)
+    rks = [s.get("row_key") for s in slist if s.get("row_key")]
+    if rks:
+        ph = ",".join("?" * len(rks))
+        saved = {}
+        for cr in conn.execute(f"SELECT row_key, kind FROM document_cache WHERE row_key IN ({ph})", rks).fetchall():
+            saved.setdefault(cr["row_key"], []).append(cr["kind"])
+        for s in slist:
+            s["cached_docs"] = saved.get(s.get("row_key"), [])
     conn.close()
-    return {"students": [dict(s) for s in students], "total": total, "page": page,
+    return {"students": slist, "total": total, "page": page,
             "per_page": per_page, "pages": max(1, (total+per_page-1)//per_page),
             "sessions": norm_sessions}
 
@@ -5942,6 +5954,22 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
             raise
         except Exception:
             pass
+    # Serve OUR saved copy first (no NIOS/CapSolver). Resolve this student's row_key by reference.
+    _rk = None
+    try:
+        conn = get_db()
+        _rr = conn.execute("SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 "
+                           "AND reference_no=? LIMIT 1", (ref,)).fetchone()
+        conn.close()
+        _rk = _rr["row_key"] if _rr else None
+    except Exception:
+        _rk = None
+    if _rk:
+        _cached = load_doc_cache(_rk, kind)
+        if _cached is not None:
+            content, ctype, filename = _cached
+            disp = f'attachment; filename="{filename}"' if "pdf" in (ctype or "") else "inline"
+            return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
     content, ctype, filename = fetch_document(ref, dob, kind)
     if content is None:
         # Login/bounce failure -> flag this student as Failed to Run so it surfaces in
@@ -5967,6 +5995,12 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
             except Exception:
                 pass
         raise HTTPException(status_code=404, detail=err)
+    # Save our own copy for next time (so future opens skip NIOS/CapSolver).
+    if _rk:
+        try:
+            save_doc_cache(_rk, kind, content, ctype, filename)
+        except Exception:
+            pass
     # PDF -> attachment download; HTML -> inline (open in tab to print)
     if "pdf" in ctype:
         disp = f'attachment; filename="{filename}"'
@@ -7303,10 +7337,12 @@ def _doc_cache_dir():
 def save_doc_cache(row_key, kind, content, ctype, filename):
     """Persist a fetched document to disk + record it, so future opens serve from OUR copy."""
     import re as _re
+    import hashlib as _hl
     try:
         ext = "pdf" if "pdf" in (ctype or "").lower() else "html"
-        safe = _re.sub(r'[^A-Za-z0-9_.-]', '_', str(row_key))[:120]
-        path = os.path.join(_doc_cache_dir(), f"{safe}__{kind}.{ext}")
+        safe = _re.sub(r'[^A-Za-z0-9_.-]', '_', str(row_key))[:80]
+        h = _hl.md5(str(row_key).encode("utf-8")).hexdigest()[:10]   # unique per student -> never collide
+        path = os.path.join(_doc_cache_dir(), f"{safe}_{h}__{kind}.{ext}")
         with open(path, "wb") as f:
             f.write(content)
         conn = get_db()
