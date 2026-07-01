@@ -747,6 +747,7 @@ function applySidebarPref(){
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
+            <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether the documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">&#128190; Documents saved</option><option value="notsaved">&#9888; Not saved yet</option></select>
             <select id="c-datepreset" onchange="onDatePreset('c',()=>loadConfirmed(1))">
               <option value="">All dates</option>
               <option value="today">Today</option>
@@ -761,11 +762,13 @@ function applySidebarPref(){
               Export Excel</button>
             <button class="btn btn-success btn-sm" id="cache-docs-btn" onclick="cacheDocsNow(this)" title="Fetch every confirmed student document from NIOS once and SAVE it in our database. After this, WhatsApp links open straight from our copy — no NIOS/CapSolver needed, and they keep working even if NIOS is down.">&#128190; Save all documents to DB</button>
             <button class="btn btn-outline btn-sm" onclick="cacheDocsNow(this,true)" title="Re-fetch and OVERWRITE all saved documents (use if documents changed on NIOS).">&#8635; Refresh all saved</button>
+            <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C" onclick="stopCacheDocs(this)" title="Stop the auto-resume of the document save.">&#9632; Stop saving</button>
             <span id="cache-docs-status" style="font-size:12px;color:var(--muted);align-self:center"></span>
           </div>
           <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <span style="font-weight:700;font-size:13px"><span id="c-selcount">0</span> selected</span>
             <button class="btn btn-primary btn-sm" onclick="resendSelected(this)">Resend WhatsApp to selected</button>
+            <button class="btn btn-sm" style="background:#F97316;color:#fff" onclick="refreshSelectedDocs(this)" title="Re-fetch and overwrite the saved documents for the selected students (use if their documents changed on NIOS).">&#8635; Refresh docs for selected</button>
             <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDeleteConf()">&#128465; Delete selected</button>
             <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="clearConfSel()">Clear</button>
           </div>
@@ -783,6 +786,22 @@ function applySidebarPref(){
               <span style="color:#B45309">Remaining: <span id="wap-remaining">0</span></span>
               <span style="color:#B91C1C">Failed (auto-retry): <span id="wap-failed">0</span></span>
             </div>
+          </div>
+          <div id="cache-progress" style="display:none;background:linear-gradient(135deg,#EEF2FF,#F5F3FF);border:1px solid #C7D2FE;border-radius:12px;padding:14px 16px;margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:9px">
+              <span style="font-weight:700;font-size:13.5px;color:#3730A3">&#128190; <span id="cap-title">Saving documents to database</span></span>
+              <span style="font-weight:800;font-size:15px;color:#4338CA"><span id="cap-pct">0</span>%</span>
+            </div>
+            <div style="height:10px;background:#E0E7FF;border-radius:6px;overflow:hidden">
+              <div id="cap-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#6366F1,#4F46E5);transition:width .4s"></div>
+            </div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;font-weight:600">
+              <span style="color:#4338CA">Progress: <span id="cap-done">0</span>/<span id="cap-total">0</span></span>
+              <span style="color:#059669">&#10003; Saved: <span id="cap-saved">0</span></span>
+              <span style="color:#B91C1C">Failed (auto-retry): <span id="cap-failed">0</span></span>
+              <span style="color:#6D28D9" id="cap-resume"></span>
+            </div>
+            <div id="cap-err" style="display:none;margin-top:8px;font-size:11.5px;color:#B45309;background:#FEF3C7;border-radius:8px;padding:6px 10px"></div>
           </div>
           <div class="filter-bar" id="c-daterow" style="display:none">
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
@@ -2123,19 +2142,19 @@ function dlLinks(s){
   }else{ // public — only TOC=yes also gets the Registration Summary (App Form)
     if(toc==="yes") b.push(dlBtn(s,"app_form","App Form"));
   }
-  return '<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">'+b.join("")+
-    ((s.cached_docs&&s.cached_docs.length&&s.row_key)?('<button class="btn-dl" style="border-color:#FDBA74;color:#9A3412" title="Re-fetch this student documents from NIOS and overwrite the saved copies (use if their documents changed)." onclick="refreshStudentDocs(&quot;'+s.row_key+'&quot;,this)">&#8635; Refresh</button>'):'')+
-    '</div>';
+  return '<div style="display:flex;flex-wrap:wrap;gap:5px">'+b.join("")+'</div>';
 }
-async function refreshStudentDocs(rowKey,btn){
-  if(!confirm("Re-fetch this student documents from NIOS and overwrite the saved copies?")) return;
-  if(btn){btn.disabled=true;btn.textContent="\u21bb ...";}
+async function refreshSelectedDocs(btn){
+  const keys=(typeof CONF_SEL!=="undefined")?[...CONF_SEL]:[];
+  if(!keys.length){ showToast("Select one or more students first (tick the checkboxes)"); return; }
+  if(!confirm("Re-fetch and overwrite the saved documents for "+keys.length+" selected student(s) from NIOS?")) return;
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
   try{
-    const r=await api("/api/refresh-student-docs","POST",{row_key:rowKey});
-    showToast((r&&r.message)||"Refreshed");
-    if(typeof loadConfirmed==="function")loadConfirmed(); else if(typeof loadStudents==="function")loadStudents();
+    const r=await api("/api/refresh-selected-docs","POST",{row_keys:keys});
+    showToast((r&&r.message)||("Refreshed "+((r&&r.saved)||0)+" document(s)"));
+    if(typeof loadConfirmed==="function")loadConfirmed();
   }catch(e){ showToast("Error: "+e.message); }
-  finally{ if(btn){btn.disabled=false;} }
+  finally{ if(btn){btn.disabled=false;btn.style.opacity="";} }
 }
 function dlBtn(s,kind,label){
   var saved=(s.cached_docs&&s.cached_docs.indexOf(kind)>=0);
@@ -2345,13 +2364,16 @@ function exportNoToc(){
 }
 async function loadConfirmed(page){
   page=page||1;
+  try{ if(!CACHE_POLL) startCachePoll(); }catch(e){}
   const dr=dateRange("c");
   const q=new URLSearchParams({page:page,per_page:perPage,view:"confirmed",
     search:document.getElementById("c-search").value,
     status_filter:(document.getElementById("c-status")?document.getElementById("c-status").value:""),
     wa_status:fval("c-wa"),
     session_filter:document.getElementById("c-session").value,
-    class_filter:fval("c-class"),source_filter:fval("c-source"),date_from:dr.from,date_to:dr.to});
+    class_filter:fval("c-class"),source_filter:fval("c-source"),
+    saved_filter:(document.getElementById("c-saved")?document.getElementById("c-saved").value:""),
+    date_from:dr.from,date_to:dr.to});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -2438,27 +2460,44 @@ async function cacheDocsNow(btn,force){
     else { showToast((r&&r.message)||"Already saving\u2026"); startCachePoll(); }
   }catch(e){ showToast("Error: "+e.message); if(btn){btn.disabled=false;btn.style.opacity="";} }
 }
+async function stopCacheDocs(btn){
+  if(!confirm("Stop the auto-save? Documents already saved are kept. You can start it again anytime.")) return;
+  try{ await api("/api/cache-docs-stop","POST"); showToast("Auto-save stopped."); }
+  catch(e){ showToast("Error: "+e.message); }
+}
 let CACHE_POLL=null;
 function startCachePoll(){
   if(CACHE_POLL)clearInterval(CACHE_POLL);
   const el=document.getElementById("cache-docs-status");
   const btn=document.getElementById("cache-docs-btn");
+  const box=document.getElementById("cache-progress");
+  const setTxt=(id,v)=>{var e=document.getElementById(id);if(e)e.textContent=v;};
   const tick=async()=>{
     let d; try{ d=await api("/api/cache-docs-progress"); }catch(e){ return; }
-    const p=(d&&d.progress)||{};
+    const p=(d&&d.progress)||{}; const active=!!(d&&d.auto_resume);
     const pct=p.total?Math.round((p.done/p.total)*100):0;
-    if(el){
-      if(p.running){ el.textContent=(p.phase==="saving"?("Saving documents: "+p.done+"/"+p.total+" ("+pct+"%) \u00b7 saved "+p.saved+", failed "+p.failed):("Working\u2026 "+(p.phase||"")))+(p.last_error?(" \u00b7 last error: "+p.last_error):""); }
-      else {
-        var base="Saved copies in DB: "+((d&&d.students_cached)||0)+" students / "+((d&&d.total_cached)||0)+" documents";
-        if(p.finished_at){ base+=" \u00b7 last run: "+(p.saved||0)+" saved, "+(p.failed||0)+" failed of "+(p.confirmed||0)+" confirmed"; if(p.last_error)base+=" \u00b7 error: "+p.last_error; }
-        el.textContent=base;
+    // small persistent summary line
+    if(el){ el.textContent="Saved in database: "+((d&&d.students_cached)||0)+" students \u00b7 "+((d&&d.total_cached)||0)+" documents"; }
+    // the progress bar box
+    if(box){
+      if(p.running||active){
+        box.style.display="block";
+        setTxt("cap-title", p.running?(p.phase==="saving"?"Saving documents to database":"Preparing\u2026"):"Auto-resume ON \u2014 will retry the rest shortly");
+        setTxt("cap-pct", p.running?pct:0);
+        var bar=document.getElementById("cap-bar"); if(bar)bar.style.width=(p.running?pct:100)+"%";
+        setTxt("cap-done", p.done||0); setTxt("cap-total", p.total||0);
+        setTxt("cap-saved", p.saved||0); setTxt("cap-failed", p.failed||0);
+        setTxt("cap-resume", active?"\u21bb auto-resume ON":"");
+        var ce=document.getElementById("cap-err");
+        if(ce){ if(p.last_error){ce.style.display="block";ce.textContent="Last issue: "+p.last_error;} else {ce.style.display="none";} }
+      } else {
+        box.style.display="none";
       }
     }
-    if(!p.running){
+    if(btn){ btn.disabled=(p.running||active); btn.style.opacity=(p.running||active)?"0.6":""; }
+    if(!p.running && !active){
       clearInterval(CACHE_POLL); CACHE_POLL=null;
-      if(btn){btn.disabled=false;btn.style.opacity="";}
-      if(p.total){ showToast("Documents saved: "+p.saved+" ("+p.failed+" failed)"); }
+      if(p.total){ showToast("All done \u2014 "+(p.saved||0)+" document(s) saved"); }
     }
   };
   tick(); CACHE_POLL=setInterval(tick,2500);
@@ -4191,7 +4230,7 @@ _SPECIAL_TOC_CLAUSE = (
 
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to="", source_filter="",
-                         wa_status=""):
+                         wa_status="", saved_filter=""):
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
@@ -4248,6 +4287,11 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append(f"{_dt} >= ?"); params.append(df)
     if dtv:
         wc.append(f"{_dt} <= ?"); params.append(dtv)
+    # Documents-saved filter: whether we have this student's documents saved in our DB.
+    if saved_filter == "saved":
+        wc.append("EXISTS (SELECT 1 FROM document_cache dc WHERE dc.row_key = student_status.row_key)")
+    elif saved_filter == "notsaved":
+        wc.append("NOT EXISTS (SELECT 1 FROM document_cache dc WHERE dc.row_key = student_status.row_key)")
     return (("WHERE " + " AND ".join(wc)) if wc else ""), params
 
 @app.get("/api/students")
@@ -4255,12 +4299,13 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
                        status_filter: str="", session_filter: str="",
                        class_filter: str="", date_from: str="", date_to: str="",
                        source_filter: str="", view: str="normal", wa_status: str="",
+                       saved_filter: str="",
                        user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
     where, params = _build_student_where(view, search, status_filter, session_filter,
                                          class_filter, date_from, date_to, source_filter,
-                                         wa_status)
+                                         wa_status, saved_filter)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
@@ -7037,18 +7082,75 @@ def _cache_all_confirmed_worker(force=False):
         CACHE_PROGRESS["running"] = False
         CACHE_PROGRESS["phase"] = "done"
         CACHE_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Auto-resume control: keep going (across app restarts) until everything is saved.
+        #  - all saved (failed==0)        -> done, stop
+        #  - no progress this run (saved==0) -> the rest are stuck (bad data) -> stop
+        #  - otherwise                    -> leave active so the watchdog retries the failed ones
+        try:
+            if CACHE_PROGRESS["failed"] == 0 or CACHE_PROGRESS["saved"] == 0:
+                set_setting("cache_docs_active", "0")
+        except Exception:
+            pass
+
+def _cache_watchdog():
+    """Restarts the bulk cache job if it's meant to be running but isn't (e.g. after a Railway
+    restart). Lets 'Save all documents' finish overnight without anyone re-pressing it."""
+    import time as _t
+    while True:
+        try:
+            _t.sleep(180)
+            if get_setting("cache_docs_active", "0") == "1" and not CACHE_PROGRESS["running"]:
+                _cache_all_confirmed_worker(force=False)
+        except Exception:
+            pass
+
+try:
+    _threading.Thread(target=_cache_watchdog, daemon=True).start()
+except Exception:
+    pass
 
 @app.post("/api/cache-docs")
 async def cache_docs(body: dict = None, user=Depends(verify_token)):
     """Start saving all confirmed students' documents into our database (background).
-    Pass {"force": true} to RE-FETCH everything (refresh), else only missing ones are fetched."""
-    if CACHE_PROGRESS["running"]:
-        return {"ok": False, "message": "Already saving — please wait."}
+    Pass {"force": true} to RE-FETCH everything (refresh), else only missing ones are fetched.
+    Sets an auto-resume flag so the job continues (even across app restarts) until all are saved."""
     force = bool((body or {}).get("force"))
+    try:
+        set_setting("cache_docs_active", "1")   # keep resuming until everything is saved
+    except Exception:
+        pass
+    if CACHE_PROGRESS["running"]:
+        return {"ok": True, "message": "Already saving — it will keep going until done."}
     import threading
     threading.Thread(target=_cache_all_confirmed_worker, kwargs={"force": force}, daemon=True).start()
     return {"ok": True, "message": ("Refreshing (re-fetching) all confirmed documents in the background."
-                                    if force else "Saving all confirmed documents to the database in the background.")}
+                                    if force else "Saving all confirmed documents to the database in the background. It will keep going (even if the app restarts) until every document is saved.")}
+
+@app.post("/api/cache-docs-stop")
+async def cache_docs_stop(user=Depends(verify_token)):
+    """Stop the auto-resume of the bulk document save."""
+    try:
+        set_setting("cache_docs_active", "0")
+    except Exception:
+        pass
+    return {"ok": True, "message": "Auto-save stopped. Saved documents are kept."}
+
+@app.post("/api/refresh-selected-docs")
+async def refresh_selected_docs(body: dict, user=Depends(verify_token)):
+    """Re-fetch + re-save documents for the SELECTED students (force overwrite)."""
+    keys = (body or {}).get("row_keys", []) or []
+    if not keys:
+        raise HTTPException(status_code=400, detail="no students selected")
+    from fastapi.concurrency import run_in_threadpool
+    def _do():
+        tot_s = tot_f = 0
+        for rk in keys[:200]:
+            s, f = cache_student_docs(rk, force=True)
+            tot_s += s; tot_f += f
+        return tot_s, tot_f
+    saved, failed = await run_in_threadpool(_do)
+    return {"ok": True, "saved": saved, "failed": failed,
+            "message": f"Refreshed {saved} document(s)" + (f", {failed} failed" if failed else "")}
 
 @app.post("/api/refresh-student-docs")
 async def refresh_student_docs(body: dict, user=Depends(verify_token)):
@@ -7068,7 +7170,9 @@ async def cache_docs_progress(user=Depends(verify_token)):
     total_cached = conn.execute("SELECT COUNT(*) FROM document_cache").fetchone()[0]
     students_cached = conn.execute("SELECT COUNT(DISTINCT row_key) FROM document_cache").fetchone()[0]
     conn.close()
-    return {"progress": CACHE_PROGRESS, "total_cached": total_cached, "students_cached": students_cached}
+    active = (get_setting("cache_docs_active", "0") == "1")
+    return {"progress": CACHE_PROGRESS, "total_cached": total_cached,
+            "students_cached": students_cached, "auto_resume": active}
 
 @app.post("/api/wa-resend")
 async def wa_resend(body: dict, user=Depends(verify_token)):
