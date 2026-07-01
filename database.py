@@ -223,6 +223,19 @@ def init_db():
             PRIMARY KEY (row_key, kind)
         )
     """)
+    # Tracks documents that failed to fetch, with an attempt counter. A transient reCAPTCHA
+    # low-score bounce is retried many times (valid data eventually succeeds); only docs that
+    # keep failing past the cap are treated as a GENUINE data problem in reports.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS cache_fail (
+            row_key TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            attempts INTEGER DEFAULT 0,
+            last_error TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (row_key, kind)
+        )
+    """)
     # Indexes to keep list/filter queries fast as the data grows.
     for _ix in (
         "CREATE INDEX IF NOT EXISTS idx_ss_confirmed ON student_status(is_confirmed)",

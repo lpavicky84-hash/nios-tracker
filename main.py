@@ -799,7 +799,8 @@ function applySidebarPref(){
             <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;font-weight:600">
               <span style="color:#4338CA">Progress: <span id="cap-done">0</span>/<span id="cap-total">0</span></span>
               <span style="color:#059669">&#10003; Saved: <span id="cap-saved">0</span></span>
-              <span style="color:#B91C1C">Failed (auto-retry): <span id="cap-failed">0</span></span>
+              <span style="color:#B45309">&#8635; Retrying: <span id="cap-retry">0</span></span>
+              <span style="color:#B91C1C">&#9888; Needs data fix: <span id="cap-genfail">0</span></span>
               <span style="color:#6D28D9" id="cap-resume"></span>
             </div>
             <div id="cap-err" style="display:none;margin-top:8px;font-size:11.5px;color:#B45309;background:#FEF3C7;border-radius:8px;padding:6px 10px"></div>
@@ -2478,7 +2479,7 @@ function startCachePoll(){
     const p=(d&&d.progress)||{}; const active=!!(d&&d.auto_resume);
     const pct=p.total?Math.round((p.done/p.total)*100):0;
     // small persistent summary line
-    if(el){ el.textContent="Saved in database: "+((d&&d.students_cached)||0)+" students \u00b7 "+((d&&d.total_cached)||0)+" documents"; }
+    if(el){ el.textContent="Saved in database: "+((d&&d.students_cached)||0)+" students \u00b7 "+((d&&d.total_cached)||0)+" documents"+(((d&&d.genuine_failed)||0)?(" \u00b7 \u26a0 "+d.genuine_failed+" need data fix"):""); }
     // the progress bar box
     if(box){
       if(p.running||active){
@@ -2487,7 +2488,9 @@ function startCachePoll(){
         setTxt("cap-pct", p.running?pct:0);
         var bar=document.getElementById("cap-bar"); if(bar)bar.style.width=(p.running?pct:100)+"%";
         setTxt("cap-done", p.done||0); setTxt("cap-total", p.total||0);
-        setTxt("cap-saved", p.saved||0); setTxt("cap-failed", p.failed||0);
+        setTxt("cap-saved", p.saved||0);
+        setTxt("cap-retry", (d&&d.retrying)||0);
+        setTxt("cap-genfail", (d&&d.genuine_failed)||0);
         setTxt("cap-resume", active?"\u21bb auto-resume ON":"");
         var ce=document.getElementById("cap-err");
         if(ce){ if(p.last_error){ce.style.display="block";ce.textContent="Last issue: "+p.last_error;} else {ce.style.display="none";} }
@@ -7065,11 +7068,18 @@ def _cache_all_confirmed_worker(force=False):
         conn.close()
         CACHE_PROGRESS["confirmed"] = len(rows)
         # Group missing docs BY STUDENT so each student logs in once and reuses the session.
+        # Skip docs that have already failed too many times (genuine data problem) unless forcing.
         students = []
         total_docs = 0
         for r in rows:
             allowed = whatsapp.allowed_docs(r["session"], (r["toc_status"] or ""))
-            kinds = [k for k in allowed if force or load_doc_cache(r["row_key"], k) is None]
+            kinds = []
+            for k in allowed:
+                if load_doc_cache(r["row_key"], k) is not None:
+                    continue                      # already saved
+                if (not force) and _doc_fail_attempts(r["row_key"], k) >= _MAX_CACHE_ATTEMPTS:
+                    continue                      # genuinely failing -> leave for manual fix
+                kinds.append(k)
             if kinds:
                 students.append((r["row_key"], r["reference_no"] or "", r["enrollment_no"] or "",
                                  r["dob"] or "", kinds))
@@ -7087,10 +7097,12 @@ def _cache_all_confirmed_worker(force=False):
                         with _CACHE_LOCK:
                             CACHE_PROGRESS["saved"] += 1
                     else:
+                        _record_doc_fail(rk, kind, ctype)
                         with _CACHE_LOCK:
                             CACHE_PROGRESS["failed"] += 1
                             CACHE_PROGRESS["last_error"] = str(ctype)[:150]
                 except Exception as e:
+                    _record_doc_fail(rk, kind, f"{type(e).__name__}: {e}")
                     with _CACHE_LOCK:
                         CACHE_PROGRESS["failed"] += 1
                         CACHE_PROGRESS["last_error"] = f"{type(e).__name__}: {str(e)[:110]}"
@@ -7107,7 +7119,9 @@ def _cache_all_confirmed_worker(force=False):
         CACHE_PROGRESS["phase"] = "done"
         CACHE_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
-            if CACHE_PROGRESS["failed"] == 0 or CACHE_PROGRESS["saved"] == 0:
+            # Keep auto-resuming while there are still docs worth retrying (this run had tasks).
+            # When a run finds 0 tasks, everything is either saved or genuinely failed -> stop.
+            if CACHE_PROGRESS.get("total", 0) == 0:
                 set_setting("cache_docs_active", "0")
         except Exception:
             pass
@@ -7189,10 +7203,17 @@ async def cache_docs_progress(user=Depends(verify_token)):
     conn = get_db()
     total_cached = conn.execute("SELECT COUNT(*) FROM document_cache").fetchone()[0]
     students_cached = conn.execute("SELECT COUNT(DISTINCT row_key) FROM document_cache").fetchone()[0]
+    try:
+        genuine_failed = conn.execute("SELECT COUNT(DISTINCT row_key) FROM cache_fail WHERE attempts >= ?",
+                                      (_MAX_CACHE_ATTEMPTS,)).fetchone()[0]
+        retrying = conn.execute("SELECT COUNT(*) FROM cache_fail WHERE attempts < ?",
+                                (_MAX_CACHE_ATTEMPTS,)).fetchone()[0]
+    except Exception:
+        genuine_failed = retrying = 0
     conn.close()
     active = (get_setting("cache_docs_active", "0") == "1")
-    return {"progress": CACHE_PROGRESS, "total_cached": total_cached,
-            "students_cached": students_cached, "auto_resume": active}
+    return {"progress": CACHE_PROGRESS, "total_cached": total_cached, "students_cached": students_cached,
+            "genuine_failed": genuine_failed, "retrying": retrying, "auto_resume": active}
 
 @app.post("/api/wa-resend")
 async def wa_resend(body: dict, user=Depends(verify_token)):
@@ -7506,6 +7527,44 @@ def _doc_cache_dir():
     os.makedirs(d, exist_ok=True)
     return d
 
+try:
+    _MAX_CACHE_ATTEMPTS = max(3, int(os.environ.get("CACHE_MAX_ATTEMPTS", "6")))
+except Exception:
+    _MAX_CACHE_ATTEMPTS = 6
+
+def _record_doc_fail(row_key, kind, err):
+    """Bump the failure counter for a document (used to tell transient reCAPTCHA misses from a
+    genuine data problem)."""
+    try:
+        with _DB_WRITE_LOCK:
+            conn = get_db()
+            conn.execute("INSERT INTO cache_fail (row_key, kind, attempts, last_error, updated_at) "
+                         "VALUES (?,?,1,?,?) ON CONFLICT(row_key,kind) DO UPDATE SET "
+                         "attempts=attempts+1, last_error=excluded.last_error, updated_at=excluded.updated_at",
+                         (row_key, kind, str(err)[:200], datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            conn.commit(); conn.close()
+    except Exception:
+        pass
+
+def _clear_doc_fail(row_key, kind):
+    try:
+        with _DB_WRITE_LOCK:
+            conn = get_db()
+            conn.execute("DELETE FROM cache_fail WHERE row_key=? AND kind=?", (row_key, kind))
+            conn.commit(); conn.close()
+    except Exception:
+        pass
+
+def _doc_fail_attempts(row_key, kind):
+    try:
+        conn = get_db()
+        r = conn.execute("SELECT attempts FROM cache_fail WHERE row_key=? AND kind=?",
+                         (row_key, kind)).fetchone()
+        conn.close()
+        return (r["attempts"] if r else 0)
+    except Exception:
+        return 0
+
 def save_doc_cache(row_key, kind, content, ctype, filename):
     """Persist a fetched document to disk + record it, so future opens serve from OUR copy."""
     import re as _re
@@ -7524,6 +7583,7 @@ def save_doc_cache(row_key, kind, content, ctype, filename):
                      (row_key, kind, path, ctype, filename, len(content or b""),
                       datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         conn.commit(); conn.close()
+        _clear_doc_fail(row_key, kind)   # success — forget any prior failure
         return True
     except Exception as e:
         logger.warning(f"save_doc_cache failed {row_key}/{kind}: {e}")
