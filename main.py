@@ -2675,6 +2675,9 @@ async function diagnoseLogin(){
       "FORM FIELDS      : "+(r.form_fields||"(none)")+NL+
       "reCAPTCHA/Login fields: "+(r.recaptcha_fields||"(none)")+NL+NL+
       "--- LOGIN TEST ---"+NL+
+      "Proxy set     : "+(r.proxy_set||"?")+NL+
+      "CapSolver create: "+(r.capsolver_create||"?")+NL+
+      "CapSolver result: "+(r.capsolver_result||"?")+NL+
       "Captcha token : "+(r.captcha_token||"(skipped)")+NL+
       "DOB format test: "+(r.dob_format_test||"(skipped)")+NL+
       "Login result  : "+(r.login_result||"")+NL+
@@ -5957,6 +5960,7 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
            "looks_blocked": None, "csrf_found": False, "page_snippet": "",
            "built_in_sitekey": "", "live_sitekey": "", "recaptcha_action": "",
            "form_fields": "", "recaptcha_fields": "", "recaptcha_type": "", "action_from_js": "", "dob_format_test": "",
+           "proxy_set": "", "capsolver_create": "", "capsolver_result": "",
            "captcha_token": "", "login_result": "(no ref/dob — login test skipped)",
            "final_url": "", "snippet": ""}
     try:
@@ -6035,6 +6039,38 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
             out["recaptcha_type"] = f"js scan error: {e}"
     except Exception as e:
         out["page_status"] = f"FETCH ERROR: {type(e).__name__}: {str(e)[:150]}"
+    # Raw CapSolver test — reveals WHY no token (proxy error code, etc.)
+    try:
+        import time as _time
+        proxy = os.environ.get("CAPSOLVER_PROXY", "").strip()
+        out["proxy_set"] = ("yes (" + proxy.split(":")[0] + ":" + (proxy.split(":")[1] if ":" in proxy else "?") + ":***)") if proxy else "NO (proxyless)"
+        capkey = os.environ.get("CAPTCHA_API_KEY", "")
+        skey = out.get("live_sitekey") or getattr(nl, "RECAPTCHA_SITE_KEY", "")
+        if proxy:
+            ctask = {"type": "ReCaptchaV3Task", "websiteURL": LOGIN_URL, "websiteKey": skey,
+                     "proxy": proxy, "pageAction": "login", "minScore": 0.9}
+        else:
+            ctask = {"type": "ReCaptchaV3TaskProxyLess", "websiteURL": LOGIN_URL, "websiteKey": skey,
+                     "pageAction": "login", "minScore": 0.9}
+        cr = _rq.post("https://api.capsolver.com/createTask",
+                      json={"clientKey": capkey, "task": ctask}, timeout=30).json()
+        out["capsolver_create"] = f"errId={cr.get('errorId')} code={cr.get('errorCode','')} {str(cr.get('errorDescription',''))[:120]}"
+        tid = cr.get("taskId")
+        if tid:
+            for _ in range(25):
+                _time.sleep(2)
+                gr = _rq.post("https://api.capsolver.com/getTaskResult",
+                              json={"clientKey": capkey, "taskId": tid}, timeout=30).json()
+                if gr.get("errorId") not in (0, None):
+                    out["capsolver_result"] = f"code={gr.get('errorCode','')} {str(gr.get('errorDescription',''))[:120]}"
+                    break
+                if gr.get("status") == "ready":
+                    out["capsolver_result"] = "TOKEN OK (proxy works)"
+                    break
+            else:
+                out["capsolver_result"] = "timeout (proxy too slow?)"
+    except Exception as e:
+        out["capsolver_create"] = f"err {type(e).__name__}: {str(e)[:120]}"
     # Full login test (only if a real ref+dob is provided) — this reveals the actual failure:
     #  captcha token not obtained  -> CapSolver/key issue
     #  BOUNCED back to login       -> captcha score too low OR wrong data
