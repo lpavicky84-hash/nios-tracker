@@ -289,6 +289,52 @@ def verify_login_autofix(reference_no, dob, enrollment_no=""):
             return True, "", flipped
     return False, msg, ""
 
+def fetch_status_via_login(reference_no, dob, enrollment_no=""):
+    """Fallback status read used when the public check-admission-status page returns Unknown
+    for a student who is actually valid. Logs into the NIOS student portal (Reference /
+    Enrollment + DOB) and reads the Application Status straight off the dashboard — the same
+    page the student sees after logging in. Returns a status label (e.g. 'Admission Confirmed')
+    or '' if it could not be read. On success the logged-in session is cached, so a following
+    document check reuses it (no extra captcha)."""
+    try:
+        from scraper import get_status_label
+    except Exception:
+        return ""
+    for attempt in range(2):
+        try:
+            session, resp = login_student(reference_no, dob, enrollment_no=enrollment_no)
+        except Exception as e:
+            logger.warning(f"status-via-login error: {e}")
+            resp = None
+        if resp is None or not is_logged_in(resp.text):
+            continue
+        # cache the logged-in session so a following document verify/fetch reuses it
+        try:
+            key = ("enr:" + enrollment_no) if enrollment_no else reference_no
+            _session_cache[key] = (session, time.time() + 300)
+        except Exception:
+            pass
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        lines = [l.strip() for l in soup.get_text(separator="\n", strip=True).split("\n") if l.strip()]
+        # Prefer the value right after an "Application Status" / "Status" label
+        for i, l in enumerate(lines):
+            key_l = l.lower().replace(":", "").strip()
+            if key_l in ("application status", "status", "admission status") and i + 1 < len(lines):
+                lab = get_status_label(lines[i + 1])
+                if lab != "Unknown":
+                    logger.info(f"status-via-login {reference_no or enrollment_no} -> {lab}")
+                    return lab
+        # else: any line that reads as a known status (dashboard shows 'Admission Confirmed')
+        for l in lines:
+            lab = get_status_label(l)
+            if lab != "Unknown":
+                logger.info(f"status-via-login {reference_no or enrollment_no} -> {lab}")
+                return lab
+        return ""   # logged in, but no status text found on the page
+    return ""
+
 def _fetch_bytes(url, session):
     try:
         sess = session if "sdmis.nios.ac.in" in url else requests

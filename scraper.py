@@ -233,6 +233,24 @@ def scrape_students(students, should_cancel=None, progress_cb=None, on_result=No
                     time.sleep(3)
                     csrf = get_csrf(session)   # refresh token context before retrying
             res["attempts"] = attempt + 1
+            # Fallback: the public check-admission-status page sometimes can't read a status
+            # for a perfectly valid student (esp. newly confirmed / certain sessions), while the
+            # student LOGIN portal shows it fine. If we have a DOB, log in and read the status
+            # straight off the dashboard — the exact page the student sees.
+            if (not res.get("success")) and res.get("status") in ("Unknown", "Fetch Error"):
+                dob = s.get("dob", "")
+                enr = s.get("enrollment_no", "")
+                if dob and (ref or enr):
+                    try:
+                        import nios_login
+                        lab = nios_login.fetch_status_via_login(ref, dob, enr)
+                        if lab and lab != "Unknown":
+                            res["status"] = lab
+                            res["success"] = True
+                            res["raw_text"] = ((res.get("raw_text", "") + " | read via login portal").strip())[:300]
+                            logger.info(f"  {ref or email} -> {lab} (via login fallback)")
+                    except Exception as e:
+                        logger.warning(f"login-status fallback error for {ref or email}: {e}")
             merged = {**s, **res}
             results.append(merged)
             if on_result:
