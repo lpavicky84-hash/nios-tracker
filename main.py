@@ -2662,13 +2662,16 @@ async function diagnoseLogin(){
     var q=new URLSearchParams(); if(ref)q.set("ref",ref); if(dob)q.set("dob",dob);
     var r=await api("/api/debug-login?"+q.toString());
     var msg="NIOS LOGIN DIAGNOSIS"+NL+NL+
-      "Built-in site key : "+(r.built_in_sitekey||"")+NL+
-      "LIVE site key     : "+(r.live_sitekey||"")+NL+
-      "Site key changed  : "+(r.sitekey_changed?"YES  <-- this was the problem (now auto-fixed)":"no")+NL+
-      "CSRF found        : "+(r.csrf_found?"yes":"no")+NL+NL+
+      "Page HTTP status : "+(r.page_status)+NL+
+      "Page length      : "+(r.page_len)+NL+
+      "Looks blocked    : "+(r.looks_blocked?"YES  <-- server is being blocked/challenged by NIOS":"no")+NL+
+      "CSRF found        : "+(r.csrf_found?"yes":"NO  <-- server could not load the real login form")+NL+
+      "Built-in site key : "+(r.built_in_sitekey||"(none)")+NL+
+      "LIVE site key     : "+(r.live_sitekey||"(none)")+NL+NL+
       "Login result: "+(r.login_result||"")+NL+
       (r.final_url?("Final URL: "+r.final_url+NL):"")+
-      (r.snippet?(NL+"Page says: "+r.snippet):"");
+      (r.page_snippet?(NL+"Server sees: "+r.page_snippet):"")+
+      (r.snippet?(NL+"After login: "+r.snippet):"");
     alert(msg);
   }catch(e){ alert("Diagnose failed: "+e); }
 }
@@ -5938,24 +5941,42 @@ async def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=De
 
 @app.get("/api/debug-login")
 async def debug_login_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):
-    """Diagnose NIOS login: shows the LIVE reCAPTCHA site key vs the built-in one, and the
-    result of an actual login attempt (logged in / bounced / captcha). Open:
-    /api/debug-login?ref=REFERENCE&dob=DD-MM-YYYY"""
+    """Diagnose NIOS login. Shows what the SERVER actually receives from NIOS (status code +
+    snippet — reveals Cloudflare/WAF/IP blocks), the live vs built-in reCAPTCHA site key, and
+    an actual login attempt. Open via the 'Diagnose NIOS login' button."""
     import nios_login as nl
     import requests as _rq
-    out = {"built_in_sitekey": nl.RECAPTCHA_SITE_KEY, "live_sitekey": "",
+    out = {"built_in_sitekey": getattr(nl, "RECAPTCHA_SITE_KEY", ""), "live_sitekey": "",
            "sitekey_changed": None, "csrf_found": False,
-           "login_result": "(no ref/dob given — only site-key checked)",
+           "page_status": "", "page_len": 0, "looks_blocked": None, "page_snippet": "",
+           "login_result": "(no ref/dob given — only page/site-key checked)",
            "final_url": "", "snippet": ""}
+    # 1) Raw fetch of the NIOS login page — this is what matters most: if the SERVER can't
+    #    load the real form (block / challenge / geo), nothing downstream can work.
+    try:
+        rr = _rq.get(nl.LOGIN_URL, headers=nl.HEADERS, timeout=20)
+        body = rr.text or ""
+        out["page_status"] = rr.status_code
+        out["page_len"] = len(body)
+        out["page_snippet"] = body[:400]
+        low = body.lower()
+        out["looks_blocked"] = any(x in low for x in [
+            "cloudflare", "just a moment", "attention required", "access denied",
+            "forbidden", "cf-chl", "captcha-delivery", "are you a human", "ddos",
+            "request blocked", "not allowed"])
+    except Exception as e:
+        out["page_status"] = f"FETCH ERROR: {e}"
+        return out
+    # 2) CSRF + live site key
     try:
         s = _rq.Session()
-        csrf = nl.get_login_csrf(s)               # refreshes the live site key
+        csrf = nl.get_login_csrf(s)
         out["csrf_found"] = bool(csrf)
-        out["live_sitekey"] = nl.current_login_sitekey()
-        out["sitekey_changed"] = (out["live_sitekey"] != nl.RECAPTCHA_SITE_KEY)
+        out["live_sitekey"] = getattr(nl, "current_login_sitekey", lambda: "")() or ""
+        out["sitekey_changed"] = bool(out["live_sitekey"]) and (out["live_sitekey"] != out["built_in_sitekey"])
     except Exception as e:
-        out["login_result"] = f"login-page fetch error: {e}"
-        return out
+        out["login_result"] = f"csrf/sitekey error: {e}"
+    # 3) actual login attempt (only if ref+dob given)
     if ref and dob:
         try:
             session, resp = nl.login_student(ref, dob)
