@@ -95,8 +95,11 @@ def solve_recaptcha_v3():
                 "websiteKey": _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY,
             }
         }
-        if _SITEKEY_CACHE.get("action"):
-            payload["task"]["pageAction"] = _SITEKEY_CACHE["action"]
+        try:
+            payload["task"]["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.7"))
+        except Exception:
+            payload["task"]["minScore"] = 0.7
+        payload["task"]["pageAction"] = _SITEKEY_CACHE.get("action") or "login"
         r = requests.post(CAPSOLVER_CREATE, json=payload, timeout=30).json()
         if r.get("errorId") != 0:
             logger.error(f"CapSolver create error: {r.get('errorDescription')}")
