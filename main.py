@@ -2434,8 +2434,12 @@ function startCachePoll(){
     const p=(d&&d.progress)||{};
     const pct=p.total?Math.round((p.done/p.total)*100):0;
     if(el){
-      if(p.running){ el.textContent="Saving: "+p.done+"/"+p.total+" ("+pct+"%) \u00b7 saved "+p.saved+", failed "+p.failed; }
-      else { el.textContent="Saved copies in DB: "+((d&&d.students_cached)||0)+" students / "+((d&&d.total_cached)||0)+" documents"+(p.finished_at?(" \u00b7 last run done"):""); }
+      if(p.running){ el.textContent=(p.phase==="saving"?("Saving documents: "+p.done+"/"+p.total+" ("+pct+"%) \u00b7 saved "+p.saved+", failed "+p.failed):("Working\u2026 "+(p.phase||"")))+(p.last_error?(" \u00b7 last error: "+p.last_error):""); }
+      else {
+        var base="Saved copies in DB: "+((d&&d.students_cached)||0)+" students / "+((d&&d.total_cached)||0)+" documents";
+        if(p.finished_at){ base+=" \u00b7 last run: "+(p.saved||0)+" saved, "+(p.failed||0)+" failed of "+(p.confirmed||0)+" confirmed"; if(p.last_error)base+=" \u00b7 error: "+p.last_error; }
+        el.textContent=base;
+      }
     }
     if(!p.running){
       clearInterval(CACHE_POLL); CACHE_POLL=null;
@@ -6963,8 +6967,8 @@ def auto_send_pending_whatsapp(batch=None, label="Auto sweep"):
         logger.info(f"WhatsApp {label}: sent {sent}/{len(keys)} pending confirmed student(s)")
     return {"sent": sent, "checked": len(keys)}
 
-CACHE_PROGRESS = {"running": False, "total": 0, "done": 0, "saved": 0, "failed": 0,
-                  "started_at": "", "finished_at": "", "label": ""}
+CACHE_PROGRESS = {"running": False, "phase": "", "total": 0, "done": 0, "saved": 0, "failed": 0,
+                  "confirmed": 0, "last_error": "", "started_at": "", "finished_at": "", "label": ""}
 
 def _cache_all_confirmed_worker():
     """Fetch + save every confirmed student's allowed documents into OUR database, so their
@@ -6972,6 +6976,10 @@ def _cache_all_confirmed_worker():
     Skips documents already saved."""
     if CACHE_PROGRESS["running"]:
         return
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    CACHE_PROGRESS.update({"running": True, "phase": "finding confirmed students", "total": 0,
+                           "done": 0, "saved": 0, "failed": 0, "confirmed": 0, "last_error": "",
+                           "started_at": now, "finished_at": "", "label": "Saving documents"})
     try:
         import whatsapp
         from nios_login import fetch_document
@@ -6980,6 +6988,7 @@ def _cache_all_confirmed_worker():
                             "FROM student_status WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 "
                             "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
         conn.close()
+        CACHE_PROGRESS["confirmed"] = len(rows)
         tasks = []
         for r in rows:
             allowed = whatsapp.allowed_docs(r["session"], (r["toc_status"] or ""))
@@ -6987,9 +6996,7 @@ def _cache_all_confirmed_worker():
                 if load_doc_cache(r["row_key"], kind) is None:   # not saved yet
                     tasks.append((r["row_key"], r["reference_no"] or "", r["enrollment_no"] or "",
                                   r["dob"] or "", kind))
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        CACHE_PROGRESS.update({"running": True, "total": len(tasks), "done": 0, "saved": 0,
-                               "failed": 0, "started_at": now, "finished_at": "", "label": "Saving documents"})
+        CACHE_PROGRESS.update({"phase": "saving", "total": len(tasks)})
         for rk, ref, enroll, dob, kind in tasks:
             try:
                 content, ctype, filename = fetch_document(ref, dob, kind, enrollment_no=enroll)
@@ -6998,11 +7005,16 @@ def _cache_all_confirmed_worker():
                     CACHE_PROGRESS["saved"] += 1
                 else:
                     CACHE_PROGRESS["failed"] += 1
-            except Exception:
+                    CACHE_PROGRESS["last_error"] = str(ctype)[:150]
+            except Exception as e:
                 CACHE_PROGRESS["failed"] += 1
+                CACHE_PROGRESS["last_error"] = f"{type(e).__name__}: {str(e)[:110]}"
             CACHE_PROGRESS["done"] += 1
+    except Exception as e:
+        CACHE_PROGRESS["last_error"] = f"worker: {type(e).__name__}: {str(e)[:110]}"
     finally:
         CACHE_PROGRESS["running"] = False
+        CACHE_PROGRESS["phase"] = "done"
         CACHE_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 @app.post("/api/cache-docs")
