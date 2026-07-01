@@ -5855,6 +5855,12 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
         # earlier. Matched by reference + DOB.
         err = ctype or "NIOS login failed"
         low = err.lower()
+        # A captcha/service failure is NOT a data problem — never move the student to
+        # 'Failed to Run' for it (that would wrongly pull confirmed students out when the
+        # captcha gateway is just busy / out of balance). Only genuine data mismatches flag.
+        if err.startswith("CAPTCHA_BUSY"):
+            raise HTTPException(status_code=503,
+                detail="NIOS captcha/login service is busy right now (not a data problem). Please try again in a minute.")
         if ("login" in low or "rejected" in low or "dob" in low) and ref:
             try:
                 conn = get_db()

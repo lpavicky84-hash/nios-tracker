@@ -19,6 +19,10 @@ CAPSOLVER_RESULT  = "https://api.capsolver.com/getTaskResult"
 # instead of needing a manual re-run. Only retries on FAILURE — a clean read costs 1 try.
 STATUS_MAX_TRIES = 3
 
+# Login-portal status fallback safety limits (per run): never let it drain the captcha balance.
+_FB_MAX = 20            # at most this many login-fallback reads per run
+_FB_STREAK_STOP = 5     # stop the fallback entirely after this many failures in a row
+
 # Order matters: most specific first
 STATUS_KEYWORDS = [
     ("admission confirmed",               "Admission Confirmed"),
@@ -190,6 +194,8 @@ def scrape_students(students, should_cancel=None, progress_cb=None, on_result=No
     logger.info(f"Scraping {len(students)} students...")
     results = []
     total = len(students)
+    _fb_used = [0]      # per-run login-fallback counter (mutable so the inner block can bump it)
+    _fb_streak = [0]    # consecutive fallback failures — stops the fallback if captcha is down
     if not CAPSOLVER_API_KEY:
         for s in students:
             r = {**s, "status": "Fetch Error", "raw_text": "No captcha key",
@@ -233,14 +239,19 @@ def scrape_students(students, should_cancel=None, progress_cb=None, on_result=No
                     time.sleep(3)
                     csrf = get_csrf(session)   # refresh token context before retrying
             res["attempts"] = attempt + 1
-            # Fallback: the public check-admission-status page sometimes can't read a status
-            # for a perfectly valid student (esp. newly confirmed / certain sessions), while the
-            # student LOGIN portal shows it fine. If we have a DOB, log in and read the status
-            # straight off the dashboard — the exact page the student sees.
-            if (not res.get("success")) and res.get("status") in ("Unknown", "Fetch Error"):
+            # Fallback: the public check-admission-status page sometimes returns a page with NO
+            # readable status for a valid student (low captcha score / newly confirmed). If we
+            # have a DOB, read the status straight off the student's login dashboard.
+            # SAFETY: only for a true "Unknown" (a page came back, just no status) — NOT for
+            # "Fetch Error" (captcha/network already failing; a login would just burn more
+            # captcha). Capped per run, and stops entirely after a streak of failures so a
+            # captcha-gateway outage can never drain the balance.
+            if (res.get("status") == "Unknown" and not res.get("success")
+                    and _fb_used[0] < _FB_MAX and _fb_streak[0] < _FB_STREAK_STOP):
                 dob = s.get("dob", "")
                 enr = s.get("enrollment_no", "")
                 if dob and (ref or enr):
+                    _fb_used[0] += 1
                     try:
                         import nios_login
                         lab = nios_login.fetch_status_via_login(ref, dob, enr)
@@ -248,8 +259,12 @@ def scrape_students(students, should_cancel=None, progress_cb=None, on_result=No
                             res["status"] = lab
                             res["success"] = True
                             res["raw_text"] = ((res.get("raw_text", "") + " | read via login portal").strip())[:300]
+                            _fb_streak[0] = 0
                             logger.info(f"  {ref or email} -> {lab} (via login fallback)")
+                        else:
+                            _fb_streak[0] += 1
                     except Exception as e:
+                        _fb_streak[0] += 1
                         logger.warning(f"login-status fallback error for {ref or email}: {e}")
             merged = {**s, **res}
             results.append(merged)

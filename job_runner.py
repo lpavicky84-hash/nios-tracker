@@ -640,24 +640,30 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                                       (row_key,))
                     else:
                         login_blocked = True
-                        stats["failed"] += 1
-                        # Login failed = "data mismatch". Pinpoint the cause: if the name
-                        # NIOS shows for this reference shares NO word with the student's
-                        # name, the Reference No likely belongs to a DIFFERENT student
-                        # (vs. just a wrong DOB). Counsellor verifies on the portal, then
-                        # ticks "Name correct" (sets name_verified=1) or fixes the reference.
-                        _nv = c.execute("SELECT name_verified FROM student_status WHERE row_key=?",
-                                        (row_key,)).fetchone()
-                        _already_ok = bool(_nv and _nv["name_verified"] == 1)
-                        _nm = res.get("nios_name", "")
-                        if (not _already_ok) and _names_disagree(res.get("student_name", ""), _nm):
-                            lmsg = (f"\u26a0 Reference No may belong to a DIFFERENT student — NIOS shows "
-                                    f"'{_nm}' but name here is '{res.get('student_name','')}'. Check the "
-                                    f"portal: tick 'Name correct' if fine, else update the Reference No.")
-                        c.execute("UPDATE student_status SET login_failed=1, login_remark=?, "
-                                  "whatsapp_info=?, whatsapp_sent=0 WHERE row_key=?",
-                                  (lmsg[:240], ("Not sent — " + lmsg)[:180], row_key))
-                        logger.warning(f"Login verify FAILED {row_key}: {lmsg}")
+                        if str(lmsg).startswith("CAPTCHA_BUSY"):
+                            # captcha/login gateway busy — NOT wrong data. Do NOT flag the
+                            # student; just skip the WhatsApp this run (retries next run when
+                            # captcha is healthy). Leaves the confirmed status intact.
+                            logger.warning(f"Login verify skipped (captcha busy) {row_key}")
+                        else:
+                            stats["failed"] += 1
+                            # Login failed = "data mismatch". Pinpoint the cause: if the name
+                            # NIOS shows for this reference shares NO word with the student's
+                            # name, the Reference No likely belongs to a DIFFERENT student
+                            # (vs. just a wrong DOB). Counsellor verifies on the portal, then
+                            # ticks "Name correct" (sets name_verified=1) or fixes the reference.
+                            _nv = c.execute("SELECT name_verified FROM student_status WHERE row_key=?",
+                                            (row_key,)).fetchone()
+                            _already_ok = bool(_nv and _nv["name_verified"] == 1)
+                            _nm = res.get("nios_name", "")
+                            if (not _already_ok) and _names_disagree(res.get("student_name", ""), _nm):
+                                lmsg = (f"\u26a0 Reference No may belong to a DIFFERENT student — NIOS shows "
+                                        f"'{_nm}' but name here is '{res.get('student_name','')}'. Check the "
+                                        f"portal: tick 'Name correct' if fine, else update the Reference No.")
+                            c.execute("UPDATE student_status SET login_failed=1, login_remark=?, "
+                                      "whatsapp_info=?, whatsapp_sent=0 WHERE row_key=?",
+                                      (lmsg[:240], ("Not sent — " + lmsg)[:180], row_key))
+                            logger.warning(f"Login verify FAILED {row_key}: {lmsg}")
                     conn.commit()
 
             # ── WhatsApp: auto-send documents ONCE when admission is confirmed ──
@@ -919,17 +925,23 @@ def recheck_one(row_key):
                     c.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
             else:
                 login_blocked = True
-                out["login_failed"] = True
-                _nv = c.execute("SELECT name_verified FROM student_status WHERE row_key=?",
-                                (row_key,)).fetchone()
-                _nm = res.get("nios_name", "")
-                if (not (_nv and _nv["name_verified"] == 1)) and _names_disagree(student["student_name"], _nm):
-                    lmsg = (f"\u26a0 Reference No may belong to a DIFFERENT student — NIOS shows "
-                            f"'{_nm}' but name here is '{student['student_name']}'. Check the portal: "
-                            f"tick 'Name correct' if fine, else update the Reference No.")
-                out["login_remark"] = lmsg
-                c.execute("UPDATE student_status SET login_failed=1, login_remark=? WHERE row_key=?",
-                          (lmsg[:240], row_key))
+                if str(lmsg).startswith("CAPTCHA_BUSY"):
+                    # captcha/login gateway busy — NOT wrong data. Skip WhatsApp this time,
+                    # keep the confirmed status, do NOT move to 'Failed to Run'.
+                    out["login_remark"] = "Captcha/login service busy — try again shortly."
+                    logger.warning(f"recheck login skipped (captcha busy) {row_key}")
+                else:
+                    out["login_failed"] = True
+                    _nv = c.execute("SELECT name_verified FROM student_status WHERE row_key=?",
+                                    (row_key,)).fetchone()
+                    _nm = res.get("nios_name", "")
+                    if (not (_nv and _nv["name_verified"] == 1)) and _names_disagree(student["student_name"], _nm):
+                        lmsg = (f"\u26a0 Reference No may belong to a DIFFERENT student — NIOS shows "
+                                f"'{_nm}' but name here is '{student['student_name']}'. Check the portal: "
+                                f"tick 'Name correct' if fine, else update the Reference No.")
+                    out["login_remark"] = lmsg
+                    c.execute("UPDATE student_status SET login_failed=1, login_remark=? WHERE row_key=?",
+                              (lmsg[:240], row_key))
             conn.commit()
         # WhatsApp (force a fresh send for the fixed student)
         if new_status == "Admission Confirmed" and not login_blocked and get_setting("wa_enabled", "0") == "1":
