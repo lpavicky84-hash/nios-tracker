@@ -2653,25 +2653,17 @@ let fTimer=null;
 function debounceFailed(){clearTimeout(fTimer);fTimer=setTimeout(()=>loadFailed(1),400);}
 async function diagnoseLogin(){
   var NL=String.fromCharCode(10);
-  var ref=prompt("Diagnose NIOS login. Enter a REFERENCE NO of a confirmed student to test (blank = only check site-key):","");
-  if(ref===null) return;
-  ref=(ref||"").trim();
-  var dob="";
-  if(ref){ dob=prompt("Enter that student DATE OF BIRTH (DD-MM-YYYY):",""); if(dob===null) return; dob=(dob||"").trim(); }
   try{
-    var q=new URLSearchParams(); if(ref)q.set("ref",ref); if(dob)q.set("dob",dob);
-    var r=await api("/api/debug-login?"+q.toString());
-    var msg="NIOS LOGIN DIAGNOSIS"+NL+NL+
+    var r=await api("/api/debug-login");
+    var msg="NIOS SERVER-REACHABILITY CHECK"+NL+
+      "(code version: "+(r.endpoint_version||"OLD - redeploy not applied yet")+")"+NL+NL+
       "Page HTTP status : "+(r.page_status)+NL+
       "Page length      : "+(r.page_len)+NL+
-      "Looks blocked    : "+(r.looks_blocked?"YES  <-- server is being blocked/challenged by NIOS":"no")+NL+
-      "CSRF found        : "+(r.csrf_found?"yes":"NO  <-- server could not load the real login form")+NL+
-      "Built-in site key : "+(r.built_in_sitekey||"(none)")+NL+
-      "LIVE site key     : "+(r.live_sitekey||"(none)")+NL+NL+
-      "Login result: "+(r.login_result||"")+NL+
-      (r.final_url?("Final URL: "+r.final_url+NL):"")+
-      (r.page_snippet?(NL+"Server sees: "+r.page_snippet):"")+
-      (r.snippet?(NL+"After login: "+r.snippet):"");
+      "Looks blocked    : "+(r.looks_blocked?"YES  <-- NIOS is blocking/challenging the server":"no")+NL+
+      "CSRF found       : "+(r.csrf_found?"yes":"NO  <-- server could not load the real login form")+NL+
+      "LIVE site key    : "+(r.live_sitekey||"(none)")+NL+
+      "Built-in key     : "+(r.built_in_sitekey||"(none)")+NL+NL+
+      "Server sees (first 400 chars):"+NL+(r.page_snippet||"(empty)");
     alert(msg);
   }catch(e){ alert("Diagnose failed: "+e); }
 }
@@ -5941,55 +5933,40 @@ async def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=De
 
 @app.get("/api/debug-login")
 async def debug_login_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):
-    """Diagnose NIOS login. Shows what the SERVER actually receives from NIOS (status code +
-    snippet — reveals Cloudflare/WAF/IP blocks), the live vs built-in reCAPTCHA site key, and
-    an actual login attempt. Open via the 'Diagnose NIOS login' button."""
-    import nios_login as nl
+    """Diagnose NIOS reachability from the SERVER. The key check: can the server load the real
+    NIOS login page (status code + snippet)? If it can't, NIOS is blocking the server IP."""
     import requests as _rq
-    out = {"built_in_sitekey": getattr(nl, "RECAPTCHA_SITE_KEY", ""), "live_sitekey": "",
-           "sitekey_changed": None, "csrf_found": False,
-           "page_status": "", "page_len": 0, "looks_blocked": None, "page_snippet": "",
-           "login_result": "(no ref/dob given — only page/site-key checked)",
-           "final_url": "", "snippet": ""}
-    # 1) Raw fetch of the NIOS login page — this is what matters most: if the SERVER can't
-    #    load the real form (block / challenge / geo), nothing downstream can work.
+    out = {"endpoint_version": "v2", "page_status": "", "page_len": 0,
+           "looks_blocked": None, "csrf_found": False, "page_snippet": "",
+           "built_in_sitekey": "", "live_sitekey": "", "login_result": "", "final_url": "", "snippet": ""}
     try:
-        rr = _rq.get(nl.LOGIN_URL, headers=nl.HEADERS, timeout=20)
+        import nios_login as nl
+        out["built_in_sitekey"] = getattr(nl, "RECAPTCHA_SITE_KEY", "") or ""
+        LOGIN_URL = getattr(nl, "LOGIN_URL", "https://sdmis.nios.ac.in/auth/other-login")
+        HEADERS = getattr(nl, "HEADERS", {"User-Agent": "Mozilla/5.0"})
+    except Exception as e:
+        out["login_result"] = f"module error: {e}"
+        return out
+    # THE key check: raw fetch of the NIOS login page from the server.
+    try:
+        rr = _rq.get(LOGIN_URL, headers=HEADERS, timeout=12)
         body = rr.text or ""
         out["page_status"] = rr.status_code
         out["page_len"] = len(body)
+        out["final_url"] = str(getattr(rr, "url", ""))
         out["page_snippet"] = body[:400]
         low = body.lower()
+        out["csrf_found"] = ('name="_csrf"' in body or "'_csrf'" in body or "_csrf" in low)
+        try:
+            out["live_sitekey"] = nl._extract_sitekey(body) or ""
+        except Exception:
+            out["live_sitekey"] = ""
         out["looks_blocked"] = any(x in low for x in [
             "cloudflare", "just a moment", "attention required", "access denied",
             "forbidden", "cf-chl", "captcha-delivery", "are you a human", "ddos",
-            "request blocked", "not allowed"])
+            "request blocked", "not allowed", "access to this page has been denied"])
     except Exception as e:
-        out["page_status"] = f"FETCH ERROR: {e}"
-        return out
-    # 2) CSRF + live site key
-    try:
-        s = _rq.Session()
-        csrf = nl.get_login_csrf(s)
-        out["csrf_found"] = bool(csrf)
-        out["live_sitekey"] = getattr(nl, "current_login_sitekey", lambda: "")() or ""
-        out["sitekey_changed"] = bool(out["live_sitekey"]) and (out["live_sitekey"] != out["built_in_sitekey"])
-    except Exception as e:
-        out["login_result"] = f"csrf/sitekey error: {e}"
-    # 3) actual login attempt (only if ref+dob given)
-    if ref and dob:
-        try:
-            session, resp = nl.login_student(ref, dob)
-            if resp is None:
-                out["login_result"] = "captcha token NOT obtained (CapSolver/key issue)"
-            else:
-                li = nl.is_logged_in(resp.text)
-                out["login_result"] = "LOGGED IN OK" if li else "BOUNCED back to login (NIOS rejected)"
-                out["final_url"] = str(getattr(resp, "url", ""))
-                from bs4 import BeautifulSoup as _BS
-                out["snippet"] = _BS(resp.text, "html.parser").get_text(" ", strip=True)[:300]
-        except Exception as e:
-            out["login_result"] = f"login error: {e}"
+        out["page_status"] = f"FETCH ERROR: {type(e).__name__}: {str(e)[:150]}"
     return out
 
 @app.get("/api/syc")
