@@ -2670,6 +2670,8 @@ async function diagnoseLogin(){
       "CSRF found       : "+(r.csrf_found?"yes":"NO")+NL+
       "Site key OK      : "+((r.live_sitekey&&r.live_sitekey===r.built_in_sitekey)?"yes (same)":(r.live_sitekey?"CHANGED":"(none)"))+NL+
       "reCAPTCHA action : "+(r.recaptcha_action||"(none)")+NL+
+      "reCAPTCHA TYPE   : "+(r.recaptcha_type||"?")+NL+
+      "Action from JS   : "+(r.action_from_js||"?")+NL+
       "FORM FIELDS      : "+(r.form_fields||"(none)")+NL+
       "reCAPTCHA/Login fields: "+(r.recaptcha_fields||"(none)")+NL+NL+
       "--- LOGIN TEST ---"+NL+
@@ -5953,7 +5955,7 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
     out = {"endpoint_version": "v3", "page_status": "", "page_len": 0,
            "looks_blocked": None, "csrf_found": False, "page_snippet": "",
            "built_in_sitekey": "", "live_sitekey": "", "recaptcha_action": "",
-           "form_fields": "", "recaptcha_fields": "",
+           "form_fields": "", "recaptcha_fields": "", "recaptcha_type": "", "action_from_js": "",
            "captcha_token": "", "login_result": "(no ref/dob — login test skipped)",
            "final_url": "", "snippet": ""}
     try:
@@ -6002,6 +6004,34 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
             out["recaptcha_fields"] = ", ".join(sorted(set(rc))[:15]) or "(none)"
         except Exception as e:
             out["form_fields"] = f"parse error: {e}"
+        # Detect reCAPTCHA type + find the action from the page's own JS (it isn't in the HTML).
+        try:
+            import re as _re
+            out["recaptcha_type"] = ("ENTERPRISE" if ("recaptcha/enterprise" in low or "enterprise.js" in low)
+                                     else ("standard-v3" if ("recaptcha/api.js" in low or "grecaptcha" in low
+                                                             or "www.google.com/recaptcha" in low)
+                                           else "not in HTML (loaded by JS)"))
+            scripts = _re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', body)
+            js_blob = ""
+            for su in scripts[:10]:
+                u = su
+                if u.startswith("//"): u = "https:" + u
+                elif u.startswith("/"): u = "https://sdmis.nios.ac.in" + u
+                elif not u.startswith("http"): u = "https://sdmis.nios.ac.in/" + u
+                if "sdmis.nios.ac.in" in u:
+                    try:
+                        jr = _rq.get(u, headers=HEADERS, timeout=8)
+                        js_blob += (jr.text or "")[:30000]
+                    except Exception:
+                        pass
+            jl = js_blob.lower()
+            if "enterprise" in jl and out["recaptcha_type"] != "ENTERPRISE":
+                out["recaptcha_type"] = "ENTERPRISE (found in JS)"
+            em = _re.search(r'execute\(\s*["\'][\w\-]{20,}["\']\s*,\s*\{\s*action\s*:\s*["\']([\w\-/]+)', js_blob)
+            am = em or _re.search(r'action\s*[:=]\s*["\']([\w\-/]{2,40})["\']', js_blob)
+            out["action_from_js"] = (am.group(1) if am else "(not found in JS)")
+        except Exception as e:
+            out["recaptcha_type"] = f"js scan error: {e}"
     except Exception as e:
         out["page_status"] = f"FETCH ERROR: {type(e).__name__}: {str(e)[:150]}"
     # Full login test (only if a real ref+dob is provided) — this reveals the actual failure:
