@@ -875,6 +875,7 @@ def recheck_one(row_key):
         "alt_mobile": (r["alt_mobile"] if "alt_mobile" in r.keys() else "") or "",
         "class_level": r["class_level"] or "",
         "session": r["session"] or "",
+        "toc_status": (r["toc_status"] if "toc_status" in r.keys() else "") or "",
     }
     final_source = (r["source"] if "source" in r.keys() else "") or "mvs_tracker"
     now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -940,7 +941,8 @@ def recheck_one(row_key):
                         "row_key": row_key, "student_name": student["student_name"],
                         "mobile": phone, "session": student["session"],
                         "alt_mobile": (student["alt_mobile"] if "alt_mobile" in student.keys() else ""),
-                        "reference_no": new_ref, "dob": student["dob"]})
+                        "reference_no": new_ref, "dob": student["dob"],
+                        "toc_status": student.get("toc_status", "")})
                     if ok:
                         c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
                                   (str(info)[:180], row_key))
