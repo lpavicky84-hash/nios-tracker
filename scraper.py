@@ -96,9 +96,9 @@ def solve_recaptcha_v3():
             }
         }
         try:
-            payload["task"]["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.7"))
+            payload["task"]["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.3"))
         except Exception:
-            payload["task"]["minScore"] = 0.7
+            payload["task"]["minScore"] = 0.3
         payload["task"]["pageAction"] = _SITEKEY_CACHE.get("action") or "login"
         r = requests.post(CAPSOLVER_CREATE, json=payload, timeout=30).json()
         if r.get("errorId") != 0:
@@ -190,7 +190,7 @@ def fetch_status(session, ref_no, email, csrf, token):
             "CheckStatus[email]": email if (email and not ref_no) else "",
             "CheckStatus[reference_no]": ref_no if ref_no else "",
             "CheckStatus[enrollment_no]": "",
-            "CheckStatus[google_recapcha_response]": token,
+            "CheckStatus[google_recaptcha_response]": token, "CheckStatus[google_recapcha_response]": token,
         }
         headers = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
         resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25)
@@ -333,7 +333,7 @@ def debug_full_response(reference_no):
         "_csrf": csrf, "CheckStatus[email]": "",
         "CheckStatus[reference_no]": reference_no,
         "CheckStatus[enrollment_no]": "",
-        "CheckStatus[google_recapcha_response]": token,
+        "CheckStatus[google_recaptcha_response]": token, "CheckStatus[google_recapcha_response]": token,
     }
     resp = session.post(NIOS_URL, data=payload,
                         headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},

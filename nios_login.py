@@ -46,9 +46,9 @@ def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
         # reCAPTCHA v3 is score-based (0.0-1.0). A datacenter-solved token often scores low and
         # NIOS then rejects the login. Ask CapSolver for a high-score token. Tunable via env.
         try:
-            task["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.7"))
+            task["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.3"))
         except Exception:
-            task["minScore"] = 0.7
+            task["minScore"] = 0.3
         # reCAPTCHA v3 always executes with an action; pass the page's action, else a sensible
         # default ('login') so the token isn't rejected on an action mismatch.
         task["pageAction"] = page_action or "login"
@@ -172,6 +172,9 @@ def login_student(reference_no, dob, page_action=None, enrollment_no=""):
         "LoginForm[enrollment_no]": enrollment_no or "",
         "LoginForm[application_no]": "",
         "LoginForm[date_of_birth]": format_dob(dob),
+        # NIOS fixed a typo in this field name (recapcha -> recaptcha). Send BOTH spellings so
+        # the token lands in whichever field the live form expects; the unused one is ignored.
+        "LoginForm[google_recaptcha_response]": token,
         "LoginForm[google_recapcha_response]": token,
         "login-button": "",
     }
@@ -242,6 +245,7 @@ def diagnose_login(reference_no, dob, enrollment_no=""):
             "LoginForm[enrollment_no]": enrollment_no or "",
             "LoginForm[application_no]": "",
             "LoginForm[date_of_birth]": format_dob(dob),
+            "LoginForm[google_recaptcha_response]": token,
             "LoginForm[google_recapcha_response]": token,
             "login-button": "",
         }
@@ -307,7 +311,7 @@ def is_logged_in(html):
     # that fetch_document uses, so verification and download agree.
     if ("login to your account" in body or "loginform[" in body
             or ("username / email" in body and "reset password" in body)
-            or "google_recapcha_response" in body):
+            or "google_recaptcha_response" in body or "google_recapcha_response" in body):
         return False
     return any(m in body for m in ["admission status", "my documents", "payment status",
                                     "logout", "enroll no", "i card", "dashboard"])
