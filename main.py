@@ -2669,7 +2669,9 @@ async function diagnoseLogin(){
       "Looks blocked    : "+(r.looks_blocked?"YES":"no")+NL+
       "CSRF found       : "+(r.csrf_found?"yes":"NO")+NL+
       "Site key OK      : "+((r.live_sitekey&&r.live_sitekey===r.built_in_sitekey)?"yes (same)":(r.live_sitekey?"CHANGED":"(none)"))+NL+
-      "reCAPTCHA action : "+(r.recaptcha_action||"(none)")+NL+NL+
+      "reCAPTCHA action : "+(r.recaptcha_action||"(none)")+NL+
+      "FORM FIELDS      : "+(r.form_fields||"(none)")+NL+
+      "reCAPTCHA/Login fields: "+(r.recaptcha_fields||"(none)")+NL+NL+
       "--- LOGIN TEST ---"+NL+
       "Captcha token : "+(r.captcha_token||"(skipped)")+NL+
       "Login result  : "+(r.login_result||"")+NL+
@@ -5951,6 +5953,7 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
     out = {"endpoint_version": "v3", "page_status": "", "page_len": 0,
            "looks_blocked": None, "csrf_found": False, "page_snippet": "",
            "built_in_sitekey": "", "live_sitekey": "", "recaptcha_action": "",
+           "form_fields": "", "recaptcha_fields": "",
            "captcha_token": "", "login_result": "(no ref/dob — login test skipped)",
            "final_url": "", "snippet": ""}
     try:
@@ -5983,6 +5986,22 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
             "cloudflare", "just a moment", "attention required", "access denied",
             "forbidden", "cf-chl", "captcha-delivery", "are you a human", "ddos",
             "request blocked", "not allowed", "access to this page has been denied"])
+        # Extract the CURRENT login-form field names — if NIOS renamed fields, our POST is
+        # ignored and the login silently bounces. This shows exactly what the form now wants.
+        try:
+            from bs4 import BeautifulSoup as _BS
+            fsoup = _BS(body, "html.parser")
+            names = []
+            for inp in fsoup.find_all(["input", "textarea", "select"]):
+                nm = inp.get("name") or inp.get("id") or ""
+                if nm and nm not in names:
+                    names.append(nm)
+            out["form_fields"] = ", ".join(names[:40]) or "(no form inputs found)"
+            import re as _re
+            rc = _re.findall(r'(g-recaptcha-response|google_recapcha_response|recaptcha[\w\-]*|LoginForm\[[\w_]+\])', body, _re.I)
+            out["recaptcha_fields"] = ", ".join(sorted(set(rc))[:15]) or "(none)"
+        except Exception as e:
+            out["form_fields"] = f"parse error: {e}"
     except Exception as e:
         out["page_status"] = f"FETCH ERROR: {type(e).__name__}: {str(e)[:150]}"
     # Full login test (only if a real ref+dob is provided) — this reveals the actual failure:
