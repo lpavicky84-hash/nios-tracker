@@ -95,7 +95,7 @@ def format_dob(dob):
             continue
     return s   # assume already DD-MM-YYYY
 
-_SITEKEY_CACHE = {"key": RECAPTCHA_SITE_KEY}   # refreshed from the live login page each time
+_SITEKEY_CACHE = {"key": RECAPTCHA_SITE_KEY, "action": None}   # refreshed from the live login page each time
 
 def _extract_sitekey(html):
     """Pull the current reCAPTCHA site key out of a page's HTML. NIOS can rotate this key;
@@ -112,8 +112,25 @@ def _extract_sitekey(html):
             return m.group(1)
     return ""
 
+def _extract_action(html):
+    """Pull the reCAPTCHA v3 'action' the page uses (grecaptcha.execute(key,{action:'X'})).
+    A reCAPTCHA v3 token is bound to its action; if NIOS verifies the action and we solved
+    without it (or with the wrong one), NIOS silently rejects the login. Returns '' if none."""
+    if not html:
+        return ""
+    for pat in (r'grecaptcha\.execute\([^)]*\{\s*action\s*:\s*["\']([\w\-/]+)["\']',
+                r'["\']action["\']\s*:\s*["\']([\w\-/]+)["\']',
+                r'data-action=["\']([\w\-/]+)["\']'):
+        m = re.search(pat, html)
+        if m:
+            return m.group(1)
+    return ""
+
 def current_login_sitekey():
     return _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY
+
+def current_login_action():
+    return _SITEKEY_CACHE.get("action") or None
 
 def get_login_csrf(session):
     r = session.get(LOGIN_URL, headers=HEADERS, timeout=20)
@@ -123,6 +140,9 @@ def get_login_csrf(session):
         if sk != _SITEKEY_CACHE.get("key"):
             logger.info(f"NIOS login site-key updated -> {sk}")
         _SITEKEY_CACHE["key"] = sk
+    act = _extract_action(html)          # and the reCAPTCHA action, if any
+    if act:
+        _SITEKEY_CACHE["action"] = act
     soup = BeautifulSoup(html, "html.parser")
     meta = soup.find("meta", {"name": "_csrf"})
     if meta and meta.get("content"):
@@ -133,8 +153,9 @@ def get_login_csrf(session):
 def login_student(reference_no, dob, page_action=None, enrollment_no=""):
     """Login with reference_no OR enrollment_no (+ DOB). Returns (session, final_response)."""
     session = requests.Session()
-    csrf = get_login_csrf(session)   # also refreshes the live reCAPTCHA site key
-    token = solve_recaptcha_v3(LOGIN_URL, page_action, site_key=current_login_sitekey())
+    csrf = get_login_csrf(session)   # also refreshes the live reCAPTCHA site key + action
+    token = solve_recaptcha_v3(LOGIN_URL, page_action or current_login_action(),
+                               site_key=current_login_sitekey())
     if not token:
         logger.error("Login captcha failed")
         return session, None

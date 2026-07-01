@@ -2668,7 +2668,8 @@ async function diagnoseLogin(){
       "Page HTTP status : "+(r.page_status)+NL+
       "Looks blocked    : "+(r.looks_blocked?"YES":"no")+NL+
       "CSRF found       : "+(r.csrf_found?"yes":"NO")+NL+
-      "Site key OK      : "+((r.live_sitekey&&r.live_sitekey===r.built_in_sitekey)?"yes (same)":(r.live_sitekey?"CHANGED":"(none)"))+NL+NL+
+      "Site key OK      : "+((r.live_sitekey&&r.live_sitekey===r.built_in_sitekey)?"yes (same)":(r.live_sitekey?"CHANGED":"(none)"))+NL+
+      "reCAPTCHA action : "+(r.recaptcha_action||"(none)")+NL+NL+
       "--- LOGIN TEST ---"+NL+
       "Captcha token : "+(r.captcha_token||"(skipped)")+NL+
       "Login result  : "+(r.login_result||"")+NL+
@@ -5949,7 +5950,7 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
     import requests as _rq
     out = {"endpoint_version": "v3", "page_status": "", "page_len": 0,
            "looks_blocked": None, "csrf_found": False, "page_snippet": "",
-           "built_in_sitekey": "", "live_sitekey": "",
+           "built_in_sitekey": "", "live_sitekey": "", "recaptcha_action": "",
            "captcha_token": "", "login_result": "(no ref/dob — login test skipped)",
            "final_url": "", "snippet": ""}
     try:
@@ -5974,6 +5975,10 @@ async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)
             out["live_sitekey"] = nl._extract_sitekey(body) or ""
         except Exception:
             out["live_sitekey"] = ""
+        try:
+            out["recaptcha_action"] = nl._extract_action(body) or "(none found on page)"
+        except Exception:
+            out["recaptcha_action"] = ""
         out["looks_blocked"] = any(x in low for x in [
             "cloudflare", "just a moment", "attention required", "access denied",
             "forbidden", "cf-chl", "captcha-delivery", "are you a human", "ddos",

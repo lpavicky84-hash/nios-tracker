@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 NIOS_URL = "https://sdmis.nios.ac.in/registration/check-admission-status"
 RECAPTCHA_SITE_KEY = "6Lc07T4iAAAAADsnW1ZXbEz0GUissRcasTnSS4Nj"
-_SITEKEY_CACHE = {"key": RECAPTCHA_SITE_KEY}   # refreshed from the live check-status page
+_SITEKEY_CACHE = {"key": RECAPTCHA_SITE_KEY, "action": None}   # refreshed from the live check-status page
 
 def _extract_sitekey(html):
     """Pull the live reCAPTCHA site key out of the page. NIOS can rotate it; solving for a
@@ -20,6 +20,19 @@ def _extract_sitekey(html):
                 r'data-sitekey=["\']([\w\-]{20,})["\']',
                 r'grecaptcha\.execute\(\s*["\']([\w\-]{20,})["\']',
                 r'["\'](6L[\w\-]{30,})["\']'):
+        m = re.search(pat, html)
+        if m:
+            return m.group(1)
+    return ""
+
+def _extract_action(html):
+    """Pull the reCAPTCHA v3 action the page uses. Token is bound to its action; a mismatch
+    makes NIOS reject the check. Returns '' if none."""
+    if not html:
+        return ""
+    for pat in (r'grecaptcha\.execute\([^)]*\{\s*action\s*:\s*["\']([\w\-/]+)["\']',
+                r'["\']action["\']\s*:\s*["\']([\w\-/]+)["\']',
+                r'data-action=["\']([\w\-/]+)["\']'):
         m = re.search(pat, html)
         if m:
             return m.group(1)
@@ -82,6 +95,8 @@ def solve_recaptcha_v3():
                 "websiteKey": _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY,
             }
         }
+        if _SITEKEY_CACHE.get("action"):
+            payload["task"]["pageAction"] = _SITEKEY_CACHE["action"]
         r = requests.post(CAPSOLVER_CREATE, json=payload, timeout=30).json()
         if r.get("errorId") != 0:
             logger.error(f"CapSolver create error: {r.get('errorDescription')}")
@@ -110,6 +125,9 @@ def get_csrf(session):
         if sk != _SITEKEY_CACHE.get("key"):
             logger.info(f"NIOS check-status site-key updated -> {sk}")
         _SITEKEY_CACHE["key"] = sk
+    act = _extract_action(html)
+    if act:
+        _SITEKEY_CACHE["action"] = act
     soup = BeautifulSoup(html, "html.parser")
     meta = soup.find("meta", {"name": "_csrf"})
     if meta:
