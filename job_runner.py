@@ -551,7 +551,14 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                         (row_key, new_ref, res.get("enrollment_no", ""), res.get("student_name", ""),
                          res.get("mobile", ""), res.get("session", ""), old_status or "",
                          new_status, now_s, _transfer_mode))
-            status_changed = (old_status != new_status)
+            # A failed check (Unknown/Fetch Error) that lands on a student who ALREADY has a
+            # real status is IGNORED above (status is kept). So it is NOT a real change — don't
+            # log it to history and don't count it, otherwise the change log fills with false
+            # "Verified -> Unknown" flips that never actually happened on NIOS.
+            _failed_check = new_status in ("Unknown", "Fetch Error")
+            _has_real_old = (old_status not in (None, "", "Unknown", "Fetch Error"))
+            _ignored_downgrade = _failed_check and _has_real_old
+            status_changed = (old_status != new_status) and not _ignored_downgrade
             if status_changed:
                 stats["changed"] += 1
                 c.execute("""INSERT INTO status_history
@@ -577,11 +584,30 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                     email = CASE WHEN excluded.email != '' THEN excluded.email ELSE email END,
                     class_level = CASE WHEN excluded.class_level != '' THEN excluded.class_level ELSE class_level END,
                     session = CASE WHEN excluded.session != '' THEN excluded.session ELSE session END,
-                    current_status = excluded.current_status,
-                    remark = excluded.remark,
-                    is_confirmed = excluded.is_confirmed,
+                    -- A failed check (Unknown / Fetch Error = captcha/proxy/NIOS hiccup, NOT a
+                    -- real NIOS status) must NEVER downgrade a student who already has a real
+                    -- status. Status only moves forward. Keep the old status; only refresh
+                    -- last_checked. A student with NO prior real status (fresh/blank) still
+                    -- shows Unknown so the counsellor can see it needs attention.
+                    current_status = CASE
+                        WHEN excluded.current_status IN ('Unknown','Fetch Error')
+                             AND current_status IS NOT NULL
+                             AND current_status NOT IN ('Unknown','Fetch Error','')
+                        THEN current_status
+                        ELSE excluded.current_status END,
+                    remark = CASE
+                        WHEN excluded.current_status IN ('Unknown','Fetch Error')
+                             AND current_status IS NOT NULL
+                             AND current_status NOT IN ('Unknown','Fetch Error','')
+                        THEN remark
+                        ELSE excluded.remark END,
+                    is_confirmed = CASE
+                        WHEN excluded.current_status IN ('Unknown','Fetch Error')
+                        THEN is_confirmed
+                        ELSE excluded.is_confirmed END,
                     last_checked = excluded.last_checked,
                     last_changed = CASE WHEN current_status != excluded.current_status
+                                        AND excluded.current_status NOT IN ('Unknown','Fetch Error')
                                         THEN excluded.last_changed ELSE last_changed END,
                     source = excluded.source,
                     cross_dup = CASE WHEN excluded.cross_dup=1 THEN 1 ELSE cross_dup END,
@@ -603,7 +629,12 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # network / captcha issue), surface the student in 'Failed to Run' with a
             # clear remark so the counsellor can verify the reference or just run it
             # again. It clears automatically on the next successful check.
-            if new_status == "Unknown":
+            if _ignored_downgrade:
+                # A failed check on a student who already has a real status — we KEPT the
+                # real status above. Do NOT flag it as failed and do NOT surface it in
+                # 'Failed to Run'/'Unknown'; only its last_checked moved. It stays where it is.
+                c.execute("UPDATE student_status SET check_failed=0 WHERE row_key=?", (row_key,))
+            elif new_status == "Unknown":
                 _why = ("NIOS returned no recognizable status — verify the Reference No "
                         "(it may be wrong or not found yet), or NIOS may be showing a status not tracked yet.")
                 if res.get("raw_text"):
@@ -686,6 +717,17 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                                 or (wrow["alt_mobile"] if (wrow and "alt_mobile" in wrow.keys()) else "") or "")
                     if not already and phone:
                         import whatsapp
+                        # STEP 1: save this student's documents on OUR server FIRST —
+                        # so the very first click on the WhatsApp link opens instantly
+                        # from our copy (no NIOS, no captcha, no loader).
+                        try:
+                            from main import cache_student_docs
+                            _cs, _cf = cache_student_docs(row_key)
+                            if _cs or _cf:
+                                logger.info(f"Docs cached before WhatsApp {row_key}: saved={_cs} failed={_cf}")
+                        except Exception as ce:
+                            logger.warning(f"Doc pre-cache skipped {row_key}: {ce}")
+                        # STEP 2: now send the WhatsApp (links serve from our saved copy).
                         ok, info = whatsapp.send_for_student({
                             "row_key": row_key,
                             "student_name": res.get("student_name", ""),
@@ -897,11 +939,25 @@ def recheck_one(row_key):
         is_conf = 1 if new_status == "Admission Confirmed" else 0
         old = c.execute("SELECT current_status FROM student_status WHERE row_key=?", (row_key,)).fetchone()
         old_status = old["current_status"] if old else None
-        if old_status != new_status:
+        # A failed check (Unknown/Fetch Error) must NOT downgrade a student who already has a
+        # real status — keep it, only refresh last_checked. Status only moves forward.
+        _failed_check = new_status in ("Unknown", "Fetch Error")
+        _has_real_old = (old_status not in (None, "", "Unknown", "Fetch Error"))
+        _ignored_downgrade = _failed_check and _has_real_old
+        if (old_status != new_status) and not _ignored_downgrade:
             c.execute("""INSERT INTO status_history
                 (reference_no, student_name, old_status, new_status, changed_at, run_id, source)
                 VALUES (?,?,?,?,?,?,?)""",
                 (new_ref, student["student_name"], old_status, new_status, now_s, None, final_source))
+        if _ignored_downgrade:
+            # Keep the existing real status; only note we checked. Not a failure to surface.
+            c.execute("""UPDATE student_status SET reference_no=CASE WHEN ?!='' THEN ? ELSE reference_no END,
+                         last_checked=?, check_count=check_count+1, check_failed=0 WHERE row_key=?""",
+                      (new_ref, new_ref, now_s, row_key))
+            out["status"] = old_status
+            out["check_failed"] = False
+            conn.commit()
+            return
         c.execute("""UPDATE student_status SET reference_no=?, current_status=?, remark=?,
                      is_confirmed=?, last_checked=?, check_count=check_count+1 WHERE row_key=?""",
                   (new_ref, new_status, res.get("remark", ""), is_conf, now_s, row_key))
@@ -953,6 +1009,12 @@ def recheck_one(row_key):
             if phone:
                 try:
                     import whatsapp
+                    # Save documents on OUR server FIRST, then send — first click opens instantly.
+                    try:
+                        from main import cache_student_docs
+                        cache_student_docs(row_key)
+                    except Exception as ce:
+                        logger.warning(f"Doc pre-cache skipped {row_key}: {ce}")
                     ok, info = whatsapp.send_for_student({
                         "row_key": row_key, "student_name": student["student_name"],
                         "mobile": phone, "session": student["session"],

@@ -660,9 +660,17 @@ function applySidebarPref(){
               <option value="7d">Last 7 days</option>
               <option value="custom">Custom range…</option>
             </select>
+            <select id="s-stale" onchange="loadStudents(1)" title="Show students whose status did NOT refresh in the last run (captcha/proxy miss). Their last real status is kept; only the check is pending.">
+              <option value="0">Last checked: all</option>
+              <option value="6">Not checked in 6h</option>
+              <option value="12">Not checked in 12h</option>
+              <option value="24">Not checked in 24h</option>
+              <option value="48">Not checked in 48h</option>
+            </select>
             <button class="btn btn-outline btn-sm" onclick="exportStudents('normal')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
+            <button class="btn btn-primary btn-sm" id="s-run-stale-btn" onclick="runStale()" title="Re-check ONLY the students not checked recently (the ones a run missed). Confirmed students are skipped.">&#8635; Run not-checked</button>
           </div>
           <div class="filter-bar" id="s-daterow" style="display:none">
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
@@ -2278,7 +2286,8 @@ async function loadStudents(page){
     search:document.getElementById("s-search").value,
     status_filter:document.getElementById("s-status").value,
     session_filter:document.getElementById("s-session").value,
-    class_filter:fval("s-class"),source_filter:fval("s-source"),date_from:dr.from,date_to:dr.to});
+    class_filter:fval("s-class"),source_filter:fval("s-source"),date_from:dr.from,date_to:dr.to,
+    stale_hours:(document.getElementById("s-stale")?document.getElementById("s-stale").value:"0")});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -2883,6 +2892,20 @@ function renderUnknownPg(page,total,totalRows){
     [10,20,50,100].map(n=>'<option value="'+n+'" '+(n===perPage?"selected":"")+'>'+n+'</option>').join("")+
     '</select></div>';
   el.innerHTML=ctrl+sel;
+}
+async function runStale(){
+  var sel=document.getElementById("s-stale");
+  var hrs=sel?parseInt(sel.value||"0",10):0;
+  if(!hrs)hrs=12;   // if filter is on "all", default the run to 12h
+  if(!confirm("Re-check every student not checked in the last "+hrs+" hours?\\n\\nThis skips confirmed students and only re-runs the ones a previous run missed (captcha/proxy). Uses CapSolver credits for each."))return;
+  var btn=document.getElementById("s-run-stale-btn");
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting\u2026";}
+  try{
+    const r=await api("/api/run-now-stale","POST",{stale_hours:hrs});
+    showToast(r.message||"Re-checking not-checked students\u2026");
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 async function runAllUnknown(btn){
   if(!confirm("Re-check ALL Unknown students now?\\n\\nEach is re-run with auto-retry. Uses CapSolver credits for every student in this list."))return;
@@ -3998,13 +4021,11 @@ async def startup():
         anyio.to_thread.current_default_thread_limiter().total_tokens = 100
     except Exception as e:
         logger.warning(f"Threadpool bump failed (using default): {e}")
-    # Safety: never auto-restart the heavy document-caching job on boot. If the app restarted
-    # while caching was active, we come up clean and serve student links first; the operator can
-    # press "Save all documents to DB" again when ready. This prevents any restart/crash loop.
-    try:
-        set_setting("cache_docs_active", "0")
-    except Exception:
-        pass
+    # Document auto-save now RESUMES across restarts/deploys: if "Save all documents
+    # to DB" was active before the restart, the watchdog picks it up ~2 minutes after
+    # boot (app serves links first) and continues where it left off — no need to press
+    # the button again after every deploy. It also waits automatically while a run is
+    # in progress, so it never competes for NIOS/CapSolver.
     # Auto-send WhatsApp documents to confirmed students that still haven't received
     # them — every 10 minutes, in small batches, so nothing stays "Not sent".
     try:
@@ -4261,7 +4282,7 @@ _SPECIAL_TOC_CLAUSE = (
 
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to="", source_filter="",
-                         wa_status="", saved_filter=""):
+                         wa_status="", saved_filter="", stale_hours=0):
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
@@ -4323,6 +4344,13 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("EXISTS (SELECT 1 FROM document_cache dc WHERE dc.row_key = student_status.row_key)")
     elif saved_filter == "notsaved":
         wc.append("NOT EXISTS (SELECT 1 FROM document_cache dc WHERE dc.row_key = student_status.row_key)")
+    # "Last checked" (stale) filter: students not checked in the last N hours (default 12).
+    # Useful after a run where some checks failed (captcha/proxy) — their status was kept but
+    # last_checked is old, so this surfaces exactly who still needs a fresh check.
+    if stale_hours and stale_hours > 0:
+        cutoff = (datetime.now() - timedelta(hours=stale_hours)).strftime("%Y-%m-%d %H:%M:%S")
+        wc.append("(COALESCE(last_checked,'') = '' OR last_checked <= ?)")
+        params.append(cutoff)
     return (("WHERE " + " AND ".join(wc)) if wc else ""), params
 
 @app.get("/api/students")
@@ -4330,13 +4358,13 @@ def get_students(page: int=1, per_page: int=50, search: str="",
                        status_filter: str="", session_filter: str="",
                        class_filter: str="", date_from: str="", date_to: str="",
                        source_filter: str="", view: str="normal", wa_status: str="",
-                       saved_filter: str="",
+                       saved_filter: str="", stale_hours: int=0,
                        user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
     where, params = _build_student_where(view, search, status_filter, session_filter,
                                          class_filter, date_from, date_to, source_filter,
-                                         wa_status, saved_filter)
+                                         wa_status, saved_filter, stale_hours)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
@@ -4480,6 +4508,43 @@ def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token
         return {"message": "No Unknown students to re-check.", "count": 0}
     background_tasks.add_task(run_status_check, "all", None, "unknown")
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
+
+@app.get("/api/stale-count")
+def stale_count(stale_hours: int = 12, user=Depends(verify_token)):
+    """How many active (non-confirmed, non-SYC) students haven't been checked in the last
+    N hours — i.e. their last check didn't refresh (often a captcha/proxy miss this run)."""
+    conn = get_db()
+    cutoff = (datetime.now() - timedelta(hours=max(1, stale_hours))).strftime("%Y-%m-%d %H:%M:%S")
+    n = conn.execute(
+        "SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
+        "AND COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
+        "AND (session IS NULL OR session NOT LIKE '%syc%') "
+        "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='') "
+        "AND (COALESCE(last_checked,'')='' OR last_checked <= ?)", (cutoff,)).fetchone()[0]
+    conn.close()
+    return {"count": n, "stale_hours": stale_hours}
+
+@app.post("/api/run-now-stale")
+def run_now_stale(background_tasks: BackgroundTasks, body: dict = None, user=Depends(verify_token)):
+    """Run ONLY the students not checked in the last N hours (default 12) — so a run that
+    partially failed on captcha/proxy can be topped up in one click without re-checking the
+    ones that already succeeded. Skips confirmed/SYC and anything without a reference/enrollment."""
+    stale_hours = int((body or {}).get("stale_hours", 12) or 12)
+    conn = get_db()
+    cutoff = (datetime.now() - timedelta(hours=max(1, stale_hours))).strftime("%Y-%m-%d %H:%M:%S")
+    rows = conn.execute(
+        "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 "
+        "AND COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
+        "AND (session IS NULL OR session NOT LIKE '%syc%') "
+        "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='') "
+        "AND (COALESCE(last_checked,'')='' OR last_checked <= ?) "
+        "ORDER BY COALESCE(last_checked,'') ASC", (cutoff,)).fetchall()
+    keys = [r["row_key"] for r in rows]
+    conn.close()
+    if not keys:
+        return {"message": "No students pending a fresh check — everything is up to date.", "count": 0}
+    background_tasks.add_task(run_status_check, "all", None, "selected", keys)
+    return {"message": f"Re-checking {len(keys)} student(s) not checked in {stale_hours}h…", "count": len(keys)}
 
 @app.post("/api/mark-name-verified")
 def mark_name_verified(row_key: str = Form(...), user=Depends(verify_token)):
@@ -7094,6 +7159,18 @@ def _cache_all_confirmed_worker(force=False):
     re-fetches everything; else only missing ones."""
     if CACHE_PROGRESS["running"]:
         return
+    # Never compete with an active RUN for NIOS/CapSolver — the watchdog retries
+    # every 90s, so saving resumes automatically the moment the run finishes.
+    try:
+        _c = get_db()
+        _active = _c.execute("SELECT id FROM run_logs WHERE status='running'").fetchone()
+        _c.close()
+        if _active:
+            logger.info("Doc saving: a run is in progress — waiting (auto-resumes after the run)")
+            return
+    except Exception:
+        pass
+    logger.info(f"Doc saving: worker started (force={force})")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     CACHE_PROGRESS.update({"running": True, "phase": "finding confirmed students", "total": 0,
                            "done": 0, "saved": 0, "failed": 0, "confirmed": 0, "last_error": "",
@@ -7137,16 +7214,20 @@ def _cache_all_confirmed_worker(force=False):
                             save_doc_cache(rk, kind, content, ctype, filename)
                         with _CACHE_LOCK:
                             CACHE_PROGRESS["saved"] += 1
+                        logger.info(f"Doc saved [{CACHE_PROGRESS['done']+1}/{CACHE_PROGRESS['total']}] "
+                                    f"{ref or enroll} {kind}")
                     else:
                         _record_doc_fail(rk, kind, ctype)
                         with _CACHE_LOCK:
                             CACHE_PROGRESS["failed"] += 1
                             CACHE_PROGRESS["last_error"] = str(ctype)[:150]
+                        logger.warning(f"Doc save FAILED {ref or enroll} {kind}: {str(ctype)[:100]}")
                 except Exception as e:
                     _record_doc_fail(rk, kind, f"{type(e).__name__}: {e}")
                     with _CACHE_LOCK:
                         CACHE_PROGRESS["failed"] += 1
                         CACHE_PROGRESS["last_error"] = f"{type(e).__name__}: {str(e)[:110]}"
+                    logger.warning(f"Doc save ERROR {ref or enroll} {kind}: {type(e).__name__}: {str(e)[:100]}")
                 with _CACHE_LOCK:
                     CACHE_PROGRESS["done"] += 1
 
@@ -7159,6 +7240,8 @@ def _cache_all_confirmed_worker(force=False):
         CACHE_PROGRESS["running"] = False
         CACHE_PROGRESS["phase"] = "done"
         CACHE_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(f"Doc saving: pass finished — saved={CACHE_PROGRESS.get('saved',0)} "
+                    f"failed={CACHE_PROGRESS.get('failed',0)} of {CACHE_PROGRESS.get('total',0)}")
         try:
             # Keep auto-resuming while there are still docs worth retrying (this run had tasks).
             # When a run finds 0 tasks, everything is either saved or genuinely failed -> stop.
