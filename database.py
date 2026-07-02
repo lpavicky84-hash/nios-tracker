@@ -75,7 +75,8 @@ def init_db():
     """)
     # Safe migration for older DBs missing the progress columns
     for col in ("progress_current", "progress_total", "progress_changed", "progress_same",
-                "progress_total_mvs", "progress_done_mvs", "progress_total_trk", "progress_done_trk"):
+                "progress_total_mvs", "progress_done_mvs", "progress_total_trk", "progress_done_trk",
+                "progress_notchecked"):
         try:
             c.execute(f"ALTER TABLE run_logs ADD COLUMN {col} INTEGER DEFAULT 0")
         except Exception:
@@ -175,7 +176,8 @@ def init_db():
                       ("required_img", "TEXT"),
                       ("no_recheck", "INTEGER DEFAULT 0"),
                       ("deleted", "INTEGER DEFAULT 0"),
-                      ("deleted_at", "TEXT")):
+                      ("deleted_at", "TEXT"),
+                      ("last_verified", "TEXT")):
         try:
             c.execute(f"ALTER TABLE student_status ADD COLUMN {col} {decl}")
         except Exception:
@@ -190,6 +192,15 @@ def init_db():
     except Exception:
         pass
 
+    # Seed last_verified (added later) from last_checked for students who already have a
+    # REAL status — so the "checked vs not-checked-this-run" view is sensible on first deploy.
+    # Idempotent: only fills blanks.
+    try:
+        c.execute("UPDATE student_status SET last_verified = last_checked "
+                  "WHERE COALESCE(last_verified,'')='' AND COALESCE(last_checked,'')!='' "
+                  "AND COALESCE(current_status,'') NOT IN ('','Unknown','Fetch Error')")
+    except Exception:
+        pass
     # Data hygiene: an email must never sit in the reference/enrollment columns (the
     # Portal sometimes has one there for pending students). Move it to email (if email
     # is blank) and clear the field so runs skip these students instead of burning

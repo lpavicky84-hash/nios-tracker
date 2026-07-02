@@ -660,17 +660,15 @@ function applySidebarPref(){
               <option value="7d">Last 7 days</option>
               <option value="custom">Custom range…</option>
             </select>
-            <select id="s-stale" onchange="loadStudents(1)" title="Show students whose status did NOT refresh in the last run (captcha/proxy miss). Their last real status is kept; only the check is pending.">
-              <option value="0">Last checked: all</option>
-              <option value="6">Not checked in 6h</option>
-              <option value="12">Not checked in 12h</option>
-              <option value="24">Not checked in 24h</option>
-              <option value="48">Not checked in 48h</option>
+            <select id="s-checkstate" onchange="loadStudents(1)" title="Filter by whether the latest run actually read this student's status. 'New check' = read this run. 'Not checked' = the run fell back (captcha/proxy) — last status kept.">
+              <option value="">All checks</option>
+              <option value="new">New check</option>
+              <option value="stale">Not checked</option>
             </select>
             <button class="btn btn-outline btn-sm" onclick="exportStudents('normal')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
-            <button class="btn btn-primary btn-sm" id="s-run-stale-btn" onclick="runStale()" title="Re-check ONLY the students not checked recently (the ones a run missed). Confirmed students are skipped.">&#8635; Run not-checked</button>
+            <button class="btn btn-primary btn-sm" id="s-run-nc-btn" onclick="runNotChecked()" title="Re-check only the students the latest run couldn't read, for the selected session (or all). Confirmed students are skipped.">Run not-checked</button>
           </div>
           <div class="filter-bar" id="s-daterow" style="display:none">
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
@@ -680,6 +678,7 @@ function applySidebarPref(){
             <button class="btn btn-primary btn-sm" onclick="loadStudents(1)">Apply</button>
           </div>
           <div id="s-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+          <div id="s-checksummary" style="font-size:13px;margin-bottom:14px;display:none"></div>
           <div id="sel-bar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px">
             <span style="font-weight:600;font-size:13.5px"><span id="sel-count">0</span> selected <span style="color:var(--muted);font-weight:400">(max 20)</span></span>
             <button class="btn btn-success btn-sm" id="sel-run-btn" onclick="runSelected()">
@@ -1593,7 +1592,9 @@ async function pollProgress(){
       document.getElementById("pb-sub").innerHTML=
         (d.current||0)+" / "+(d.total||0)+" checked &nbsp;·&nbsp; "+
         "<b style='color:var(--success)'>"+(d.changed||0)+"</b> changed &nbsp;·&nbsp; "+
-        (d.same||0)+" same &nbsp;·&nbsp; <b>"+(d.remaining||0)+"</b> remaining";
+        (d.same||0)+" same &nbsp;·&nbsp; "+
+        "<b style='color:#B45309'>"+(d.not_checked||0)+"</b> not checked &nbsp;·&nbsp; "+
+        "<b>"+(d.remaining||0)+"</b> remaining";
       // Separate progress for MVS Portal vs MVS Tracker (only show a bar if that
       // source actually has students in THIS run — so a Tracker-only run shows just Tracker)
       const mv=d.mvs||{done:0,total:0,percent:0}, tk=d.trk||{done:0,total:0,percent:0};
@@ -2287,7 +2288,7 @@ async function loadStudents(page){
     status_filter:document.getElementById("s-status").value,
     session_filter:document.getElementById("s-session").value,
     class_filter:fval("s-class"),source_filter:fval("s-source"),date_from:dr.from,date_to:dr.to,
-    stale_hours:(document.getElementById("s-stale")?document.getElementById("s-stale").value:"0")});
+    check_state:(document.getElementById("s-checkstate")?document.getElementById("s-checkstate").value:"")});
   try{
     const d=await api("/api/students?"+q.toString());
     fillSessions(d.sessions);
@@ -2299,13 +2300,35 @@ async function loadStudents(page){
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td>'+badge(s.current_status)+loginWarn(s)+'</td>'+
-      '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+'</td>'+
+      '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+checkBadge(s)+'</td>'+
       '<td>'+delBtn(s)+'</td></tr>').join("")
       :'<tr><td colspan="8" class="empty">No active students found</td></tr>';
     renderPg("s-pg",page,d.pages,"loadStudents");
     updateSelBar();
     const sa=document.getElementById("sel-all");if(sa)sa.checked=false;
+    loadCheckSummary();
   }catch(e){showToast(""+e.message);}
+}
+function checkBadge(s){
+  if(s.check_state==="stale")
+    return '<div style="margin-top:4px"><span style="font-size:11px;font-weight:600;color:#B45309;background:#FEF3C7;padding:2px 8px;border-radius:6px">Not checked</span></div>';
+  if(s.check_state==="new")
+    return '<div style="margin-top:4px"><span style="font-size:11px;font-weight:600;color:#047857;background:#D1FAE5;padding:2px 8px;border-radius:6px">New check</span></div>';
+  return "";
+}
+async function loadCheckSummary(){
+  const el=document.getElementById("s-checksummary");if(!el)return;
+  try{
+    const q=new URLSearchParams({view:"normal",
+      session_filter:document.getElementById("s-session").value,
+      source_filter:fval("s-source")});
+    const d=await api("/api/check-summary?"+q.toString());
+    const sess=document.getElementById("s-session").value||"All sessions";
+    el.style.display="block";
+    el.innerHTML='<b>'+sess+'</b> &nbsp;·&nbsp; '+
+      '<span style="color:#047857;font-weight:600">New check: '+(d.new||0)+'</span> &nbsp;·&nbsp; '+
+      '<span style="color:#B45309;font-weight:600">Not checked: '+(d.stale||0)+'</span>';
+  }catch(e){el.style.display="none";}
 }
 
 let _ntT;
@@ -2893,16 +2916,15 @@ function renderUnknownPg(page,total,totalRows){
     '</select></div>';
   el.innerHTML=ctrl+sel;
 }
-async function runStale(){
-  var sel=document.getElementById("s-stale");
-  var hrs=sel?parseInt(sel.value||"0",10):0;
-  if(!hrs)hrs=12;   // if filter is on "all", default the run to 12h
-  if(!confirm("Re-check every student not checked in the last "+hrs+" hours?\\n\\nThis skips confirmed students and only re-runs the ones a previous run missed (captcha/proxy). Uses CapSolver credits for each."))return;
-  var btn=document.getElementById("s-run-stale-btn");
+async function runNotChecked(){
+  var sess=document.getElementById("s-session").value;
+  var scope=sess?("session \""+sess+"\""):"ALL sessions";
+  if(!confirm("Re-check every not-checked student in "+scope+"?\\n\\nThis re-runs only the students the latest run couldn't read (captcha/proxy). Confirmed students are skipped. Uses CapSolver credits for each."))return;
+  var btn=document.getElementById("s-run-nc-btn");
   var old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Starting\u2026";}
   try{
-    const r=await api("/api/run-now-stale","POST",{stale_hours:hrs});
+    const r=await api("/api/run-now-notchecked","POST",{session_filter:sess,source_filter:fval("s-source")});
     showToast(r.message||"Re-checking not-checked students\u2026");
   }catch(e){showToast(""+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
@@ -4282,7 +4304,7 @@ _SPECIAL_TOC_CLAUSE = (
 
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to="", source_filter="",
-                         wa_status="", saved_filter="", stale_hours=0):
+                         wa_status="", saved_filter="", check_state="", check_boundary=None):
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
@@ -4344,27 +4366,72 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("EXISTS (SELECT 1 FROM document_cache dc WHERE dc.row_key = student_status.row_key)")
     elif saved_filter == "notsaved":
         wc.append("NOT EXISTS (SELECT 1 FROM document_cache dc WHERE dc.row_key = student_status.row_key)")
-    # "Last checked" (stale) filter: students not checked in the last N hours (default 12).
-    # Useful after a run where some checks failed (captcha/proxy) — their status was kept but
-    # last_checked is old, so this surfaces exactly who still needs a fresh check.
-    if stale_hours and stale_hours > 0:
-        cutoff = (datetime.now() - timedelta(hours=stale_hours)).strftime("%Y-%m-%d %H:%M:%S")
-        wc.append("(COALESCE(last_checked,'') = '' OR last_checked <= ?)")
-        params.append(cutoff)
+    # "New check / Not checked (this run)" — based on last_verified (only set when a run
+    # actually READ a real NIOS status; a captcha/proxy fallback does NOT advance it). The
+    # boundary is the most recent verify time WITHIN the current filter scope (session-aware),
+    # minus a safety window that comfortably covers a single run but is well under the gap
+    # between two auto-runs of the same session. So "new" = verified in the latest run batch;
+    # "stale" = missed it (or never verified).
+    if check_state in ("new", "stale") and check_boundary is not None:
+        if check_state == "new":
+            wc.append("(COALESCE(last_verified,'') != '' AND last_verified >= ?)")
+            params.append(check_boundary)
+        else:  # stale = not verified in the latest batch (or never)
+            wc.append("(COALESCE(last_verified,'') = '' OR last_verified < ?)")
+            params.append(check_boundary)
     return (("WHERE " + " AND ".join(wc)) if wc else ""), params
+
+_CHECK_WINDOW_HOURS = 8   # a single run finishes well within this; auto-runs are >=21h apart
+
+def _verify_boundary(conn, view, session_filter, source_filter):
+    """Most-recent verify time within the current scope, minus a safety window. Students
+    verified at/after this are 'new' (this run); older/never are 'not checked'. Session-aware
+    so a run of one session doesn't mark another session's students as stale."""
+    wc = ["COALESCE(deleted,0)=0", "COALESCE(last_verified,'') != ''"]
+    params = []
+    if view == "confirmed":
+        wc.append("is_confirmed = 1")
+    elif view == "required":
+        wc.append("current_status = 'Document Required'")
+    else:
+        wc.append("COALESCE(is_confirmed,0) = 0")
+        wc.append("COALESCE(current_status,'') != 'SYC'")
+    if session_filter:
+        clause, sp = _session_clause(session_filter)
+        wc.append(clause); params += sp
+    if source_filter and source_filter != "both":
+        wc.append("COALESCE(source,'mvs_tracker') = ?"); params.append(source_filter)
+    row = conn.execute(f"SELECT MAX(last_verified) AS m FROM student_status WHERE {' AND '.join(wc)}",
+                       params).fetchone()
+    if not row or not row["m"]:
+        return None
+    try:
+        peak = datetime.strptime(row["m"], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+    return (peak - timedelta(hours=_CHECK_WINDOW_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+
+def _row_check_state(last_verified, boundary):
+    """'new' if verified in the latest batch, else 'stale'. Used for the per-row badge."""
+    if not boundary:
+        return "new" if (last_verified or "") else "stale"
+    if last_verified and last_verified >= boundary:
+        return "new"
+    return "stale"
 
 @app.get("/api/students")
 def get_students(page: int=1, per_page: int=50, search: str="",
                        status_filter: str="", session_filter: str="",
                        class_filter: str="", date_from: str="", date_to: str="",
                        source_filter: str="", view: str="normal", wa_status: str="",
-                       saved_filter: str="", stale_hours: int=0,
+                       saved_filter: str="", check_state: str="",
                        user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
+    boundary = _verify_boundary(conn, view, session_filter, source_filter)
     where, params = _build_student_where(view, search, status_filter, session_filter,
                                          class_filter, date_from, date_to, source_filter,
-                                         wa_status, saved_filter, stale_hours)
+                                         wa_status, saved_filter, check_state, boundary)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
@@ -4382,6 +4449,8 @@ def get_students(page: int=1, per_page: int=50, search: str="",
             saved.setdefault(cr["row_key"], []).append(cr["kind"])
         for s in slist:
             s["cached_docs"] = saved.get(s.get("row_key"), [])
+    for s in slist:
+        s["check_state"] = _row_check_state(s.get("last_verified"), boundary)
     conn.close()
     return {"students": slist, "total": total, "page": page,
             "per_page": per_page, "pages": max(1, (total+per_page-1)//per_page),
@@ -4509,42 +4578,45 @@ def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token
     background_tasks.add_task(run_status_check, "all", None, "unknown")
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
 
-@app.get("/api/stale-count")
-def stale_count(stale_hours: int = 12, user=Depends(verify_token)):
-    """How many active (non-confirmed, non-SYC) students haven't been checked in the last
-    N hours — i.e. their last check didn't refresh (often a captcha/proxy miss this run)."""
+@app.get("/api/check-summary")
+def check_summary(session_filter: str = "", source_filter: str = "", view: str = "normal",
+                  user=Depends(verify_token)):
+    """For the selected session (or All): how many students were checked in the latest run
+    ('new') vs not checked ('stale'). Powers the header counts on the Active Students page."""
     conn = get_db()
-    cutoff = (datetime.now() - timedelta(hours=max(1, stale_hours))).strftime("%Y-%m-%d %H:%M:%S")
-    n = conn.execute(
-        "SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
-        "AND COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
-        "AND (session IS NULL OR session NOT LIKE '%syc%') "
-        "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='') "
-        "AND (COALESCE(last_checked,'')='' OR last_checked <= ?)", (cutoff,)).fetchone()[0]
+    boundary = _verify_boundary(conn, view, session_filter, source_filter)
+    w_new, p_new = _build_student_where(view, "", "", session_filter, "", "", "", source_filter,
+                                        "", "", "new", boundary)
+    w_st, p_st = _build_student_where(view, "", "", session_filter, "", "", "", source_filter,
+                                      "", "", "stale", boundary)
+    new_n = conn.execute(f"SELECT COUNT(*) FROM student_status {w_new}", p_new).fetchone()[0]
+    stale_n = conn.execute(f"SELECT COUNT(*) FROM student_status {w_st}", p_st).fetchone()[0]
     conn.close()
-    return {"count": n, "stale_hours": stale_hours}
+    return {"new": new_n, "stale": stale_n, "boundary": boundary}
 
-@app.post("/api/run-now-stale")
-def run_now_stale(background_tasks: BackgroundTasks, body: dict = None, user=Depends(verify_token)):
-    """Run ONLY the students not checked in the last N hours (default 12) — so a run that
-    partially failed on captcha/proxy can be topped up in one click without re-checking the
-    ones that already succeeded. Skips confirmed/SYC and anything without a reference/enrollment."""
-    stale_hours = int((body or {}).get("stale_hours", 12) or 12)
+@app.post("/api/run-now-notchecked")
+def run_now_notchecked(background_tasks: BackgroundTasks, body: dict = None,
+                       user=Depends(verify_token)):
+    """Run ONLY the students the latest run couldn't check (captcha/proxy fell back), for the
+    selected session or All. Skips confirmed/SYC and anything without a reference/enrollment."""
+    body = body or {}
+    session_filter = str(body.get("session_filter", "") or "")
+    source_filter = str(body.get("source_filter", "") or "")
     conn = get_db()
-    cutoff = (datetime.now() - timedelta(hours=max(1, stale_hours))).strftime("%Y-%m-%d %H:%M:%S")
+    boundary = _verify_boundary(conn, "normal", session_filter, source_filter)
+    where, params = _build_student_where("normal", "", "", session_filter, "", "", "",
+                                         source_filter, "", "", "stale", boundary)
     rows = conn.execute(
-        "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 "
-        "AND COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
-        "AND (session IS NULL OR session NOT LIKE '%syc%') "
+        f"SELECT row_key FROM student_status {where} "
         "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='') "
-        "AND (COALESCE(last_checked,'')='' OR last_checked <= ?) "
-        "ORDER BY COALESCE(last_checked,'') ASC", (cutoff,)).fetchall()
+        "ORDER BY COALESCE(last_verified,'') ASC, COALESCE(last_checked,'') ASC", params).fetchall()
     keys = [r["row_key"] for r in rows]
     conn.close()
     if not keys:
-        return {"message": "No students pending a fresh check — everything is up to date.", "count": 0}
+        return {"message": "No not-checked students in this scope — everything is up to date.", "count": 0}
     background_tasks.add_task(run_status_check, "all", None, "selected", keys)
-    return {"message": f"Re-checking {len(keys)} student(s) not checked in {stale_hours}h…", "count": len(keys)}
+    scope = "all sessions" if not session_filter else session_filter
+    return {"message": f"Re-checking {len(keys)} not-checked student(s) in {scope}…", "count": len(keys)}
 
 @app.post("/api/mark-name-verified")
 def mark_name_verified(row_key: str = Form(...), user=Depends(verify_token)):
@@ -5212,7 +5284,7 @@ def run_progress(user=Depends(verify_token)):
     """Live progress of the currently running check (for the progress bar)."""
     conn = get_db()
     row = conn.execute("SELECT id, group_type, run_at, progress_current, progress_total, "
-                       "progress_changed, progress_same, progress_total_mvs, progress_done_mvs, "
+                       "progress_changed, progress_same, progress_notchecked, progress_total_mvs, progress_done_mvs, "
                        "progress_total_trk, progress_done_trk "
                        "FROM run_logs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
     conn.close()
@@ -5228,6 +5300,7 @@ def run_progress(user=Depends(verify_token)):
     return {"running": True, "id": row["id"], "group_type": row["group_type"],
             "run_at": row["run_at"], "current": cur, "total": tot, "percent": pct,
             "changed": row["progress_changed"] or 0, "same": row["progress_same"] or 0,
+            "not_checked": row["progress_notchecked"] or 0,
             "remaining": max(0, tot - cur),
             "mvs": {"done": dm, "total": tm, "percent": int(dm*100/tm) if tm else 0},
             "trk": {"done": dt, "total": tt, "percent": int(dt*100/tt) if tt else 0}}

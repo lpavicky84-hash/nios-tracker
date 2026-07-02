@@ -498,7 +498,7 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
 
         stats = {"checked": 0, "changed": 0, "same": 0, "failed": 0,
                  "confirmed": 0, "required": 0, "error": 0,
-                 "verified": 0, "docs_progress": 0}
+                 "verified": 0, "docs_progress": 0, "not_checked": 0}
 
         # Register SYC students first (fast; no NIOS status check) with live progress.
         if syc_list:
@@ -558,6 +558,12 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             _failed_check = new_status in ("Unknown", "Fetch Error")
             _has_real_old = (old_status not in (None, "", "Unknown", "Fetch Error"))
             _ignored_downgrade = _failed_check and _has_real_old
+            # "Not checked this run" = the run could not read a real NIOS status (captcha/proxy
+            # fell back, or NIOS returned nothing). Whether we kept an old status or it stays
+            # Unknown, the student was effectively NOT freshly checked — count it so the operator
+            # sees how many still need a re-run.
+            if _failed_check:
+                stats["not_checked"] += 1
             status_changed = (old_status != new_status) and not _ignored_downgrade
             if status_changed:
                 stats["changed"] += 1
@@ -568,11 +574,12 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             else:
                 stats["same"] += 1
 
+            _verified_ts = "" if _failed_check else now_s
             c.execute("""INSERT INTO student_status
                 (row_key, reference_no, enrollment_no, email, dob, student_name, mobile, alt_mobile, toc_status, class_level,
-                 session, current_status, remark, is_confirmed, last_checked, last_changed,
+                 session, current_status, remark, is_confirmed, last_checked, last_changed, last_verified,
                  source, cross_dup, check_count)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
                 ON CONFLICT(row_key) DO UPDATE SET
                     reference_no = CASE WHEN excluded.reference_no != '' THEN excluded.reference_no ELSE reference_no END,
                     enrollment_no = CASE WHEN excluded.enrollment_no != '' THEN excluded.enrollment_no ELSE enrollment_no END,
@@ -606,6 +613,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                         THEN is_confirmed
                         ELSE excluded.is_confirmed END,
                     last_checked = excluded.last_checked,
+                    last_verified = CASE WHEN excluded.current_status NOT IN ('Unknown','Fetch Error')
+                                         THEN excluded.last_verified ELSE last_verified END,
                     last_changed = CASE WHEN current_status != excluded.current_status
                                         AND excluded.current_status NOT IN ('Unknown','Fetch Error')
                                         THEN excluded.last_changed ELSE last_changed END,
@@ -616,7 +625,7 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                  res.get("student_name", ""), res.get("mobile", ""), alt_by_key.get(row_key, ""),
                  toc_by_key.get(row_key, ""),
                  res.get("class_level", ""),
-                 res.get("session", ""), new_status, res.get("remark", ""), is_conf, now_s, now_s,
+                 res.get("session", ""), new_status, res.get("remark", ""), is_conf, now_s, now_s, _verified_ts,
                  final_source, cross))
 
             if new_ref:
@@ -786,8 +795,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             _s = src_by_key.get(row_key, "mvs_tracker")
             _col = "progress_done_mvs" if _s == "mvs_portal" else "progress_done_trk"
             c.execute(f"UPDATE run_logs SET progress_current=?, progress_changed=?, "
-                      f"progress_same=?, {_col}={_col}+1 WHERE id=?",
-                      (stats["checked"], stats["changed"], stats["same"], run_id))
+                      f"progress_same=?, progress_notchecked=?, {_col}={_col}+1 WHERE id=?",
+                      (stats["checked"], stats["changed"], stats["same"], stats["not_checked"], run_id))
             conn.commit()
 
         if to_check:
@@ -959,8 +968,11 @@ def recheck_one(row_key):
             conn.commit()
             return
         c.execute("""UPDATE student_status SET reference_no=?, current_status=?, remark=?,
-                     is_confirmed=?, last_checked=?, check_count=check_count+1 WHERE row_key=?""",
-                  (new_ref, new_status, res.get("remark", ""), is_conf, now_s, row_key))
+                     is_confirmed=?, last_checked=?, last_verified=?, check_count=check_count+1 WHERE row_key=?""",
+                  (new_ref, new_status, res.get("remark", ""), is_conf, now_s,
+                   (now_s if new_status not in ("Unknown", "Fetch Error") else
+                    (c.execute("SELECT last_verified FROM student_status WHERE row_key=?", (row_key,)).fetchone() or [""])[0]),
+                   row_key))
         # Status-check outcome -> 'Failed to Run' visibility (same as a full run).
         if not res.get("success"):
             c.execute("UPDATE student_status SET check_failed=1, login_remark=? WHERE row_key=?",
