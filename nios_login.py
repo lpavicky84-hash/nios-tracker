@@ -99,7 +99,11 @@ def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
             logger.error(f"CapSolver create error: {r.get('errorDescription')}")
             return ""
         task_id = r.get("taskId")
-        for _ in range(30):
+        # CapSolver reCAPTCHA v3 with a residential proxy can take 10-35s (sometimes more)
+        # to return a high-score token. Poll for up to ~120s (60 x 2s) so a genuinely slow
+        # solve is NOT abandoned as a failure — abandoning it wastes the credit AND leaves
+        # the student Unknown even though the captcha would have succeeded.
+        for _ in range(60):
             time.sleep(2)
             rr = requests.post(CAPSOLVER_RESULT,
                               json={"clientKey": CAPSOLVER_API_KEY, "taskId": task_id}, timeout=30).json()
