@@ -740,15 +740,28 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                         # STEP 1: save this student's documents on OUR server FIRST —
                         # so the very first click on the WhatsApp link opens instantly
                         # from our copy (no NIOS, no captcha, no loader).
+                        _complete = False
                         try:
-                            from main import cache_student_docs
+                            from main import cache_student_docs, docs_all_cached
                             _cs, _cf = cache_student_docs(row_key)
                             if _cs or _cf:
                                 logger.info(f"Docs cached before WhatsApp {row_key}: saved={_cs} failed={_cf}")
+                            _complete = docs_all_cached(row_key)
                         except Exception as ce:
                             logger.warning(f"Doc pre-cache skipped {row_key}: {ce}")
-                        # STEP 2: now send the WhatsApp (links serve from our saved copy).
-                        ok, info = whatsapp.send_for_student({
+                        # STEP 2: only send once ALL documents are saved — so the student's
+                        # first tap opens instantly (no live fetch = no error/panic). If not
+                        # complete yet, DON'T send now; the WhatsApp auto-sweep re-tries caching
+                        # and sends the moment it's complete (with an attempt-based fallback so a
+                        # rarely-available doc can't block the link forever).
+                        if not _complete:
+                            c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                                      ("Waiting — saving documents before sending", row_key))
+                            conn.commit()
+                            logger.info(f"WhatsApp deferred {row_key}: documents not fully saved yet")
+                            ok, info = None, None
+                        else:
+                            ok, info = whatsapp.send_for_student({
                             "row_key": row_key,
                             "student_name": res.get("student_name", ""),
                             "mobile": phone,
@@ -758,7 +771,9 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                             "dob": res.get("dob", ""),
                         })
                         # Only mark as sent on success; failures retry next run.
-                        if ok:
+                        if ok is None:
+                            pass  # deferred — the sweep will handle it once complete
+                        elif ok:
                             c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=?, "
                                       "whatsapp_sent_at=?, whatsapp_delivery='' WHERE row_key=?",
                                       (str(info)[:180], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), row_key))
@@ -766,7 +781,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                             c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
                                       (str(info)[:180], row_key))
                         conn.commit()
-                        logger.info(f"WhatsApp {'sent' if ok else 'FAILED'} -> {phone}: {info}")
+                        if ok is not None:
+                            logger.info(f"WhatsApp {'sent' if ok else 'FAILED'} -> {phone}: {info}")
             except Exception as we:
                 logger.warning(f"WhatsApp trigger error: {we}")
 

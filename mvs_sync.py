@@ -91,6 +91,28 @@ def _doc_link(row_key, kind):
         return None
 
 
+def _docs_complete(row_key):
+    """True only if every document this student should have is already saved in our DB.
+    The Portal link is pushed only when complete, so the student's first tap opens instantly
+    (no live NIOS fetch = no error/panic). Queries the DB directly (no import cycle)."""
+    try:
+        from database import get_db
+        import whatsapp
+        conn = get_db()
+        r = conn.execute("SELECT session, toc_status FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+        if not r:
+            conn.close(); return False
+        allowed = whatsapp.allowed_docs(r["session"], (r["toc_status"] or ""))
+        if not allowed:
+            conn.close(); return True
+        have = {x["kind"] for x in
+                conn.execute("SELECT kind FROM document_cache WHERE row_key=?", (row_key,)).fetchall()}
+        conn.close()
+        return allowed.issubset(have)
+    except Exception:
+        return False
+
+
 def push_student(student, status_label, conn=None, timeout=40):
     if not enabled():
         return
@@ -111,13 +133,18 @@ def push_student(student, status_label, conn=None, timeout=40):
         elif ("in progress" in low or "document required" in low or "pending" in low):
             data["niosAdmissionStatus"] = "in progress"
     if confirmed:
-        ic = _doc_link(row_key, "id_card"); af = _doc_link(row_key, "app_form"); ht = _doc_link(row_key, "hall_ticket")
-        if ic: data["idCardLink"] = ic
-        if af: data["applicationFormLink"] = af
-        if ht: data["hallTicketLink"] = ht
+        # Push document links to the Portal ONLY when every document is saved in our DB, so the
+        # student's first tap on the Portal opens instantly (no live fetch = no error/panic).
+        # If not complete yet, we still push the status; links go on a later sync once complete.
+        if _docs_complete(row_key):
+            ic = _doc_link(row_key, "id_card"); af = _doc_link(row_key, "app_form"); ht = _doc_link(row_key, "hall_ticket")
+            if ic: data["idCardLink"] = ic
+            if af: data["applicationFormLink"] = af
+            if ht: data["hallTicketLink"] = ht
     elif is_syc:
-        ht = _doc_link(row_key, "hall_ticket")
-        if ht: data["hallTicketLink"] = ht
+        if _docs_complete(row_key):
+            ht = _doc_link(row_key, "hall_ticket")
+            if ht: data["hallTicketLink"] = ht
     ref = student.get("discovered_ref") or student.get("reference_no")
     if ref: data["referenceNo"] = ref
     if student.get("enrollment_no"): data["enrollmentNo"] = student["enrollment_no"]

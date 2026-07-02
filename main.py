@@ -2511,7 +2511,7 @@ function startCachePoll(){
     const p=(d&&d.progress)||{}; const active=!!(d&&d.auto_resume);
     const pct=p.total?Math.round((p.done/p.total)*100):0;
     // small persistent summary line
-    if(el){ el.textContent="Saved in database: "+((d&&d.students_cached)||0)+" students \u00b7 "+((d&&d.total_cached)||0)+" documents"+(((d&&d.genuine_failed)||0)?(" \u00b7 \u26a0 "+d.genuine_failed+" need data fix"):""); }
+    if(el){ el.textContent="Saved in database: "+((d&&d.students_cached)||0)+" students \u00b7 "+((d&&d.total_cached)||0)+" documents \u00b7 Fully saved: "+((d&&d.fully_saved)||0)+" / "+((d&&d.confirmed_total)||0)+((d&&d.pending_docs)?(" \u00b7 "+d.pending_docs+" pending"):"")+(((d&&d.genuine_failed)||0)?(" \u00b7 \u26a0 "+d.genuine_failed+" need data fix"):""); }
     // the progress bar box
     if(box){
       if(p.running||active){
@@ -7142,6 +7142,21 @@ def _wa_send_one(row_key, verify=False):
             cache_student_docs(row_key)
         except Exception:
             pass
+        # COMPLETENESS GATE: only send the link once ALL of this student's documents are saved,
+        # so their very first tap opens instantly (no live NIOS fetch = no error/panic). If the
+        # docs still aren't complete, hold the send — the WhatsApp auto-sweep re-tries caching
+        # every cycle and will send the moment it's complete. Fallback: after several attempts
+        # we send anyway (a rare doc that NIOS never provides shouldn't block the link forever;
+        # the link still live-fetches that one doc on demand).
+        if not verify:
+            _att = (conn.execute("SELECT COALESCE(whatsapp_attempts,0) FROM student_status WHERE row_key=?",
+                                 (row_key,)).fetchone() or [0])[0]
+            if (not docs_all_cached(row_key)) and _att < 4:
+                conn.execute("UPDATE student_status SET whatsapp_info=?, "
+                             "whatsapp_attempts=COALESCE(whatsapp_attempts,0)+1 WHERE row_key=?",
+                             ("Waiting — saving documents before sending", row_key))
+                conn.commit(); conn.close()
+                return False, "documents not fully saved yet — will send once complete", False
         ok, info = whatsapp.send_for_student(dict(row))
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if ok:
@@ -7413,10 +7428,27 @@ def cache_docs_progress(user=Depends(verify_token)):
                                 (_MAX_CACHE_ATTEMPTS,)).fetchone()[0]
     except Exception:
         genuine_failed = retrying = 0
+    # How many CONFIRMED students have ALL their documents saved ("fully saved") vs still
+    # missing at least one ("pending"). Computed against each student's expected doc set so a
+    # student with 2 of 3 docs counts as pending, not done.
+    import whatsapp
+    confirmed = conn.execute("SELECT row_key, session, toc_status FROM student_status "
+                             "WHERE is_confirmed=1 AND COALESCE(deleted,0)=0").fetchall()
+    have_map = {}
+    for x in conn.execute("SELECT row_key, kind FROM document_cache").fetchall():
+        have_map.setdefault(x["row_key"], set()).add(x["kind"])
     conn.close()
+    total_conf = len(confirmed)
+    fully = 0
+    for s in confirmed:
+        allowed = whatsapp.allowed_docs(s["session"], (s["toc_status"] or ""))
+        if not allowed or allowed.issubset(have_map.get(s["row_key"], set())):
+            fully += 1
+    pending_docs = max(0, total_conf - fully)
     active = (get_setting("cache_docs_active", "0") == "1")
     return {"progress": CACHE_PROGRESS, "total_cached": total_cached, "students_cached": students_cached,
-            "genuine_failed": genuine_failed, "retrying": retrying, "auto_resume": active}
+            "genuine_failed": genuine_failed, "retrying": retrying, "auto_resume": active,
+            "fully_saved": fully, "confirmed_total": total_conf, "pending_docs": pending_docs}
 
 @app.post("/api/wa-resend")
 async def wa_resend(body: dict, user=Depends(verify_token)):
@@ -7679,8 +7711,8 @@ p{color:#64748B;font-size:14px;line-height:1.6;margin-top:6px}
   <img src="/logo.png" alt="MVS Foundation" style="width:60px;height:60px;border-radius:50%;object-fit:cover;display:block;margin:0 auto 14px">
   <div class="spinner" id="sp"></div>
   <h1>Preparing your <span class="doc">__LABEL__</span></h1>
-  <p>Please wait a few seconds while we securely fetch your document from NIOS.</p>
-  <div class="warn">&#9203; Please do not refresh this page or press the back button.</div>
+  <p>Please wait a few seconds…</p>
+  <div class="warn">Please do not refresh this page or press the back button.</div>
   <div class="err" id="err">Sorry, the document could not be loaded. Please try again.</div>
   <button class="retry" id="retry" onclick="loadDoc()">Try Again</button>
 </div>
@@ -7813,6 +7845,26 @@ def load_doc_cache(row_key, kind):
         return data, (row["content_type"] or "application/pdf"), (row["filename"] or f"{kind}.pdf")
     except Exception:
         return None
+
+def docs_all_cached(row_key):
+    """True only if EVERY document this student is supposed to have is already saved in our DB.
+    Used to gate the WhatsApp/Portal link so the student's first tap opens instantly from our
+    copy (no live NIOS fetch, no 'preparing' spinner, no panic)."""
+    try:
+        import whatsapp
+        conn = get_db()
+        r = conn.execute("SELECT session, toc_status FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+        if not r:
+            conn.close(); return False
+        allowed = whatsapp.allowed_docs(r["session"], (r["toc_status"] or ""))
+        if not allowed:
+            conn.close(); return True
+        have = {row["kind"] for row in
+                conn.execute("SELECT kind FROM document_cache WHERE row_key=?", (row_key,)).fetchall()}
+        conn.close()
+        return allowed.issubset(have)
+    except Exception:
+        return False
 
 def cache_student_docs(row_key, force=False):
     """Fetch + save ALL allowed documents for one confirmed student. force=True re-fetches even
