@@ -499,6 +499,10 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         stats = {"checked": 0, "changed": 0, "same": 0, "failed": 0,
                  "confirmed": 0, "required": 0, "error": 0,
                  "verified": 0, "docs_progress": 0, "not_checked": 0}
+        # When True, we're in the post-run auto-retry pass — the same per-student handler runs
+        # (so DB updates, WhatsApp, downgrade-protection all stay identical), but we don't touch
+        # the live progress bar (it's already at 100%) or double-count the run stats.
+        _retry_mode = [False]
 
         # Register SYC students first (fast; no NIOS status check) with live progress.
         if syc_list:
@@ -507,15 +511,16 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         def process_one(res):
             """Persist ONE student's result immediately so the dashboard/filters
             update live as the run progresses (not all at the end)."""
-            stats["checked"] += 1
-            if not res.get("success"):
+            if not _retry_mode[0]:
+                stats["checked"] += 1
+            if (not res.get("success")) and not _retry_mode[0]:
                 stats["failed"] += 1
             row_key = res["row_key"]
             new_status = res["status"]
             # Break the failures down so the operator sees WHY, and can tell a real 'our-side'
             # miss (captcha/proxy — auto-retried) apart from a 'data-side' issue (wrong/pending
             # reference — needs a human) that no amount of re-running will fix.
-            if not res.get("success"):
+            if (not res.get("success")) and not _retry_mode[0]:
                 _rmk = (res.get("remark", "") or "").upper()
                 if new_status == "Fetch Error" or "CAPTCHA" in _rmk:
                     stats["fail_captcha"] = stats.get("fail_captcha", 0) + 1
@@ -524,16 +529,17 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 else:  # Unknown — page came back but NIOS showed no status (often pending ref)
                     stats["fail_pending"] = stats.get("fail_pending", 0) + 1
             # Per-run outcome buckets for the WhatsApp report.
-            if new_status == "Admission Confirmed":
-                stats["confirmed"] += 1
-            elif new_status == "Document Required":
-                stats["required"] += 1
-            elif new_status == "Verified":
-                stats["verified"] += 1
-            elif new_status == "Documents Verification In Progress":
-                stats["docs_progress"] += 1
-            if not res.get("success") or new_status in ("Unknown", "Fetch Error"):
-                stats["error"] += 1
+            if not _retry_mode[0]:
+                if new_status == "Admission Confirmed":
+                    stats["confirmed"] += 1
+                elif new_status == "Document Required":
+                    stats["required"] += 1
+                elif new_status == "Verified":
+                    stats["verified"] += 1
+                elif new_status == "Documents Verification In Progress":
+                    stats["docs_progress"] += 1
+                if not res.get("success") or new_status in ("Unknown", "Fetch Error"):
+                    stats["error"] += 1
             new_ref = res.get("discovered_ref") or res.get("reference_no") or ""
             is_conf = 1 if new_status == "Admission Confirmed" else 0
             now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -573,17 +579,25 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # fell back, or NIOS returned nothing). Whether we kept an old status or it stays
             # Unknown, the student was effectively NOT freshly checked — count it so the operator
             # sees how many still need a re-run.
-            if _failed_check:
+            if _failed_check and not _retry_mode[0]:
                 stats["not_checked"] += 1
             status_changed = (old_status != new_status) and not _ignored_downgrade
-            if status_changed:
-                stats["changed"] += 1
+            if not _retry_mode[0]:
+                if status_changed:
+                    stats["changed"] += 1
+                    c.execute("""INSERT INTO status_history
+                        (reference_no, student_name, old_status, new_status, changed_at, run_id, source)
+                        VALUES (?,?,?,?,?,?,?)""",
+                        (new_ref, res.get("student_name", ""), old_status, new_status, now_s, run_id, final_source))
+                else:
+                    stats["same"] += 1
+            elif status_changed:
+                # Retry pass recovered a real status (e.g. Unknown -> Verified) — record the
+                # recovery in history so the change log is accurate, but don't touch run stats.
                 c.execute("""INSERT INTO status_history
                     (reference_no, student_name, old_status, new_status, changed_at, run_id, source)
                     VALUES (?,?,?,?,?,?,?)""",
                     (new_ref, res.get("student_name", ""), old_status, new_status, now_s, run_id, final_source))
-            else:
-                stats["same"] += 1
 
             _verified_ts = "" if _failed_check else now_s
             c.execute("""INSERT INTO student_status
@@ -819,16 +833,39 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 "changed": status_changed,
             })
             # Live progress (current / changed / same) — commit so the dashboard sees it
-            _s = src_by_key.get(row_key, "mvs_tracker")
-            _col = "progress_done_mvs" if _s == "mvs_portal" else "progress_done_trk"
-            c.execute(f"UPDATE run_logs SET progress_current=?, progress_changed=?, "
-                      f"progress_same=?, progress_notchecked=?, {_col}={_col}+1 WHERE id=?",
-                      (stats["checked"], stats["changed"], stats["same"], stats["not_checked"], run_id))
-            conn.commit()
+            if not _retry_mode[0]:
+                _s = src_by_key.get(row_key, "mvs_tracker")
+                _col = "progress_done_mvs" if _s == "mvs_portal" else "progress_done_trk"
+                c.execute(f"UPDATE run_logs SET progress_current=?, progress_changed=?, "
+                          f"progress_same=?, progress_notchecked=?, {_col}={_col}+1 WHERE id=?",
+                          (stats["checked"], stats["changed"], stats["same"], stats["not_checked"], run_id))
+                conn.commit()
+            else:
+                conn.commit()
 
         if to_check:
             scrape_students(to_check, should_cancel=_is_cancelled, on_result=process_one)
+            # ── Auto-retry pass ────────────────────────────────────────────────────────
+            # Exactly what the operator used to do by hand: re-check the students that came
+            # back Unknown/Fetch Error (a captcha/proxy hiccup, NOT a data problem) several
+            # more times until their real status comes through. Runs AFTER the main pass
+            # (never in parallel — the portal stays fast) and BEFORE the counsellor report,
+            # so the report reflects the resolved numbers, not the transient misses.
+            if not (_is_cancelled and _is_cancelled()):
+                _auto_retry_failed(conn, c, to_check, process_one, _retry_mode, _is_cancelled)
+
+        # Recompute the headline numbers from the FINAL DB state so the auto-retry pass is
+        # reflected accurately (retries don't inflate the counters — they were guarded above).
         checked, changed, failed = stats["checked"], stats["changed"], stats["failed"]
+        try:
+            _keys = [s["row_key"] for s in to_check]
+            if _keys:
+                _qm = ",".join("?" * len(_keys))
+                failed = c.execute(
+                    f"SELECT COUNT(*) FROM student_status WHERE row_key IN ({_qm}) "
+                    "AND current_status IN ('Unknown','Fetch Error')", _keys).fetchone()[0]
+        except Exception:
+            pass
 
         # Write status back to Excel ONLY when an Excel sheet actually exists.
         # In MVS-only mode there is no students.xlsx, so skip (no error).
@@ -902,6 +939,60 @@ def _live_report_counts():
     except Exception:
         pass
     return out
+
+
+def _auto_retry_failed(conn, c, to_check, process_one, retry_mode, is_cancelled):
+    """Post-run pass: re-check the students that came back Unknown/Fetch Error (transient
+    captcha/proxy miss — NOT a data mismatch) up to a few rounds, until their real status
+    comes through. Reuses the run's own per-student handler (so WhatsApp, downgrade-protection
+    and doc-caching all behave identically), just without touching run stats or the progress bar.
+
+    Guards for speed + cost:
+      • Rounds capped (RUN_RETRY_ROUNDS, default 4). A student that succeeds drops out, so only
+        genuinely-broken references persist to the last round.
+      • Skips data-mismatch failures (login_failed=1) — re-running can't fix wrong data.
+      • Skips students with no reference/enrollment or no DOB (nothing to check with).
+      • Respects run cancellation.
+    """
+    try:
+        rounds = int(os.environ.get("RUN_RETRY_ROUNDS", "4"))
+    except Exception:
+        rounds = 4
+    by_key = {s["row_key"]: s for s in to_check if s.get("row_key")}
+    if not by_key:
+        return
+    keys = list(by_key.keys())
+    qm = ",".join("?" * len(keys))
+    for rnd in range(max(1, rounds)):
+        if is_cancelled and is_cancelled():
+            logger.info("Auto-retry: run cancelled — stopping retry pass")
+            return
+        failing = c.execute(
+            f"SELECT row_key FROM student_status WHERE row_key IN ({qm}) "
+            "AND current_status IN ('Unknown','Fetch Error') "
+            "AND COALESCE(login_failed,0)=0 AND COALESCE(is_confirmed,0)=0 "
+            "AND COALESCE(dob,'') != '' "
+            "AND (COALESCE(reference_no,'') != '' OR COALESCE(enrollment_no,'') != '')",
+            keys).fetchall()
+        retry_students = [by_key[r["row_key"]] for r in failing if r["row_key"] in by_key]
+        if not retry_students:
+            logger.info(f"Auto-retry: all resolvable failures cleared after {rnd} round(s)")
+            return
+        logger.info(f"Auto-retry round {rnd + 1}/{rounds}: re-checking {len(retry_students)} "
+                    f"still-Unknown student(s)")
+        retry_mode[0] = True
+        try:
+            scrape_students(retry_students, should_cancel=is_cancelled, on_result=process_one)
+        except Exception as e:
+            logger.warning(f"Auto-retry round error: {e}")
+        finally:
+            retry_mode[0] = False
+    # Final tally for the log.
+    still = c.execute(
+        f"SELECT COUNT(*) FROM student_status WHERE row_key IN ({qm}) "
+        "AND current_status IN ('Unknown','Fetch Error') AND COALESCE(login_failed,0)=0",
+        keys).fetchone()[0]
+    logger.info(f"Auto-retry finished | still-unresolved (likely wrong/pending reference): {still}")
 
 
 def _send_run_report(stats, group_label):
