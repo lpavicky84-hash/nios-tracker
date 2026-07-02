@@ -715,7 +715,7 @@ function applySidebarPref(){
           <div class="filter-bar">
             <input type="text" id="nt-search" placeholder="Search name / reference / enrollment / mobile..." oninput="debounceNoToc()">
             <select id="nt-session" onchange="loadNoToc(1)"><option value="">All Sessions</option></select>
-            <button class="btn btn-primary btn-sm" onclick="syncToc(this)" title="Pull the latest tocStatus from the Portal and update it on the Tracker — NO CapSolver, no credits used. Run this after updating tocStatus on the Portal.">&#8635; Sync tocStatus from Portal</button>
+            <button class="btn btn-primary btn-sm" onclick="syncToc(this)" title="Pull the latest tocStatus from the Portal and update it on the Tracker — NO CapSolver, no credits used. Run this after updating tocStatus on the Portal.">Sync tocStatus from Portal</button>
             <button class="btn btn-success btn-sm" onclick="runNotoc(this)" title="Run a NIOS status check now for the pending (not-yet-confirmed) no-TOC students">
               <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run no-TOC now</button>
             <button class="btn btn-outline btn-sm" onclick="exportNoToc()">
@@ -755,7 +755,7 @@ function applySidebarPref(){
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
-            <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether the documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">&#128190; Documents saved</option><option value="notsaved">&#9888; Not saved yet</option></select>
+            <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether the documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">Documents saved</option><option value="notsaved">Not saved yet</option></select>
             <select id="c-datepreset" onchange="onDatePreset('c',()=>loadConfirmed(1))">
               <option value="">All dates</option>
               <option value="today">Today</option>
@@ -768,15 +768,15 @@ function applySidebarPref(){
             <button class="btn btn-outline btn-sm" onclick="exportStudents('confirmed')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
-            <button class="btn btn-success btn-sm" id="cache-docs-btn" onclick="cacheDocsNow(this)" title="Fetch every confirmed student document from NIOS once and SAVE it in our database. After this, WhatsApp links open straight from our copy — no NIOS/CapSolver needed, and they keep working even if NIOS is down.">&#128190; Save all documents to DB</button>
-            <button class="btn btn-outline btn-sm" onclick="cacheDocsNow(this,true)" title="Re-fetch and OVERWRITE all saved documents (use if documents changed on NIOS).">&#8635; Refresh all saved</button>
+            <button class="btn btn-success btn-sm" id="cache-docs-btn" onclick="cacheDocsNow(this)" title="Fetch every confirmed student document from NIOS once and SAVE it in our database. After this, WhatsApp links open straight from our copy — no NIOS/CapSolver needed, and they keep working even if NIOS is down.">Save all documents to DB</button>
+            <button class="btn btn-outline btn-sm" onclick="cacheDocsNow(this,true)" title="Re-fetch and OVERWRITE all saved documents (use if documents changed on NIOS).">Refresh all saved</button>
             <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C" onclick="stopCacheDocs(this)" title="Stop the auto-resume of the document save.">&#9632; Stop saving</button>
             <span id="cache-docs-status" style="font-size:12px;color:var(--muted);align-self:center"></span>
           </div>
           <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <span style="font-weight:700;font-size:13px"><span id="c-selcount">0</span> selected</span>
             <button class="btn btn-primary btn-sm" onclick="resendSelected(this)">Resend WhatsApp to selected</button>
-            <button class="btn btn-sm" style="background:#F97316;color:#fff" onclick="refreshSelectedDocs(this)" title="Re-fetch and overwrite the saved documents for the selected students (use if their documents changed on NIOS).">&#8635; Refresh docs for selected</button>
+            <button class="btn btn-sm" style="background:#F97316;color:#fff" onclick="refreshSelectedDocs(this)" title="Re-fetch and overwrite the saved documents for the selected students (use if their documents changed on NIOS).">Refresh docs for selected</button>
             <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDeleteConf()">&#128465; Delete selected</button>
             <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="clearConfSel()">Clear</button>
           </div>
@@ -790,14 +790,14 @@ function applySidebarPref(){
             </div>
             <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;font-weight:600">
               <span style="color:#047857">Sending: <span id="wap-total">0</span></span>
-              <span style="color:#059669">&#10003; Sent this run: <span id="wap-sent">0</span></span>
+              <span style="color:#059669">Sent this run: <span id="wap-sent">0</span></span>
               <span style="color:#B45309">Remaining: <span id="wap-remaining">0</span></span>
               <span style="color:#B91C1C">Failed (auto-retry): <span id="wap-failed">0</span></span>
             </div>
           </div>
           <div id="cache-progress" style="display:none;background:linear-gradient(135deg,#EEF2FF,#F5F3FF);border:1px solid #C7D2FE;border-radius:12px;padding:14px 16px;margin-bottom:14px">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:9px">
-              <span style="font-weight:700;font-size:13.5px;color:#3730A3">&#128190; <span id="cap-title">Saving documents to database</span></span>
+              <span style="font-weight:700;font-size:13.5px;color:#3730A3"><span id="cap-title">Saving documents to database</span></span>
               <span style="font-weight:800;font-size:15px;color:#4338CA"><span id="cap-pct">0</span>%</span>
             </div>
             <div style="height:10px;background:#E0E7FF;border-radius:6px;overflow:hidden">
@@ -805,9 +805,9 @@ function applySidebarPref(){
             </div>
             <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;font-weight:600">
               <span style="color:#4338CA">Progress: <span id="cap-done">0</span>/<span id="cap-total">0</span></span>
-              <span style="color:#059669">&#10003; Saved: <span id="cap-saved">0</span></span>
-              <span style="color:#B45309">&#8635; Retrying: <span id="cap-retry">0</span></span>
-              <span style="color:#B91C1C">&#9888; Needs data fix: <span id="cap-genfail">0</span></span>
+              <span style="color:#059669">Saved: <span id="cap-saved">0</span></span>
+              <span style="color:#B45309">Retrying: <span id="cap-retry">0</span></span>
+              <span style="color:#B91C1C">Needs data fix: <span id="cap-genfail">0</span></span>
               <span style="color:#6D28D9" id="cap-resume"></span>
             </div>
             <div id="cap-err" style="display:none;margin-top:8px;font-size:11.5px;color:#B45309;background:#FEF3C7;border-radius:8px;padding:6px 10px"></div>
@@ -891,7 +891,7 @@ function applySidebarPref(){
             (in your words, not NIOS's technical language). <b>Review each one, edit if needed, attach a demo screenshot if helpful, then send.</b> Nothing goes
             out automatically. Routing is automatic: <b>Public &#8594; public number</b>, <b>On Demand &amp; Stream 2 &#8594; main number</b>.</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
-            <button class="btn btn-outline btn-sm" onclick="loadDocReq(this)">&#8635; Refresh</button>
+            <button class="btn btn-outline btn-sm" onclick="loadDocReq(this)">Refresh</button>
             <button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="sendDocReq('selected',this)">Send selected</button>
             <button class="btn btn-sm" style="background:#2563eb;color:#fff" onclick="sendDocReq('all',this)">Send all pending</button>
             <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;margin-left:4px"><input type="checkbox" id="dr-selall" onclick="toggleDrAll(this)"> Select all</label>
@@ -917,7 +917,7 @@ function applySidebarPref(){
             <input type="text" id="f-search" placeholder="Search name / reference / email..." oninput="debounceFailed()">
             <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <button class="btn btn-outline btn-sm" onclick="loadFailed(1)">Refresh</button>
-            <button class="btn btn-success btn-sm" id="f-runall-btn" onclick="runAllFailed(this)" title="Re-run every failed student with auto-retry + DOB date/month auto-swap">&#8635; Re-check all (auto-fix)</button>
+            <button class="btn btn-success btn-sm" id="f-runall-btn" onclick="runAllFailed(this)" title="Re-run every failed student with auto-retry + DOB date/month auto-swap">Re-check all (auto-fix)</button>
             <button class="btn btn-outline btn-sm" onclick="diagnoseLogin()" title="Check why NIOS login is failing (site-key / bounce / captcha)">&#128295; Diagnose NIOS login</button>
           </div>
           <div id="f-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
@@ -935,7 +935,7 @@ function applySidebarPref(){
         <div class="card">
           <div class="card-head">
             <h3>Unknown Status</h3>
-            <button class="btn btn-success btn-sm" id="u-runall-btn" onclick="runAllUnknown(this)" title="Re-check only the Unknown students (with auto-retry)">&#8635; Run Unknown only</button>
+            <button class="btn btn-success btn-sm" id="u-runall-btn" onclick="runAllUnknown(this)" title="Re-check only the Unknown students (with auto-retry)">Run Unknown only</button>
           </div>
           <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
             NIOS returned <b>no recognisable status</b> for these students — usually a wrong or not-yet-active Reference No,
@@ -1037,7 +1037,7 @@ function applySidebarPref(){
             <h3>Transfer Data — Tracker &#8594; Portal</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn btn-primary btn-sm" id="tr-match-btn" onclick="matchTransfers(this)" title="Match Portal data to your already-checked Tracker data by Reference No and push it to the Portal WITHOUT using CapSolver">&#9889; Match &amp; Transfer (no CapSolver)</button>
-              <button class="btn btn-success btn-sm" id="tr-sync-btn" onclick="syncTransfers(this)" title="Push the current status of every transferred Portal student to MVS Portal now">&#8635; Sync matched to Portal</button>
+              <button class="btn btn-success btn-sm" id="tr-sync-btn" onclick="syncTransfers(this)" title="Push the current status of every transferred Portal student to MVS Portal now">Sync matched to Portal</button>
             </div>
           </div>
           <p style="color:var(--muted);font-size:13px;margin-bottom:10px">
@@ -1336,7 +1336,7 @@ function applySidebarPref(){
             border-radius:10px;font-size:12px;overflow-x:auto;max-height:400px;display:none;white-space:pre-wrap"></pre>
         </div>
         <div class="card" style="border:1px solid var(--danger)">
-          <h3 style="color:var(--danger)">&#9888; Danger Zone — Clear All Data</h3>
+          <h3 style="color:var(--danger)">Danger Zone — Clear All Data</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
             This will <b>permanently delete</b> all students, statuses, change history and the uploaded sheet.
             Your settings (intervals, WhatsApp) will be kept. You will need to upload a new sheet afterwards.</p>
@@ -1764,13 +1764,13 @@ function renderDocReq(){
   const badge=document.getElementById("nav-docreq-badge");
   const pending=drData.filter(s=>!s.sent).length;
   if(badge){badge.textContent=pending;badge.style.display=pending?"inline-flex":"none";}
-  if(!drData.length){body.innerHTML='<div style="color:var(--success);font-size:14px;padding:10px 0">&#10003; No Document-Required students right now.</div>';renderDrPg(0);updateDrCount();return;}
+  if(!drData.length){body.innerHTML='<div style="color:var(--success);font-size:14px;padding:10px 0">No Document-Required students right now.</div>';renderDrPg(0);updateDrCount();return;}
   const pages=Math.max(1,Math.ceil(drData.length/drPerPage));
   if(drPage>pages)drPage=pages;
   const slice=drData.slice((drPage-1)*drPerPage, drPage*drPerPage);
   body.innerHTML=slice.map((s)=>{
     const i=drData.indexOf(s);
-    const sentBadge=s.sent?'<span style="background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">&#10003; Sent'+(s.sent_at?' &middot; '+s.sent_at:'')+'</span>':'<span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">Pending</span>';
+    const sentBadge=s.sent?'<span style="background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">Sent'+(s.sent_at?' &middot; '+s.sent_at:'')+'</span>':'<span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">Pending</span>';
     const blank=!s.message;
     return '<div class="dr-card" style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;background:'+(s.sent?'#f6fef9':'#fff')+'">'+
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;flex-wrap:wrap">'+
@@ -2093,14 +2093,14 @@ function renderBell(notifs,dups,unknowns){
     '<div class="rf">'+(x.reference_no||"No ref")+'</div>'+
     (x.remark?'<div class="rk">'+x.remark+'</div>':"")+'</div></div>').join("");}
   if(unknowns.length){
-    html+='<div style="padding:7px 14px;font-size:11px;font-weight:800;color:#991B1B;background:#FEE2E2;border-top:1px solid var(--border)">&#9888; STATUS NOT FOUND — re-check needed</div>';
+    html+='<div style="padding:7px 14px;font-size:11px;font-weight:800;color:#991B1B;background:#FEE2E2;border-top:1px solid var(--border)">STATUS NOT FOUND — re-check needed</div>';
     html+=unknowns.map(x=>'<div class="notif-item"><div class="dot" style="background:#DC2626"></div><div>'+
       '<div class="nm">'+(x.student_name||"—")+'</div>'+
       '<div class="rf">'+(x.reference_no||x.enrollment_no||"—")+'</div>'+
       '<div class="rk">'+(x.current_status||"Unknown")+' — '+(x.remark||"NIOS didn\'t return a readable status. Re-check this student.")+'</div></div></div>').join("");
   }
   if(dups.length){
-    html+='<div style="padding:7px 14px;font-size:11px;font-weight:800;color:#5B21B6;background:#EDE9FE;border-top:1px solid var(--border)">&#9888; DUPLICATE — kept as MVS Portal</div>';
+    html+='<div style="padding:7px 14px;font-size:11px;font-weight:800;color:#5B21B6;background:#EDE9FE;border-top:1px solid var(--border)">DUPLICATE — kept as MVS Portal</div>';
     html+=dups.map(x=>'<div class="notif-item"><div class="dot" style="background:#7C3AED"></div><div>'+
       '<div class="nm">'+(x.student_name||"—")+'</div>'+
       '<div class="rf">'+(x.reference_no||x.enrollment_no||"—")+'</div>'+
@@ -2182,9 +2182,9 @@ function waBtn(s){
   const at=(s.whatsapp_sent_at||"");
   let badge="";
   if(dv==="delivered"){
-    badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#15803D">&#10003; Delivered on WhatsApp'+(s.whatsapp_delivery_at?' &middot; '+s.whatsapp_delivery_at:'')+'</div>';
+    badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#15803D">Delivered on WhatsApp'+(s.whatsapp_delivery_at?' &middot; '+s.whatsapp_delivery_at:'')+'</div>';
   }else if(dv==="failed"){
-    badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">&#9888; Delivery FAILED — please resend</div>';
+    badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">Delivery FAILED — please resend</div>';
   }else if(sent){
     badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:#B45309">Sent to WhatsApp'+(at?' &middot; '+at:'')+' <span style="font-weight:400;color:var(--muted)">(delivery not yet confirmed)</span></div>';
     var info2=(s.whatsapp_info||"");
@@ -2194,7 +2194,7 @@ function waBtn(s){
     if(why && why.toLowerCase().indexOf("accepted")>=0){
       badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:#B45309">Sent to WhatsApp'+(at?' &middot; '+at:'')+' <span style="font-weight:400;color:var(--muted)">(gateway accepted, delivery pending)</span></div>';
     }else if(why && why.indexOf("2 numbers")<0){
-      badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">&#9888; Not sent &middot; '+why.replace(/</g,"&lt;").slice(0,150)+'</div>';
+      badge='<div style="margin-top:5px;font-size:11.5px;font-weight:700;color:#b91c1c">Not sent &middot; '+why.replace(/</g,"&lt;").slice(0,150)+'</div>';
     }else{
       badge='<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:var(--muted)">Not sent yet</div>';
     }
@@ -2745,7 +2745,7 @@ async function downloadSycHall(rowKey,btn){
     bar.style.width="100%";msg.textContent="Opening...";
     const blob=await r.blob();
     window.open(URL.createObjectURL(blob),"_blank");
-    msg.innerHTML='<span style="color:var(--success)">&#10003; Opened — use "Save as PDF" to download</span>';
+    msg.innerHTML='<span style="color:var(--success)">Opened — use "Save as PDF" to download</span>';
   }catch(e){clearInterval(tick);bar.style.background="var(--danger)";bar.style.width="100%";msg.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
   finally{btn.dataset.busy="";setTimeout(function(){prog.style.display="none";},5000);}
 }
@@ -2837,7 +2837,7 @@ async function loadFailed(page){
         '<td style="font-size:13px">'+(s.session||"—")+'</td>'+
         '<td style="font-size:12px;color:#b91c1c;font-weight:600;max-width:300px">'+rm+'</td>'+
         '<td><div style="display:flex;gap:6px;flex-wrap:wrap">'+
-          ((rm.indexOf("DIFFERENT student")>=0)?'<button onclick="markNameOk(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer" title="The name/Reference is actually correct — dismiss this warning">&#10003; Name correct</button>':'')+
+          ((rm.indexOf("DIFFERENT student")>=0)?'<button onclick="markNameOk(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer" title="The name/Reference is actually correct — dismiss this warning">Name correct</button>':'')+
           '<button onclick="editStudent(&quot;'+s.row_key+'&quot;)" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">Edit &amp; fix</button>'+
           '<button onclick="deleteStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer">Remove</button>'+
         '</div></td></tr>';
@@ -2918,7 +2918,7 @@ function renderUnknownPg(page,total,totalRows){
 }
 async function runNotChecked(){
   var sess=document.getElementById("s-session").value;
-  var scope=sess?("session \""+sess+"\""):"ALL sessions";
+  var scope=sess?("session "+sess):"ALL sessions";
   if(!confirm("Re-check every not-checked student in "+scope+"?\\n\\nThis re-runs only the students the latest run couldn't read (captcha/proxy). Confirmed students are skipped. Uses CapSolver credits for each."))return;
   var btn=document.getElementById("s-run-nc-btn");
   var old=btn?btn.textContent:"";
@@ -3127,7 +3127,7 @@ async function findStalePortal(btn){
     if(r.ok===false){box.innerHTML='<div style="color:var(--warn);font-size:13px">'+(r.message||"Could not check right now.")+'</div>';return;}
     staleKeys=(r.stale||[]).map(s=>s.row_key);
     if(!r.stale||!r.stale.length){
-      box.innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">&#10003; All clean — every tracked MVS Portal student is still on the live portal. (Compared against '+r.fetched+' live records.)</div>';
+      box.innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">All clean — every tracked MVS Portal student is still on the live portal. (Compared against '+r.fetched+' live records.)</div>';
       return;
     }
     var rows=r.stale.map((s,i)=>'<tr>'+
@@ -3175,7 +3175,7 @@ async function transferStaleToTracker(btn){
   try{
     const r=await api("/api/portal-to-tracker","POST",{row_keys:keys});
     showToast("Moved "+(r.moved||keys.length)+" student(s) to MVS Tracker");
-    document.getElementById("stale-box").innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">&#10003; Done — '+(r.moved||0)+' record(s) moved to MVS Tracker. They are kept and will be re-checked as Tracker data.</div>';
+    document.getElementById("stale-box").innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">Done — '+(r.moved||0)+' record(s) moved to MVS Tracker. They are kept and will be re-checked as Tracker data.</div>';
     try{loadDashboard();}catch(e){}
   }catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.textContent="\u2192 Transfer selected to Tracker";}}
 }
@@ -3187,7 +3187,7 @@ async function removeStalePortal(btn){
   try{
     const r=await api("/api/students-delete-bulk","POST",{row_keys:keys});
     showToast("Moved "+(r.deleted||keys.length)+" student(s) to Trash");
-    document.getElementById("stale-box").innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">&#10003; Done — '+(r.deleted||0)+' record(s) moved to Trash.</div>';
+    document.getElementById("stale-box").innerHTML='<div style="color:var(--success);font-size:13.5px;font-weight:600;padding:8px 0">Done — '+(r.deleted||0)+' record(s) moved to Trash.</div>';
     try{loadDashboard();}catch(e){}
   }catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.textContent="Move selected to Trash";}}
 }
@@ -3425,7 +3425,7 @@ function renderUploadPreview(rows){
     '<td>'+tag+matchLine+'</td></tr>';
   }).join("");
   pv.innerHTML='<div class="prev-head">Preview — '+rows.length+' rows (scroll to see all)</div>'+
-    '<div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px;line-height:1.5">&#9888; <b>Similar</b> rows share a phone/email with another student but have a <b>different reference number</b>, so they are <b>NOT</b> duplicates — they run as separate students (e.g. siblings). Check &ldquo;matches&rdquo; to confirm. A true <b>Duplicate</b> has the <b>same reference number</b>. To drop a real duplicate, delete it from the Students list after upload (select &rarr; Delete).</div>'+
+    '<div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px;line-height:1.5"><b>Similar</b> rows share a phone/email with another student but have a <b>different reference number</b>, so they are <b>NOT</b> duplicates — they run as separate students (e.g. siblings). Check &ldquo;matches&rdquo; to confirm. A true <b>Duplicate</b> has the <b>same reference number</b>. To drop a real duplicate, delete it from the Students list after upload (select &rarr; Delete).</div>'+
     '<div class="prev-box"><table>'+head+body+'</table></div>';
 }
 async function downloadExcel(){
@@ -3458,7 +3458,7 @@ async function moveAllSource(btn){
   if(btn){btn.disabled=true;btn.textContent="Moving…";}
   try{
     const r=await api("/api/change-source-bulk","POST",{from_source:frm,to_source:to});
-    if(st)st.innerHTML='<span style="color:var(--success)">&#10003; Moved '+(r.moved||0)+' student(s) to '+srcLabel(to)+'.</span>';
+    if(st)st.innerHTML='<span style="color:var(--success)">Moved '+(r.moved||0)+' student(s) to '+srcLabel(to)+'.</span>';
     loadSourceCounts();
     refreshAllTables();
   }catch(e){if(st)st.innerHTML='<span style="color:var(--danger)">Error: '+e.message+'</span>';}
@@ -3717,7 +3717,7 @@ async function _doReportSend(promise,btn){
   if(btn){btn.disabled=true;btn.dataset.t=btn.textContent;btn.textContent="Sending…";}
   try{
     const r=await promise;
-    s.innerHTML=r.sent?'<span style="color:var(--success)">&#10003; Report sent to '+r.sent+'/'+r.total+' management number(s).</span>'
+    s.innerHTML=r.sent?'<span style="color:var(--success)">Report sent to '+r.sent+'/'+r.total+' management number(s).</span>'
                       :'<span style="color:var(--danger)">Could not send to anyone.</span>';
     if(r.errors&&r.errors.length)s.innerHTML+='<div style="color:var(--danger);font-size:12px;margin-top:6px">'+r.errors.join("<br>")+'</div>';
     try{loadReportSettings();}catch(e){}
@@ -3786,7 +3786,7 @@ async function loadWa(){
         'style="flex:1;max-width:300px;padding:6px 9px;border:1px solid '+(v?'var(--border)':'#fca5a5')+';border-radius:7px;font-size:13px">'+
         '<span style="font-size:11px;font-weight:600;color:'+(ce[key]?'#15803d':'#b91c1c')+'">Railway: '+(ce[key]?'seen &#10003;':'empty &#10007;')+'</span>'+
         '</div>';
-      cfg.innerHTML='<div style="color:var(--success);margin-bottom:8px">&#10003; API key configured</div>'+
+      cfg.innerHTML='<div style="color:var(--success);margin-bottom:8px">API key configured</div>'+
         '<div style="font-size:12px;color:var(--muted);margin-bottom:4px"><b>Confirmed-send campaigns</b> — type the AiSensy campaign name for each and Save (works even if Railway shows empty):</div>'+
         camp("On Demand","ondemand",c.ondemand)+camp("Stream 2","stream2",c.stream2)+
         camp("Public","public",c.public)+camp("SYC","syc",c.syc)+
@@ -3830,7 +3830,7 @@ async function testWa(){
   if(!num){s.innerHTML='<span style="color:var(--danger)">Please enter a number</span>';return;}
   s.innerHTML='Sending...';
   try{const r=await api("/api/wa-test","POST",{number:num,group:group});
-    if(r.ok)s.innerHTML='<span style="color:var(--success)">&#10003; Test message sent. Please check your WhatsApp.</span>';
+    if(r.ok)s.innerHTML='<span style="color:var(--success)">Test message sent. Please check your WhatsApp.</span>';
     else s.innerHTML='<span style="color:var(--danger)">&#10007; '+(r.info||"failed")+'</span>';}
   catch(e){s.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
@@ -3903,7 +3903,7 @@ async function resetData(){
   const s=document.getElementById("reset-status");
   s.innerHTML="Clearing...";
   try{const r=await api("/api/reset-data","POST",{});
-    s.innerHTML='<span style="color:var(--success)">&#10003; '+r.message+' You can now upload a new sheet.</span>';
+    s.innerHTML='<span style="color:var(--success)">'+r.message+' You can now upload a new sheet.</span>';
     showToast("All data cleared");}
   catch(e){s.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
 }
