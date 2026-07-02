@@ -329,7 +329,7 @@ def scrape_students(students, should_cancel=None, progress_cb=None, on_result=No
                     _fb_used[0] += 1
                     try:
                         import nios_login
-                        lab = nios_login.fetch_status_via_login(ref, dob, enr)
+                        lab, fkind = nios_login.fetch_status_via_login(ref, dob, enr)
                         if lab and lab != "Unknown":
                             res["status"] = lab
                             res["success"] = True
@@ -338,6 +338,14 @@ def scrape_students(students, should_cancel=None, progress_cb=None, on_result=No
                             logger.info(f"  {ref or email} -> {lab} (via login fallback)")
                         else:
                             _fb_streak[0] += 1
+                            # Record WHY the login failed so the run can retry only the
+                            # fixable (proxy/captcha) ones and flag wrong-data ones directly.
+                            if fkind == "data":
+                                res["fail_kind"] = "data"
+                                res["remark"] = ("NIOS rejected the login — the Reference No / Date of Birth "
+                                                 "does not match NIOS records. Please verify and fix.")
+                            elif fkind == "proxy":
+                                res["fail_kind"] = "proxy"
                     except Exception as e:
                         _fb_streak[0] += 1
                         logger.warning(f"login-status fallback error for {ref or email}: {e}")

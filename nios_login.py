@@ -70,51 +70,76 @@ def _parse_proxy_fields(proxy):
     except Exception:
         return None
 
-def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
-    if not CAPSOLVER_API_KEY:
-        logger.error("CAPTCHA_API_KEY not set!")
-        return ""
+def _capsolver_solve(task, label):
+    """Create + poll one CapSolver task. Returns (token, error_str).
+    token is "" on failure; error_str carries the reason so the caller can decide
+    whether to retry a different way (e.g. proxy failed -> try proxyless)."""
     try:
-        proxy = os.environ.get("CAPSOLVER_PROXY", "").strip()
-        pf = _parse_proxy_fields(proxy)
-        # With a (residential/Indian) proxy CapSolver produces a HIGH-score token that NIOS
-        # accepts. Without one it falls back to proxyless (often low score on datacenter IPs).
-        if pf:
-            task = {"type": "ReCaptchaV3Task", "websiteURL": page_url,
-                    "websiteKey": site_key or RECAPTCHA_SITE_KEY}
-            task.update(pf)
-        else:
-            task = {"type": "ReCaptchaV3TaskProxyLess", "websiteURL": page_url,
-                    "websiteKey": site_key or RECAPTCHA_SITE_KEY}
-        # reCAPTCHA v3 is score-based (0.0-1.0). Ask CapSolver for a high-score token.
-        try:
-            task["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.9"))
-        except Exception:
-            task["minScore"] = 0.9
-        # reCAPTCHA v3 always executes with an action; pass the page's action, else 'login'.
-        task["pageAction"] = page_action or "login"
         r = requests.post(CAPSOLVER_CREATE,
                           json={"clientKey": CAPSOLVER_API_KEY, "task": task}, timeout=30).json()
         if r.get("errorId") != 0:
-            logger.error(f"CapSolver create error: {r.get('errorDescription')}")
-            return ""
+            err = str(r.get("errorDescription") or r.get("errorCode") or "create failed")
+            logger.error(f"CapSolver create error ({label}): {err}")
+            return "", err
         task_id = r.get("taskId")
-        # CapSolver reCAPTCHA v3 with a residential proxy can take 10-35s (sometimes more)
-        # to return a high-score token. Poll for up to ~120s (60 x 2s) so a genuinely slow
-        # solve is NOT abandoned as a failure — abandoning it wastes the credit AND leaves
-        # the student Unknown even though the captcha would have succeeded.
+        # reCAPTCHA v3 with a residential proxy can take 10-35s (sometimes more). Poll up to
+        # ~120s so a genuinely slow solve is not abandoned (which wastes the credit AND leaves
+        # the student Unknown even though the captcha would have succeeded).
         for _ in range(60):
             time.sleep(2)
             rr = requests.post(CAPSOLVER_RESULT,
                               json={"clientKey": CAPSOLVER_API_KEY, "taskId": task_id}, timeout=30).json()
             if rr.get("errorId") != 0:
-                return ""
+                err = str(rr.get("errorDescription") or rr.get("errorCode") or "solve failed")
+                logger.error(f"CapSolver solve error ({label}): {err}")
+                return "", err
             if rr.get("status") == "ready":
-                return rr.get("solution", {}).get("gRecaptchaResponse", "")
-        return ""
+                return rr.get("solution", {}).get("gRecaptchaResponse", ""), ""
+        return "", "timeout"
     except Exception as e:
-        logger.error(f"CapSolver error: {e}")
+        logger.error(f"CapSolver error ({label}): {e}")
+        return "", str(e)
+
+
+def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
+    if not CAPSOLVER_API_KEY:
+        logger.error("CAPTCHA_API_KEY not set!")
         return ""
+    try:
+        min_score = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.9"))
+    except Exception:
+        min_score = 0.9
+    action = page_action or "login"
+    key = site_key or RECAPTCHA_SITE_KEY
+
+    proxy = os.environ.get("CAPSOLVER_PROXY", "").strip()
+    pf = _parse_proxy_fields(proxy)
+
+    # ATTEMPT 1: with our proxy (residential India -> high reCAPTCHA v3 score).
+    if pf:
+        task = {"type": "ReCaptchaV3Task", "websiteURL": page_url, "websiteKey": key,
+                "minScore": min_score, "pageAction": action}
+        task.update(pf)
+        token, err = _capsolver_solve(task, "proxy")
+        if token:
+            return token
+        # If the proxy itself couldn't be reached, don't leave the student Unknown —
+        # fall back to CapSolver's own proxy pool (proxyless). Often succeeds when our
+        # proxy endpoint is momentarily busy/unreachable.
+        el = err.lower()
+        if any(w in el for w in ("proxy", "connect", "timeout", "timed out")):
+            logger.info("CapSolver: proxy attempt failed — retrying proxyless (CapSolver's own pool)")
+            task2 = {"type": "ReCaptchaV3TaskProxyLess", "websiteURL": page_url,
+                     "websiteKey": key, "minScore": min_score, "pageAction": action}
+            token2, _ = _capsolver_solve(task2, "proxyless-fallback")
+            return token2
+        return ""
+
+    # No proxy configured -> proxyless.
+    task = {"type": "ReCaptchaV3TaskProxyLess", "websiteURL": page_url, "websiteKey": key,
+            "minScore": min_score, "pageAction": action}
+    token, _ = _capsolver_solve(task, "proxyless")
+    return token
 
 def format_dob(dob):
     """Return DOB as DD-MM-YYYY (NIOS login format). Robust to any time component
@@ -465,24 +490,60 @@ def verify_login_autofix(reference_no, dob, enrollment_no=""):
             return True, "", flipped
     return False, msg, ""
 
+def classify_login_failure(html):
+    """Decide WHY a login attempt failed, from the returned page:
+      'data'  -> NIOS explicitly rejected the Reference/Enrollment/DOB (WRONG DATA — a human
+                 must fix it; retrying can never help).
+      'proxy' -> captcha score / robot / transient rejection (a retry will very likely fix it).
+      None    -> couldn't tell (treat as transient and retry).
+    This is the signal that lets the run retry only the fixable (proxy) failures and send the
+    genuinely-wrong-data ones straight to the Unknown list for the counsellor."""
+    b = (html or "").lower()
+    data_sigs = ("incorrect reference", "invalid reference", "incorrect enrol", "invalid enrol",
+                 "incorrect date of birth", "invalid date of birth", "does not match",
+                 "no record", "not registered", "no such record", "not found",
+                 "reference number or date of birth", "enrollment number or date of birth",
+                 "enrolment number or date of birth", "wrong reference", "wrong date of birth")
+    proxy_sigs = ("captcha verification", "invalid captcha", "recaptcha failed",
+                  "verify you are human", "are a robot", "suspicious activity",
+                  "captcha score", "try again later", "please try again")
+    if any(s in b for s in data_sigs):
+        return "data"
+    if any(s in b for s in proxy_sigs):
+        return "proxy"
+    return None
+
+
 def fetch_status_via_login(reference_no, dob, enrollment_no=""):
     """Fallback status read used when the public check-admission-status page returns Unknown
     for a student who is actually valid. Logs into the NIOS student portal (Reference /
     Enrollment + DOB) and reads the Application Status straight off the dashboard — the same
-    page the student sees after logging in. Returns a status label (e.g. 'Admission Confirmed')
-    or '' if it could not be read. On success the logged-in session is cached, so a following
-    document check reuses it (no extra captcha)."""
+    page the student sees after logging in. Returns (status_label, fail_kind):
+      status_label: e.g. 'Admission Confirmed', or '' if it could not be read.
+      fail_kind: '' on success, else 'data' (wrong ref/DOB — don't retry) or 'proxy'
+                 (captcha/transient — retry will likely fix). Lets the caller decide.
+    On success the logged-in session is cached, so a following document check reuses it."""
     try:
         from scraper import get_status_label
     except Exception:
-        return ""
+        return "", "proxy"
+    last_kind = "proxy"   # default: if we never even reached a verdict, treat as transient
     for attempt in range(_LOGIN_TRIES):
         try:
             session, resp = login_student(reference_no, dob, enrollment_no=enrollment_no)
         except Exception as e:
             logger.warning(f"status-via-login error: {e}")
             resp = None
-        if resp is None or not is_logged_in(resp.text):
+        if resp is None:
+            last_kind = "proxy"   # captcha/proxy couldn't even produce a token
+            continue
+        if not is_logged_in(resp.text):
+            # Login reached NIOS but was rejected — classify why.
+            k = classify_login_failure(resp.text)
+            if k == "data":
+                # Definitive wrong data — no point retrying. Report it up immediately.
+                return "", "data"
+            last_kind = k or "proxy"
             continue
         # cache the logged-in session so a following document verify/fetch reuses it
         try:
@@ -501,15 +562,15 @@ def fetch_status_via_login(reference_no, dob, enrollment_no=""):
                 lab = get_status_label(lines[i + 1])
                 if lab != "Unknown":
                     logger.info(f"status-via-login {reference_no or enrollment_no} -> {lab}")
-                    return lab
+                    return lab, ""
         # else: any line that reads as a known status (dashboard shows 'Admission Confirmed')
         for l in lines:
             lab = get_status_label(l)
             if lab != "Unknown":
                 logger.info(f"status-via-login {reference_no or enrollment_no} -> {lab}")
-                return lab
-        return ""   # logged in, but no status text found on the page
-    return ""
+                return lab, ""
+        return "", ""   # logged in, but no status text found on the page (not a failure)
+    return "", last_kind
 
 def _fetch_bytes(url, session):
     try:

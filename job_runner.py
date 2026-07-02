@@ -668,6 +668,14 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 # real status above. Do NOT flag it as failed and do NOT surface it in
                 # 'Failed to Run'/'Unknown'; only its last_checked moved. It stays where it is.
                 c.execute("UPDATE student_status SET check_failed=0 WHERE row_key=?", (row_key,))
+            elif res.get("fail_kind") == "data":
+                # NIOS explicitly rejected the Reference/DOB — genuine WRONG DATA. Flag it so the
+                # auto-retry pass skips it (retrying can't fix wrong data) and the counsellor sees
+                # a precise reason. Clears automatically once the data is fixed and a check succeeds.
+                _why = res.get("remark") or ("NIOS rejected the login — Reference No / DOB does not "
+                                             "match NIOS records. Please verify and fix.")
+                c.execute("UPDATE student_status SET check_failed=1, data_error=1, login_remark=? WHERE row_key=?",
+                          (_why[:300], row_key))
             elif new_status == "Unknown":
                 _why = ("NIOS returned no recognizable status — verify the Reference No "
                         "(it may be wrong or not found yet), or NIOS may be showing a status not tracked yet.")
@@ -681,7 +689,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 c.execute("UPDATE student_status SET check_failed=1, login_remark=? WHERE row_key=?",
                           (_msg, row_key))
             else:
-                c.execute("UPDATE student_status SET check_failed=0 WHERE row_key=?", (row_key,))
+                # Real status obtained — clear both flags (data is evidently fine now).
+                c.execute("UPDATE student_status SET check_failed=0, data_error=0 WHERE row_key=?", (row_key,))
 
             # ── On confirm: VERIFY the NIOS login works BEFORE sharing any document ──
             # If the uploaded Reference/Enrollment No or DOB is wrong, the login at
@@ -942,22 +951,26 @@ def _live_report_counts():
 
 
 def _auto_retry_failed(conn, c, to_check, process_one, retry_mode, is_cancelled):
-    """Post-run pass: re-check the students that came back Unknown/Fetch Error (transient
-    captcha/proxy miss — NOT a data mismatch) up to a few rounds, until their real status
-    comes through. Reuses the run's own per-student handler (so WhatsApp, downgrade-protection
-    and doc-caching all behave identically), just without touching run stats or the progress bar.
+    """Post-run pass: re-check every student that came back Unknown/Fetch Error, up to a few
+    rounds, until their real status comes through. Reuses the run's own per-student handler
+    (so WhatsApp, downgrade-protection and doc-caching all behave identically), just without
+    touching run stats or the progress bar.
+
+    We do NOT guess upfront which failures are wrong-data — but the login fallback now tells us
+    for sure: when NIOS itself rejects the Reference/DOB it is marked data_error=1 and skipped
+    here (retrying can't fix wrong data). Everything else is treated as a transient captcha/proxy
+    miss and retried until it clears — exactly the by-hand retrying the operator used to do.
 
     Guards for speed + cost:
-      • Rounds capped (RUN_RETRY_ROUNDS, default 4). A student that succeeds drops out, so only
-        genuinely-broken references persist to the last round.
-      • Skips data-mismatch failures (login_failed=1) — re-running can't fix wrong data.
-      • Skips students with no reference/enrollment or no DOB (nothing to check with).
-      • Respects run cancellation.
+      • Rounds capped (RUN_RETRY_ROUNDS, default 8 — some students only clear after several tries).
+        A student that succeeds OR is confirmed wrong-data drops out, so rounds shrink fast.
+      • Only students with a reference/enrollment AND a DOB (else there's nothing to check with).
+      • Runs after the main pass (never in parallel) and respects run cancellation.
     """
     try:
-        rounds = int(os.environ.get("RUN_RETRY_ROUNDS", "4"))
+        rounds = int(os.environ.get("RUN_RETRY_ROUNDS", "8"))
     except Exception:
-        rounds = 4
+        rounds = 8
     by_key = {s["row_key"]: s for s in to_check if s.get("row_key")}
     if not by_key:
         return
@@ -970,13 +983,14 @@ def _auto_retry_failed(conn, c, to_check, process_one, retry_mode, is_cancelled)
         failing = c.execute(
             f"SELECT row_key FROM student_status WHERE row_key IN ({qm}) "
             "AND current_status IN ('Unknown','Fetch Error') "
-            "AND COALESCE(login_failed,0)=0 AND COALESCE(is_confirmed,0)=0 "
+            "AND COALESCE(is_confirmed,0)=0 "
+            "AND COALESCE(data_error,0)=0 "
             "AND COALESCE(dob,'') != '' "
             "AND (COALESCE(reference_no,'') != '' OR COALESCE(enrollment_no,'') != '')",
             keys).fetchall()
         retry_students = [by_key[r["row_key"]] for r in failing if r["row_key"] in by_key]
         if not retry_students:
-            logger.info(f"Auto-retry: all resolvable failures cleared after {rnd} round(s)")
+            logger.info(f"Auto-retry: all Unknown/Fetch-Error cleared after {rnd} round(s)")
             return
         logger.info(f"Auto-retry round {rnd + 1}/{rounds}: re-checking {len(retry_students)} "
                     f"still-Unknown student(s)")
@@ -990,9 +1004,9 @@ def _auto_retry_failed(conn, c, to_check, process_one, retry_mode, is_cancelled)
     # Final tally for the log.
     still = c.execute(
         f"SELECT COUNT(*) FROM student_status WHERE row_key IN ({qm}) "
-        "AND current_status IN ('Unknown','Fetch Error') AND COALESCE(login_failed,0)=0",
-        keys).fetchone()[0]
-    logger.info(f"Auto-retry finished | still-unresolved (likely wrong/pending reference): {still}")
+        "AND current_status IN ('Unknown','Fetch Error')", keys).fetchone()[0]
+    logger.info(f"Auto-retry finished | still-Unknown after {rounds} rounds "
+                f"(these need a manual Reference/DOB check): {still}")
 
 
 def _send_run_report(stats, group_label):
