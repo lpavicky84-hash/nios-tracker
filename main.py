@@ -3990,6 +3990,14 @@ def reschedule_jobs():
 async def startup():
     init_db()
     reschedule_jobs()
+    # More worker threads for sync endpoints (default is 40). Students opening
+    # documents + admin using the portal + background jobs all share this pool;
+    # 100 keeps the portal responsive even when many students click at once.
+    try:
+        import anyio
+        anyio.to_thread.current_default_thread_limiter().total_tokens = 100
+    except Exception as e:
+        logger.warning(f"Threadpool bump failed (using default): {e}")
     # Safety: never auto-restart the heavy document-caching job on boot. If the app restarted
     # while caching was active, we come up clean and serve student links first; the operator can
     # press "Save all documents to DB" again when ready. This prevents any restart/crash loop.
@@ -7466,7 +7474,7 @@ def public_doc_file(token: str, kind: str):
     if cached is not None:
         content, ctype, filename = cached
     else:
-        if not _LIVE_FETCH_SEM.acquire(timeout=90):
+        if not _LIVE_FETCH_SEM.acquire(timeout=15):
             raise HTTPException(status_code=503, detail="server is busy right now — please try again in a minute")
         try:
             content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
@@ -7710,7 +7718,7 @@ def _fetch_doc_for(row_key, kind):
             return cached, None
         # 2) Not saved yet -> fetch live from NIOS, then save for next time.
         #    Bounded: at most 4 live NIOS fetches at once; others get a clean retry message.
-        if not _LIVE_FETCH_SEM.acquire(timeout=90):
+        if not _LIVE_FETCH_SEM.acquire(timeout=15):
             return None, "server is busy right now — please try again in a minute"
         try:
             content, ctype, filename = fetch_document(ref, row["dob"], kind, enrollment_no=enroll)
@@ -7741,11 +7749,16 @@ def _invalid_link_html():
 
 # ── Long signed links: /doc/{token} ──
 @app.get("/doc/{token}", response_class=HTMLResponse)
-async def public_single_doc(token: str):
+def public_single_doc(token: str):
     from links import verify_doc_link
     row_key, kind = verify_doc_link(token)
     if not row_key:
         return _invalid_link_html()
+    # FAST PATH: already saved on our server -> serve instantly. No loader page,
+    # no prepare round-trip, no NIOS, no CapSolver. One click = document opens.
+    cached = load_doc_cache(row_key, kind)
+    if cached is not None:
+        return _serve_doc(*cached)
     return HTMLResponse(_loader_html(kind, f"/doc/{token}/prepare", f"/doc/{token}/view"))
 
 @app.get("/doc/{token}/prepare")
@@ -7776,11 +7789,16 @@ def public_doc_view(token: str):
 
 # ── Short links: /s/{code} ──
 @app.get("/s/{code}", response_class=HTMLResponse)
-async def short_doc(code: str):
+def short_doc(code: str):
     from shortlinks import resolve_short
     row_key, kind = resolve_short(code)
     if not row_key:
         return _invalid_link_html()
+    # FAST PATH: already saved on our server -> serve instantly. No loader page,
+    # no prepare round-trip, no NIOS, no CapSolver. One click = document opens.
+    cached = load_doc_cache(row_key, kind)
+    if cached is not None:
+        return _serve_doc(*cached)
     return HTMLResponse(_loader_html(kind, f"/s/{code}/prepare", f"/s/{code}/view"))
 
 @app.get("/s/{code}/prepare")
