@@ -76,7 +76,7 @@ def init_db():
     # Safe migration for older DBs missing the progress columns
     for col in ("progress_current", "progress_total", "progress_changed", "progress_same",
                 "progress_total_mvs", "progress_done_mvs", "progress_total_trk", "progress_done_trk",
-                "progress_notchecked"):
+                "progress_notchecked", "retry_total", "retry_done"):
         try:
             c.execute(f"ALTER TABLE run_logs ADD COLUMN {col} INTEGER DEFAULT 0")
         except Exception:

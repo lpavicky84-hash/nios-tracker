@@ -1604,7 +1604,18 @@ async function pollProgress(){
         setSrcRow("mvs",mv);setSrcRow("trk",tk);
       }
       const g=d.group_type||"all";
-      document.getElementById("pb-label").textContent="Checking "+g+" students…";
+      if((d.phase||"main")==="retry" && (d.retry_total||0)>0){
+        // Main pass done — now auto-retrying the fixable (captcha/proxy) failures.
+        const rp=d.retry_percent||0;
+        document.getElementById("pb-label").textContent="Auto-retrying failed students…";
+        document.getElementById("pb-pct").textContent=rp+"%";
+        document.getElementById("pb-fill").style.width=rp+"%";
+        document.getElementById("pb-sub").innerHTML=
+          "Re-checking students that failed (captcha/proxy) &nbsp;·&nbsp; "+
+          "<b style='color:var(--success)'>"+(d.retry_done||0)+"</b> / "+(d.retry_total||0)+" resolved";
+      } else {
+        document.getElementById("pb-label").textContent="Checking "+g+" students…";
+      }
       updateNavCounts();   // live badge updates as students move between tabs
       // live filtering: refresh whatever view the counsellor is on, as it happens
       if(secActive("dashboard"))loadDashboard();
@@ -5285,7 +5296,7 @@ def run_progress(user=Depends(verify_token)):
     conn = get_db()
     row = conn.execute("SELECT id, group_type, run_at, progress_current, progress_total, "
                        "progress_changed, progress_same, progress_notchecked, progress_total_mvs, progress_done_mvs, "
-                       "progress_total_trk, progress_done_trk "
+                       "progress_total_trk, progress_done_trk, retry_total, retry_done "
                        "FROM run_logs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
     conn.close()
     if not row:
@@ -5297,11 +5308,18 @@ def run_progress(user=Depends(verify_token)):
     dm = row["progress_done_mvs"] or 0
     tt = row["progress_total_trk"] or 0
     dt = row["progress_done_trk"] or 0
+    rtot = row["retry_total"] or 0
+    rdone = row["retry_done"] or 0
+    # Retry phase = main pass finished (all checked) and there are fixable failures being retried.
+    in_retry = (rtot > 0 and cur >= tot and tot > 0)
     return {"running": True, "id": row["id"], "group_type": row["group_type"],
             "run_at": row["run_at"], "current": cur, "total": tot, "percent": pct,
             "changed": row["progress_changed"] or 0, "same": row["progress_same"] or 0,
             "not_checked": row["progress_notchecked"] or 0,
             "remaining": max(0, tot - cur),
+            "retry_total": rtot, "retry_done": rdone,
+            "retry_percent": int(rdone * 100 / rtot) if rtot else 0,
+            "phase": "retry" if in_retry else "main",
             "mvs": {"done": dm, "total": tm, "percent": int(dm*100/tm) if tm else 0},
             "trk": {"done": dt, "total": tt, "percent": int(dt*100/tt) if tt else 0}}
 

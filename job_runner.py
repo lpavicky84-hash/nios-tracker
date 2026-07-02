@@ -861,7 +861,11 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # (never in parallel — the portal stays fast) and BEFORE the counsellor report,
             # so the report reflects the resolved numbers, not the transient misses.
             if not (_is_cancelled and _is_cancelled()):
-                _auto_retry_failed(conn, c, to_check, process_one, _retry_mode, _is_cancelled)
+                try:
+                    _auto_retry_failed(conn, c, to_check, process_one, _retry_mode, _is_cancelled, run_id)
+                except Exception as _re:
+                    logger.warning(f"Auto-retry pass error (run continues): {_re}")
+                    _retry_mode[0] = False
 
         # Recompute the headline numbers from the FINAL DB state so the auto-retry pass is
         # reflected accurately (retries don't inflate the counters — they were guarded above).
@@ -950,7 +954,7 @@ def _live_report_counts():
     return out
 
 
-def _auto_retry_failed(conn, c, to_check, process_one, retry_mode, is_cancelled):
+def _auto_retry_failed(conn, c, to_check, process_one, retry_mode, is_cancelled, run_id):
     """Post-run pass: re-check every student that came back Unknown/Fetch Error, up to a few
     rounds, until their real status comes through. Reuses the run's own per-student handler
     (so WhatsApp, downgrade-protection and doc-caching all behave identically), just without
@@ -976,6 +980,28 @@ def _auto_retry_failed(conn, c, to_check, process_one, retry_mode, is_cancelled)
         return
     keys = list(by_key.keys())
     qm = ",".join("?" * len(keys))
+
+    def _count_failing():
+        return c.execute(
+            f"SELECT COUNT(*) FROM student_status WHERE row_key IN ({qm}) "
+            "AND current_status IN ('Unknown','Fetch Error') "
+            "AND COALESCE(is_confirmed,0)=0 AND COALESCE(data_error,0)=0 "
+            "AND COALESCE(dob,'') != '' "
+            "AND (COALESCE(reference_no,'') != '' OR COALESCE(enrollment_no,'') != '')",
+            keys).fetchone()[0]
+
+    # The fixable (transient) failures we're about to resolve — this is the retry-phase
+    # denominator the dashboard shows live ("X of Y resolved"), so the operator can watch it work.
+    initial_failing = _count_failing()
+    try:
+        c.execute("UPDATE run_logs SET retry_total=?, retry_done=0 WHERE id=?", (initial_failing, run_id))
+        conn.commit()
+    except Exception:
+        pass
+    if initial_failing == 0:
+        return
+    logger.info(f"Auto-retry: {initial_failing} fixable (transient) failure(s) to resolve")
+
     for rnd in range(max(1, rounds)):
         if is_cancelled and is_cancelled():
             logger.info("Auto-retry: run cancelled — stopping retry pass")
@@ -990,8 +1016,8 @@ def _auto_retry_failed(conn, c, to_check, process_one, retry_mode, is_cancelled)
             keys).fetchall()
         retry_students = [by_key[r["row_key"]] for r in failing if r["row_key"] in by_key]
         if not retry_students:
-            logger.info(f"Auto-retry: all Unknown/Fetch-Error cleared after {rnd} round(s)")
-            return
+            logger.info(f"Auto-retry: all fixable failures cleared after {rnd} round(s)")
+            break
         logger.info(f"Auto-retry round {rnd + 1}/{rounds}: re-checking {len(retry_students)} "
                     f"still-Unknown student(s)")
         retry_mode[0] = True
@@ -1001,6 +1027,13 @@ def _auto_retry_failed(conn, c, to_check, process_one, retry_mode, is_cancelled)
             logger.warning(f"Auto-retry round error: {e}")
         finally:
             retry_mode[0] = False
+        # Live retry progress: how many of the initial pool are now resolved.
+        try:
+            done = max(0, initial_failing - _count_failing())
+            c.execute("UPDATE run_logs SET retry_done=? WHERE id=?", (done, run_id))
+            conn.commit()
+        except Exception:
+            pass
     # Final tally for the log.
     still = c.execute(
         f"SELECT COUNT(*) FROM student_status WHERE row_key IN ({qm}) "
