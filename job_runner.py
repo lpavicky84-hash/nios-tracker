@@ -423,9 +423,13 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 _skipped_existing += 1
                 continue
             # MVS Portal data must be checked by Reference No ONLY — never fall back to
-            # email for portal students. So skip any portal student with no reference.
+            # email for portal students. Skip any portal student whose reference is
+            # missing OR invalid (an email/placeholder in the reference field is NOT
+            # a reference — checking it always comes back Unknown and wastes credits).
+            _ref_v = (s.get("reference_no") or "").strip()
             if (src_by_key.get(s["row_key"], "mvs_tracker") == "mvs_portal"
-                    and not (s.get("reference_no") or "").strip()):
+                    and not (_ref_v and "@" not in _ref_v
+                             and any(ch.isdigit() for ch in _ref_v))):
                 _portal_noref += 1
                 continue
             if is_syc_session(s["session"]):
@@ -458,8 +462,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         logger.info(f"{len(to_check)} to check (group={group_type}); SYC: {len(syc_list)} "
                     f"| MVS Portal:{tot_mvs} MVS Tracker:{tot_trk}")
         if _portal_noref:
-            logger.info(f"Skipped {_portal_noref} MVS Portal student(s) with no Reference No "
-                        f"(email fallback disabled for portal)")
+            logger.info(f"Skipped {_portal_noref} MVS Portal student(s) with no/invalid Reference No "
+                        f"(email-in-reference & email fallback disabled for portal)")
         if _new_only:
             logger.info(f"New-only run: skipped {_skipped_existing} already-tracked student(s); "
                         f"{len(to_check)} new student(s) to check")

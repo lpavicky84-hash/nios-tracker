@@ -190,6 +190,18 @@ def init_db():
     except Exception:
         pass
 
+    # Data hygiene: an email must never sit in the reference/enrollment columns (the
+    # Portal sometimes has one there for pending students). Move it to email (if email
+    # is blank) and clear the field so runs skip these students instead of burning
+    # captcha credits on a check that can only come back Unknown. Idempotent.
+    try:
+        c.execute("UPDATE student_status SET email=reference_no "
+                  "WHERE reference_no LIKE '%@%' AND COALESCE(email,'')=''")
+        c.execute("UPDATE student_status SET reference_no='' WHERE reference_no LIKE '%@%'")
+        c.execute("UPDATE student_status SET enrollment_no='' WHERE enrollment_no LIKE '%@%'")
+    except Exception:
+        pass
+
     # Settings table for interval config
     c.execute("""
         CREATE TABLE IF NOT EXISTS settings (

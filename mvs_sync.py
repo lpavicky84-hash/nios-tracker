@@ -31,12 +31,28 @@ def _trackerlist(session=None, include_done=False, timeout=60):
     return out.get("students", [])
 
 
+def _valid_ref(v):
+    """A usable NIOS reference/enrollment: has at least one digit and is not an email.
+    Portal sometimes has an email or placeholder sitting in the referenceNo field for
+    pending students — that must NEVER be checked as a reference."""
+    v = (v or "").strip()
+    return bool(v) and ("@" not in v) and any(ch.isdigit() for ch in v)
+
+
 def fetch_students_for_tracker(session=None, include_done=False):
     rows = []
     for s in _trackerlist(session, include_done):
         ref   = str(s.get("referenceNo") or "").strip()
         enr   = str(s.get("enrollmentNo") or "").strip()
         email = str(s.get("email") or "").strip()
+        # If an email/placeholder is sitting in the reference or enrollment field,
+        # drop it from there (and keep it as the email if we don't have one).
+        if ref and not _valid_ref(ref):
+            if "@" in ref and not email:
+                email = ref
+            ref = ""
+        if enr and not _valid_ref(enr):
+            enr = ""
         # Real email keeps its "email:" key (existing students stay matched). Placeholder
         # emails ("temp"/"na"/...) fall back to reference / enrollment so students sharing
         # a placeholder are not wrongly merged into one duplicate.
