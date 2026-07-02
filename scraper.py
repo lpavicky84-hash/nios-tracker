@@ -48,8 +48,12 @@ CAPSOLVER_RESULT  = "https://api.capsolver.com/getTaskResult"
 STATUS_MAX_TRIES = 3
 
 # Login-portal status fallback safety limits (per run): never let it drain the captcha balance.
-_FB_MAX = 20            # at most this many login-fallback reads per run
-_FB_STREAK_STOP = 5     # stop the fallback entirely after this many failures in a row
+# Login-fallback: when the fast PUBLIC status page returns no readable status for a student,
+# we log in and read the status straight off their dashboard (very reliable). These caps stop
+# a captcha-gateway OUTAGE from draining credits, but must be high enough that a normal big run
+# can rescue everyone. Configurable via env for tuning without a code change.
+_FB_MAX = int(os.environ.get("NIOS_FALLBACK_MAX", "400"))       # login-fallback reads per run
+_FB_STREAK_STOP = int(os.environ.get("NIOS_FALLBACK_STREAK", "12"))  # stop only after a real outage
 
 # Order matters: most specific first
 STATUS_KEYWORDS = [

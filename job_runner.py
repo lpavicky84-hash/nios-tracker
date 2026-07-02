@@ -512,6 +512,17 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 stats["failed"] += 1
             row_key = res["row_key"]
             new_status = res["status"]
+            # Break the failures down so the operator sees WHY, and can tell a real 'our-side'
+            # miss (captcha/proxy — auto-retried) apart from a 'data-side' issue (wrong/pending
+            # reference — needs a human) that no amount of re-running will fix.
+            if not res.get("success"):
+                _rmk = (res.get("remark", "") or "").upper()
+                if new_status == "Fetch Error" or "CAPTCHA" in _rmk:
+                    stats["fail_captcha"] = stats.get("fail_captcha", 0) + 1
+                elif "MISMATCH" in _rmk or "DATA" in _rmk:
+                    stats["fail_data"] = stats.get("fail_data", 0) + 1
+                else:  # Unknown — page came back but NIOS showed no status (often pending ref)
+                    stats["fail_pending"] = stats.get("fail_pending", 0) + 1
             # Per-run outcome buckets for the WhatsApp report.
             if new_status == "Admission Confirmed":
                 stats["confirmed"] += 1
@@ -827,6 +838,18 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             _finish(conn, run_id, checked, changed, failed, done_msg)
             logger.info(f"Run done | Checked:{checked} Changed:{changed} Failed:{failed} "
                         f"SYC:{len(syc_list)} Dups:{dup_count}")
+            # Honest breakdown: separate 'our-side' misses (captcha/proxy — auto-retried) from
+            # 'data-side' problems (wrong/pending reference — need a human). Success rate is
+            # measured over students we COULD check (excludes pending/no-data references).
+            _fc = stats.get("fail_captcha", 0)
+            _fd = stats.get("fail_data", 0)
+            _fp = stats.get("fail_pending", 0)
+            _ok = max(0, checked - failed)
+            _checkable = _ok + _fc          # valid, active references (exclude data/pending)
+            _rate = (100.0 * _ok / _checkable) if _checkable else 100.0
+            logger.info(f"Run breakdown | success:{_ok} captcha/proxy(retryable):{_fc} "
+                        f"data-mismatch(needs fix):{_fd} pending/no-status:{_fp} "
+                        f"| success-rate-among-checkable: {_rate:.1f}%")
             # Save this run's report breakdown so it can be (re)sent later from Settings.
             try:
                 import json as _json
