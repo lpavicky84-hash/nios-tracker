@@ -4006,6 +4006,18 @@ async def startup():
                           next_run_time=datetime.now() + timedelta(minutes=2))
     except Exception as e:
         logger.warning(f"WhatsApp auto-send job not scheduled: {e}")
+    # Auto-retry failed/unknown students — every 90 minutes, max 10 students per
+    # sweep, each student max ~4 auto-retries/day, and it never overlaps a run.
+    # Students whose data is fine but the check failed (captcha/NIOS hiccup) now
+    # clear on their own instead of needing a manual "Run now".
+    try:
+        from job_runner import auto_retry_failed_sweep
+        from apscheduler.triggers.interval import IntervalTrigger as _IT2
+        scheduler.add_job(auto_retry_failed_sweep, trigger=_IT2(minutes=90),
+                          id="job_auto_retry_failed", replace_existing=True,
+                          next_run_time=datetime.now() + timedelta(minutes=20))
+    except Exception as e:
+        logger.warning(f"Auto-retry job not scheduled: {e}")
     scheduler.start()
     logger.info("Scheduler started")
 

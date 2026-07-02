@@ -6,7 +6,7 @@ try:
     _time.tzset()
 except Exception:
     pass
-from datetime import datetime
+from datetime import datetime, timedelta
 from database import get_db, get_setting, set_setting
 from scraper import scrape_students
 from excel_handler import read_students_from_excel, write_status_to_excel, dedupe_students
@@ -985,3 +985,52 @@ def recheck_one(row_key):
         return {"ok": False, "error": str(e)[:200]}
     conn.close()
     return out
+
+
+# ── Auto-retry for failed/unknown students ──────────────────────────────────
+# A student whose data is CORRECT can still fail a check (low captcha score,
+# NIOS hiccup, proxy timeout). Instead of the operator pressing "Run now"
+# manually, this small sweep re-checks a few of them automatically.
+#
+# Strict guards so it can never slow the tracker or drain CapSolver credits:
+#   • Skips entirely while ANY run is in progress (a new run would cancel it).
+#   • Max 10 students per sweep, oldest-checked first (fair rotation).
+#   • A student is only retried if last checked > 6 hours ago (max ~4 auto
+#     retries per student per day — a genuinely-wrong reference can't loop
+#     endlessly, and it stays visible in Failed/Unknown for Edit & fix).
+#   • Only students with a valid Reference/Enrollment No (digits, no '@').
+#   • Can be disabled with setting auto_retry_failed = '0'.
+def auto_retry_failed_sweep(max_students=10, min_age_hours=6):
+    try:
+        if get_setting("auto_retry_failed", "1") != "1":
+            return
+        conn = get_db()
+        c = conn.cursor()
+        # Never overlap a run — starting one would cancel the active run.
+        active = c.execute("SELECT id FROM run_logs WHERE status='running'").fetchone()
+        if active:
+            conn.close()
+            logger.info("Auto-retry sweep: a run is in progress — skipping this sweep")
+            return
+        cutoff = (datetime.now() - timedelta(hours=min_age_hours)).strftime("%Y-%m-%d %H:%M:%S")
+        rows = c.execute(
+            "SELECT row_key, reference_no, enrollment_no FROM student_status "
+            "WHERE COALESCE(deleted,0)=0 AND COALESCE(is_confirmed,0)=0 "
+            "AND current_status IN ('Fetch Error','Unknown') "
+            "AND COALESCE(last_checked,'') != '' AND last_checked <= ? "
+            "ORDER BY last_checked ASC LIMIT 60", (cutoff,)).fetchall()
+        conn.close()
+
+        def _ok_id(v):
+            v = (v or "").strip()
+            return bool(v) and ("@" not in v) and any(ch.isdigit() for ch in v)
+
+        keys = [r["row_key"] for r in rows
+                if _ok_id(r["reference_no"]) or _ok_id(r["enrollment_no"])][:max_students]
+        if not keys:
+            logger.info("Auto-retry sweep: nothing eligible to retry")
+            return
+        logger.info(f"Auto-retry sweep: re-checking {len(keys)} failed/unknown student(s)")
+        run_status_check("all", None, "selected", keys)
+    except Exception as e:
+        logger.warning(f"Auto-retry sweep error: {e}")
