@@ -3990,6 +3990,13 @@ def reschedule_jobs():
 async def startup():
     init_db()
     reschedule_jobs()
+    # Safety: never auto-restart the heavy document-caching job on boot. If the app restarted
+    # while caching was active, we come up clean and serve student links first; the operator can
+    # press "Save all documents to DB" again when ready. This prevents any restart/crash loop.
+    try:
+        set_setting("cache_docs_active", "0")
+    except Exception:
+        pass
     # Auto-send WhatsApp documents to confirmed students that still haven't received
     # them — every 10 minutes, in small batches, so nothing stays "Not sent".
     try:
@@ -5806,7 +5813,7 @@ async def set_source_override(value: str = "", user=Depends(verify_token)):
     return {"ok": True, "value": value}
 
 @app.get("/api/debug-login")
-async def debug_login_endpoint(ref: str, dob: str, action: str = "", user=Depends(verify_token)):
+def debug_login_endpoint(ref: str, dob: str, action: str = "", user=Depends(verify_token)):
     """Phase 2 debug: login with a confirmed student & discover download links."""
     try:
         from nios_login import debug_login
@@ -5994,7 +6001,7 @@ async def whatsapp_delivery_webhook(token: str, request):
     return {"ok": True, "matched": matched, "state": state}
 
 @app.get("/api/download-doc")
-async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)):
+def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)):
     """Login as the student and return their document (PDF or print-ready HTML)."""
     from fastapi import Response
     from nios_login import fetch_document
@@ -6076,7 +6083,7 @@ async def download_doc(ref: str, dob: str, kind: str, user=Depends(verify_token)
     return Response(content=content, media_type=ctype, headers={"Content-Disposition": disp})
 
 @app.get("/api/diagnose-login")
-async def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=Depends(verify_token)):
+def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=Depends(verify_token)):
     """Live NIOS-login diagnostic — run this when logins are failing to see the REAL cause
     (site-key change, captcha token, or NIOS rejection). Use a known-good student's ref + DOB."""
     from nios_login import diagnose_login
@@ -6086,7 +6093,7 @@ async def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=De
         return {"error": str(e)[:200]}
 
 @app.get("/api/nios-reach")
-async def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):
+def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):
     """Diagnose NIOS reachability from the SERVER. Checks (1) can the server load the real NIOS
     login page, and (2) if ref+dob given, whether a full login (captcha solve + POST) actually
     succeeds — pinpointing captcha-token vs score/bounce failures."""
@@ -7041,9 +7048,9 @@ CACHE_PROGRESS = {"running": False, "phase": "", "total": 0, "done": 0, "saved":
                   "confirmed": 0, "last_error": "", "started_at": "", "finished_at": "", "label": ""}
 _CACHE_LOCK = _threading.Lock()
 try:
-    _CACHE_WORKERS = max(1, min(10, int(os.environ.get("CACHE_WORKERS", "5"))))
+    _CACHE_WORKERS = max(1, min(10, int(os.environ.get("CACHE_WORKERS", "3"))))
 except Exception:
-    _CACHE_WORKERS = 5
+    _CACHE_WORKERS = 3
 _DB_WRITE_LOCK = _threading.Lock()
 
 def _cache_all_confirmed_worker(force=False):
@@ -7127,12 +7134,16 @@ def _cache_all_confirmed_worker(force=False):
             pass
 
 def _cache_watchdog():
-    """Restarts the bulk cache job if it's meant to be running but isn't (e.g. after a Railway
-    restart), and keeps retrying the failed ones. Lets 'Save all' finish without babysitting."""
+    """Retries the bulk cache job while it's active (set by pressing 'Save all'), and keeps
+    retrying failed ones. Respects the CACHE_OFF kill switch. Waits after boot so the app is
+    fully up and serving links before any caching starts."""
     import time as _t
+    _t.sleep(120)   # let the app boot + serve first
     while True:
         try:
             _t.sleep(90)
+            if os.environ.get("CACHE_OFF", "") == "1":
+                continue   # kill switch: no caching at all
             if get_setting("cache_docs_active", "0") == "1" and not CACHE_PROGRESS["running"]:
                 _cache_all_confirmed_worker(force=False)
         except Exception:
@@ -7149,6 +7160,8 @@ async def cache_docs(body: dict = None, user=Depends(verify_token)):
     Pass {"force": true} to RE-FETCH everything (refresh), else only missing ones are fetched.
     Sets an auto-resume flag so the job continues (even across app restarts) until all are saved."""
     force = bool((body or {}).get("force"))
+    if os.environ.get("CACHE_OFF", "") == "1":
+        return {"ok": False, "message": "Document saving is turned off (CACHE_OFF). Remove that setting to enable it."}
     try:
         set_setting("cache_docs_active", "1")   # keep resuming until everything is saved
     except Exception:
@@ -7300,7 +7313,7 @@ async def wa_progress(user=Depends(verify_token)):
     return p
 
 @app.get("/api/debug-doc")
-async def debug_doc(ref: str, dob: str, kind: str = "app_form", user=Depends(verify_token)):
+def debug_doc(ref: str, dob: str, kind: str = "app_form", user=Depends(verify_token)):
     """Inspect how a document page embeds & sizes its images (photo/signature/QR),
     so we can match NIOS exactly. Returns image pixel sizes, EXIF orientation & CSS."""
     try:
@@ -7310,7 +7323,7 @@ async def debug_doc(ref: str, dob: str, kind: str = "app_form", user=Depends(ver
         return {"error": str(e)}
 
 @app.get("/api/debug-idcard")
-async def debug_idcard(ref: str, dob: str, user=Depends(verify_token)):
+def debug_idcard(ref: str, dob: str, user=Depends(verify_token)):
     """Show the ID card's visible text + best-effort Regional Centre address
     (used to finalise the Stream 2 address parser)."""
     try:
@@ -7419,7 +7432,7 @@ async def public_doc_page(token: str):
     return HTMLResponse(html)
 
 @app.get("/d/{token}/{kind}")
-async def public_doc_file(token: str, kind: str):
+def public_doc_file(token: str, kind: str):
     from fastapi import Response
     from links import verify_doc_token
     from nios_login import fetch_document
@@ -7441,7 +7454,12 @@ async def public_doc_file(token: str, kind: str):
     if cached is not None:
         content, ctype, filename = cached
     else:
-        content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
+        if not _LIVE_FETCH_SEM.acquire(timeout=90):
+            raise HTTPException(status_code=503, detail="server is busy right now — please try again in a minute")
+        try:
+            content, ctype, filename = fetch_document(row["reference_no"], row["dob"], kind)
+        finally:
+            _LIVE_FETCH_SEM.release()
         if content is None:
             raise HTTPException(status_code=404, detail=ctype)
         save_doc_cache(row_key, kind, content, ctype, filename)
@@ -7647,6 +7665,11 @@ def _bg_cache_student(row_key):
     finally:
         _CACHE_SEM.release()
 
+import threading as _threading
+# Max simultaneous LIVE NIOS fetches from student links. Cache hits are unlimited.
+# Prevents a click-stampede from exhausting the threadpool / CapSolver credits.
+_LIVE_FETCH_SEM = _threading.BoundedSemaphore(4)
+
 def _fetch_doc_for(row_key, kind):
     """Return ((content, ctype, filename), None) or (None, error_message).
     Never raises — a NIOS/network hiccup becomes a clean error so the student
@@ -7674,7 +7697,13 @@ def _fetch_doc_for(row_key, kind):
         if cached is not None:
             return cached, None
         # 2) Not saved yet -> fetch live from NIOS, then save for next time.
-        content, ctype, filename = fetch_document(ref, row["dob"], kind, enrollment_no=enroll)
+        #    Bounded: at most 4 live NIOS fetches at once; others get a clean retry message.
+        if not _LIVE_FETCH_SEM.acquire(timeout=90):
+            return None, "server is busy right now — please try again in a minute"
+        try:
+            content, ctype, filename = fetch_document(ref, row["dob"], kind, enrollment_no=enroll)
+        finally:
+            _LIVE_FETCH_SEM.release()
         if content is None:
             return None, (ctype or "could not load document")
         save_doc_cache(row_key, kind, content, ctype, filename)
@@ -7708,7 +7737,7 @@ async def public_single_doc(token: str):
     return HTMLResponse(_loader_html(kind, f"/doc/{token}/prepare", f"/doc/{token}/view"))
 
 @app.get("/doc/{token}/prepare")
-async def public_doc_prepare(token: str):
+def public_doc_prepare(token: str):
     from links import verify_doc_link
     row_key, kind = verify_doc_link(token)
     if not row_key:
@@ -7720,7 +7749,7 @@ async def public_doc_prepare(token: str):
     return {"ok": True}
 
 @app.get("/doc/{token}/view")
-async def public_doc_view(token: str):
+def public_doc_view(token: str):
     cached = _cache_get("doc:" + token)
     if not cached:
         from links import verify_doc_link
@@ -7743,7 +7772,7 @@ async def short_doc(code: str):
     return HTMLResponse(_loader_html(kind, f"/s/{code}/prepare", f"/s/{code}/view"))
 
 @app.get("/s/{code}/prepare")
-async def short_doc_prepare(code: str):
+def short_doc_prepare(code: str):
     from shortlinks import resolve_short
     row_key, kind = resolve_short(code)
     if not row_key:
@@ -7755,7 +7784,7 @@ async def short_doc_prepare(code: str):
     return {"ok": True}
 
 @app.get("/s/{code}/view")
-async def short_doc_view(code: str):
+def short_doc_view(code: str):
     cached = _cache_get("s:" + code)
     if not cached:
         from shortlinks import resolve_short
