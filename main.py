@@ -4067,7 +4067,7 @@ def _dist_with_confirmed(dist_rows, confirmed_cnt):
     return out
 
 @app.get("/api/dashboard")
-async def dashboard(user=Depends(verify_token)):
+def dashboard(user=Depends(verify_token)):
     conn = get_db()
     ND = "COALESCE(deleted,0)=0"          # not-deleted guard for every count
     total = conn.execute(f"SELECT COUNT(*) FROM student_status WHERE {ND}").fetchone()[0]
@@ -4326,7 +4326,7 @@ def _build_student_where(view, search, status_filter, session_filter,
     return (("WHERE " + " AND ".join(wc)) if wc else ""), params
 
 @app.get("/api/students")
-async def get_students(page: int=1, per_page: int=50, search: str="",
+def get_students(page: int=1, per_page: int=50, search: str="",
                        status_filter: str="", session_filter: str="",
                        class_filter: str="", date_from: str="", date_to: str="",
                        source_filter: str="", view: str="normal", wa_status: str="",
@@ -4360,7 +4360,7 @@ async def get_students(page: int=1, per_page: int=50, search: str="",
             "sessions": norm_sessions}
 
 @app.get("/api/failed-students")
-async def failed_students(page: int = 1, per_page: int = 50, search: str = "",
+def failed_students(page: int = 1, per_page: int = 50, search: str = "",
                           source: str = "", user=Depends(verify_token)):
     """Students whose NIOS login failed (wrong data) — the 'Failed to Run' list."""
     conn = get_db()
@@ -4387,7 +4387,7 @@ async def failed_students(page: int = 1, per_page: int = 50, search: str = "",
             "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page)}
 
 @app.get("/api/unknown-students")
-async def unknown_students(page: int = 1, per_page: int = 50, search: str = "",
+def unknown_students(page: int = 1, per_page: int = 50, search: str = "",
                            session_filter: str = "", user=Depends(verify_token)):
     """Students stuck at the 'Unknown' NIOS status — their own tab so they're easy to
     find, filter (by session) and re-run. Also returns the session list for the dropdown."""
@@ -4455,7 +4455,7 @@ async def sync_toc(user=Depends(verify_token)):
     return {"ok": True, "message": msg, "updated": updated, "no_count": no_count}
 
 @app.post("/api/run-now-notoc")
-async def run_now_notoc(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+def run_now_notoc(background_tasks: BackgroundTasks, user=Depends(verify_token)):
     """Run ONLY the no-TOC students (tocStatus='no') that are not yet confirmed. Confirmed ones
     already have a final status, so only the pending/active no-TOC students are checked here."""
     conn = get_db()
@@ -4470,7 +4470,7 @@ async def run_now_notoc(background_tasks: BackgroundTasks, user=Depends(verify_t
     return {"message": f"Running {len(keys)} no-TOC student(s)…", "count": len(keys)}
 
 @app.post("/api/run-now-unknown")
-async def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token)):
     """Re-run ONLY the Unknown-status students (status auto-retries on each)."""
     conn = get_db()
     n = conn.execute("SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
@@ -4482,7 +4482,7 @@ async def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
 
 @app.post("/api/mark-name-verified")
-async def mark_name_verified(row_key: str = Form(...), user=Depends(verify_token)):
+def mark_name_verified(row_key: str = Form(...), user=Depends(verify_token)):
     """Counsellor confirms (after checking the portal) that the Reference No genuinely
     belongs to this student — the wrong-reference warning was a false alarm. Dismiss the
     error, remember it (name_verified=1) so the warning never re-appears, and drop the
@@ -4501,7 +4501,7 @@ async def mark_name_verified(row_key: str = Form(...), user=Depends(verify_token
     return {"ok": True, "confirmed": bool(is_conf)}
 
 @app.get("/api/nav-count")
-async def nav_count(user=Depends(verify_token)):
+def nav_count(user=Depends(verify_token)):
     """Live counts for the sidebar badges (active / confirmed / required / syc / failed)."""
     conn = get_db()
     ND = "COALESCE(deleted,0)=0"
@@ -4520,7 +4520,7 @@ async def nav_count(user=Depends(verify_token)):
             "syc": syc, "failed": failed, "unknown": unknown}
 
 @app.get("/api/failed-count")
-async def failed_count(user=Depends(verify_token)):
+def failed_count(user=Depends(verify_token)):
     conn = get_db()
     n = conn.execute("SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
                      "AND (COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)").fetchone()[0]
@@ -4528,7 +4528,7 @@ async def failed_count(user=Depends(verify_token)):
     return {"count": n}
 
 @app.get("/api/export-students")
-async def export_students(view: str="normal", search: str="", status_filter: str="",
+def export_students(view: str="normal", search: str="", status_filter: str="",
                          session_filter: str="", class_filter: str="",
                          date_from: str="", date_to: str="", source_filter: str="",
                          user=Depends(verify_token)):
@@ -4569,7 +4569,7 @@ async def export_students(view: str="normal", search: str="", status_filter: str
         headers={"Content-Disposition": f"attachment; filename={fname}"})
 
 @app.get("/api/history")
-async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_dt: str = "",
+def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_dt: str = "",
                      status: str = "", source: str = "", search: str = "", user=Depends(verify_token)):
     conn = get_db()
     # Prefer the source STORED on the history row (set at write time). Fall back to a
@@ -4616,7 +4616,7 @@ async def get_history(page: int = 1, per_page: int = 10, from_dt: str = "", to_d
             "page": page, "pages": pages, "per_page": per_page}
 
 @app.post("/api/history-delete")
-async def history_delete(id: int, user=Depends(verify_token)):
+def history_delete(id: int, user=Depends(verify_token)):
     """Delete ONE status-change history entry by id."""
     conn = get_db()
     conn.execute("DELETE FROM status_history WHERE id=?", (id,))
@@ -4624,7 +4624,7 @@ async def history_delete(id: int, user=Depends(verify_token)):
     return {"ok": True}
 
 @app.post("/api/history-clear")
-async def history_clear(user=Depends(verify_token)):
+def history_clear(user=Depends(verify_token)):
     """Clear ALL status-change history (does not affect students)."""
     conn = get_db()
     n = conn.execute("SELECT COUNT(*) FROM status_history").fetchone()[0]
@@ -4633,7 +4633,7 @@ async def history_clear(user=Depends(verify_token)):
     return {"ok": True, "deleted": n}
 
 @app.get("/api/export-history")
-async def export_history(from_dt: str = "", to_dt: str = "", status: str = "",
+def export_history(from_dt: str = "", to_dt: str = "", status: str = "",
                          source: str = "", user=Depends(verify_token)):
     """Export the filtered Change History to .xlsx."""
     import io, openpyxl
@@ -4682,14 +4682,14 @@ async def export_history(from_dt: str = "", to_dt: str = "", status: str = "",
         headers={"Content-Disposition": "attachment; filename=nios_change_history.xlsx"})
 
 @app.get("/api/run-logs")
-async def get_run_logs(limit: int=50, user=Depends(verify_token)):
+def get_run_logs(limit: int=50, user=Depends(verify_token)):
     conn = get_db()
     l = conn.execute("SELECT * FROM run_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
     return [dict(x) for x in l]
 
 @app.get("/api/transfers")
-async def get_transfers(page: int = 1, per_page: int = 10, search: str = "",
+def get_transfers(page: int = 1, per_page: int = 10, search: str = "",
                         mode: str = "", user=Depends(verify_token)):
     """Tracker -> Portal transfer log, with master search + pagination (10..100/page)."""
     conn = get_db()
@@ -4711,7 +4711,7 @@ async def get_transfers(page: int = 1, per_page: int = 10, search: str = "",
             "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page)}
 
 @app.post("/api/transfers-clear")
-async def transfers_clear(mode: str = "", user=Depends(verify_token)):
+def transfers_clear(mode: str = "", user=Depends(verify_token)):
     """Reset the Tracker -> Portal transfer log. This ONLY clears the history list — students
     already pushed to the Portal stay transferred (their cross_dup flag is untouched). Pass
     mode=auto|manual to clear just that kind, else the whole log is cleared."""
@@ -4724,7 +4724,7 @@ async def transfers_clear(mode: str = "", user=Depends(verify_token)):
     return {"deleted": int(n or 0)}
 
 @app.post("/api/transfer-sync")
-async def transfer_sync(user=Depends(verify_token)):
+def transfer_sync(user=Depends(verify_token)):
     """Manually push the current NIOS status + document links of every matched (Both /
     cross-source) student to MVS Portal, and log each as a 'manual' transfer."""
     import mvs_sync
@@ -4930,7 +4930,7 @@ async def transfer_match_progress(user=Depends(verify_token)):
 
 
 @app.get("/api/transfers-download")
-async def transfers_download(search: str = "", mode: str = "", user=Depends(verify_token)):
+def transfers_download(search: str = "", mode: str = "", user=Depends(verify_token)):
     """Download the Transfer Data (Tracker -> Portal) log as an .xlsx sheet."""
     import io, openpyxl
     from openpyxl.styles import Font, PatternFill
@@ -4978,7 +4978,7 @@ async def transfer_match_last(user=Depends(verify_token)):
         return {"ok": False}
 
 @app.get("/api/portal-stale")
-async def portal_stale(user=Depends(verify_token)):
+def portal_stale(user=Depends(verify_token)):
     """Preview OLD / removed MVS Portal students: students we still track as source=mvs_portal
     whose record is NO LONGER present on the live portal (e.g. an old batch you removed).
     Returns the list only — nothing is deleted here. Guarded so a failed/empty fetch never
@@ -5012,7 +5012,7 @@ async def portal_stale(user=Depends(verify_token)):
     return {"ok": True, "fetched": len(live_keys), "stale": stale, "count": len(stale)}
 
 @app.post("/api/portal-to-tracker")
-async def portal_to_tracker(body: dict, user=Depends(verify_token)):
+def portal_to_tracker(body: dict, user=Depends(verify_token)):
     """Move selected students from MVS Portal -> MVS Tracker (keeps the record, just changes
     its data source). Used to preserve old portal records instead of deleting them: they stay
     tracked as Tracker data and are no longer tied to the live portal."""
@@ -5045,7 +5045,7 @@ async def run_now_tracker(background_tasks: BackgroundTasks, group: str = "all",
     return {"message": f"Run triggered for MVS Tracker — {label} students!"}
 
 @app.post("/api/run-required")
-async def run_now_required(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+def run_now_required(background_tasks: BackgroundTasks, user=Depends(verify_token)):
     """Manual run: ONLY the students whose status is 'Document Required'. Lets a
     counsellor re-check just those after resolving their documents — so a fixed
     student moves out of the Required list without re-running everyone."""
@@ -5087,7 +5087,7 @@ async def run_now_upload(background_tasks: BackgroundTasks, user=Depends(verify_
     return {"message": "Checking only the uploaded students!"}
 
 @app.post("/api/run-now-failed")
-async def run_now_failed(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+def run_now_failed(background_tasks: BackgroundTasks, user=Depends(verify_token)):
     """Re-run EVERY 'Failed to Run' student with auto-fix: the status read auto-retries
     (transient Fetch Errors heal themselves) and a confirmed student's DOB is auto-flipped
     (date<->month) if that swap makes the NIOS login work. One-click backlog cleanup —
@@ -5102,7 +5102,7 @@ async def run_now_failed(background_tasks: BackgroundTasks, user=Depends(verify_
     return {"message": f"Re-checking {n} failed student(s) with auto-fix…", "count": n}
 
 @app.post("/api/run-selected")
-async def run_selected(body: dict, background_tasks: BackgroundTasks, user=Depends(verify_token)):
+def run_selected(body: dict, background_tasks: BackgroundTasks, user=Depends(verify_token)):
     """Run ONLY hand-picked students (1..20) — saves CapSolver credits when a counsellor
     needs just one or a few statuses right now instead of running everyone."""
     keys = body.get("row_keys") or []
@@ -5128,7 +5128,7 @@ async def run_selected(body: dict, background_tasks: BackgroundTasks, user=Depen
     return {"message": f"Checking {len(valid)} selected student(s)…", "count": len(valid)}
 
 @app.post("/api/cancel-run")
-async def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
+def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
     conn = get_db()
     row = conn.execute("SELECT status FROM run_logs WHERE id=?", (run_id,)).fetchone()
     if not row:
@@ -5143,7 +5143,7 @@ async def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
     return {"message": "Run cancelled", "status": "cancelled"}
 
 @app.get("/api/progress")
-async def run_progress(user=Depends(verify_token)):
+def run_progress(user=Depends(verify_token)):
     """Live progress of the currently running check (for the progress bar)."""
     conn = get_db()
     row = conn.execute("SELECT id, group_type, run_at, progress_current, progress_total, "
@@ -5245,7 +5245,7 @@ async def save_report_settings(body: dict, user=Depends(verify_token)):
     return {"enabled": enabled == "1", "numbers": ",".join(cleaned), "count": len(cleaned)}
 
 @app.post("/api/report-test")
-async def report_test(user=Depends(verify_token)):
+def report_test(user=Depends(verify_token)):
     """Send a sample report right now to the configured numbers, to verify setup."""
     import whatsapp, links
     raw = (get_setting("report_numbers", "") or "").replace("\n", ",")
@@ -5269,7 +5269,7 @@ async def report_test(user=Depends(verify_token)):
     return {"sent": sent, "total": len(nums), "errors": errs}
 
 @app.get("/api/recent-runs")
-async def recent_runs(user=Depends(verify_token)):
+def recent_runs(user=Depends(verify_token)):
     """Recent completed runs that have a saved report, for the manual 'send report' picker."""
     import json as _json
     conn = get_db()
@@ -5294,7 +5294,7 @@ async def recent_runs(user=Depends(verify_token)):
     return out
 
 @app.post("/api/send-run-report")
-async def send_run_report(body: dict, user=Depends(verify_token)):
+def send_run_report(body: dict, user=Depends(verify_token)):
     """Send a SPECIFIC past run's report (chosen from the picker) to all management numbers."""
     import whatsapp, links, json as _json
     run_id = body.get("run_id")
@@ -5327,7 +5327,7 @@ async def send_run_report(body: dict, user=Depends(verify_token)):
     return {"sent": sent, "total": len(nums), "errors": errs}
 
 @app.post("/api/send-latest-report")
-async def send_latest_report(user=Depends(verify_token)):
+def send_latest_report(user=Depends(verify_token)):
     """Push the latest run report to ALL configured management numbers right now —
     a manual safety net for when the auto-report did not reach everyone."""
     import whatsapp, links
@@ -5773,7 +5773,7 @@ async def set_intervals(body: dict, user=Depends(verify_token)):
             "ondemand_min": od, "stream2_min": st, "public_min": pub}
 
 @app.get("/api/source-counts")
-async def source_counts(user=Depends(verify_token)):
+def source_counts(user=Depends(verify_token)):
     """How many active students are tagged MVS Portal vs MVS Tracker (for the move tool)."""
     conn = get_db()
     rows = conn.execute("SELECT COALESCE(NULLIF(source,''),'mvs_tracker') AS src, COUNT(*) AS n "
@@ -5786,7 +5786,7 @@ async def source_counts(user=Depends(verify_token)):
     return out
 
 @app.post("/api/change-source-bulk")
-async def change_source_bulk(body: dict, user=Depends(verify_token)):
+def change_source_bulk(body: dict, user=Depends(verify_token)):
     """Move EVERY active student from one data type to another (e.g. a sheet that was
     auto-detected as MVS Portal by mistake but should be MVS Tracker). No student is
     deleted — only the 'source' tag changes, so nothing is lost."""
@@ -5804,7 +5804,7 @@ async def change_source_bulk(body: dict, user=Depends(verify_token)):
     return {"ok": True, "moved": n, "from": frm, "to": to}
 
 @app.post("/api/change-source-selected")
-async def change_source_selected(body: dict, user=Depends(verify_token)):
+def change_source_selected(body: dict, user=Depends(verify_token)):
     """Move ONLY the selected students to a data type (precise control from the list)."""
     keys = [k for k in (body.get("row_keys", []) or []) if k][:5000]
     to = body.get("to_source", "")
@@ -6302,7 +6302,7 @@ def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):
     return out
 
 @app.get("/api/syc")
-async def get_syc(page: int = 1, per_page: int = 20, search: str = "", user=Depends(verify_token)):
+def get_syc(page: int = 1, per_page: int = 20, search: str = "", user=Depends(verify_token)):
     """List SYC students (session contains SYC). No status check is done for these."""
     conn = get_db()
     where = ("WHERE COALESCE(deleted,0)=0 AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0 "
@@ -6329,7 +6329,7 @@ async def syc_doc(row_key: str, kind: str = "hall_ticket", user=Depends(verify_t
     return _serve_doc(*res)
 
 @app.post("/api/syc-delete")
-async def syc_delete(row_key: str, user=Depends(verify_token)):
+def syc_delete(row_key: str, user=Depends(verify_token)):
     """Delete a SINGLE SYC student only. Guarded so it can never touch a
     non-SYC (On Demand / Stream 2 / Public) student."""
     conn = get_db()
@@ -6350,7 +6350,7 @@ async def syc_delete(row_key: str, user=Depends(verify_token)):
     return {"ok": True, "soft": True}
 
 @app.post("/api/student-delete")
-async def student_delete(row_key: str, user=Depends(verify_token)):
+def student_delete(row_key: str, user=Depends(verify_token)):
     """SOFT-delete a student: hide it from the portal but keep it in Trash so it can
     be restored from Settings if removed by mistake. Soft-deleted students are also
     skipped by status runs."""
@@ -6368,7 +6368,7 @@ async def student_delete(row_key: str, user=Depends(verify_token)):
     return {"ok": True, "name": name, "soft": True}
 
 @app.post("/api/students-delete-bulk")
-async def students_delete_bulk(body: dict, user=Depends(verify_token)):
+def students_delete_bulk(body: dict, user=Depends(verify_token)):
     """SOFT-delete MANY students at once (move to Trash). Restorable from Settings."""
     keys = [k for k in (body.get("row_keys", []) or []) if k][:1000]
     if not keys:
@@ -6384,7 +6384,7 @@ async def students_delete_bulk(body: dict, user=Depends(verify_token)):
     return {"ok": True, "deleted": n}
 
 @app.get("/api/deleted-students")
-async def deleted_students(user=Depends(verify_token)):
+def deleted_students(user=Depends(verify_token)):
     """List soft-deleted students (the Trash) for the Settings restore panel."""
     conn = get_db()
     rows = conn.execute(
@@ -6395,7 +6395,7 @@ async def deleted_students(user=Depends(verify_token)):
     return [dict(r) for r in rows]
 
 @app.post("/api/student-restore")
-async def student_restore(row_key: str, user=Depends(verify_token)):
+def student_restore(row_key: str, user=Depends(verify_token)):
     """Restore a soft-deleted student back to the portal."""
     conn = get_db()
     conn.execute("UPDATE student_status SET deleted=0, deleted_at=NULL WHERE row_key=?", (row_key,))
@@ -6404,7 +6404,7 @@ async def student_restore(row_key: str, user=Depends(verify_token)):
     return {"ok": True}
 
 @app.post("/api/student-purge")
-async def student_purge(row_key: str, user=Depends(verify_token)):
+def student_purge(row_key: str, user=Depends(verify_token)):
     """Permanently delete a student from Trash (cannot be undone)."""
     conn = get_db()
     conn.execute("DELETE FROM student_status WHERE row_key=?", (row_key,))
@@ -6418,7 +6418,7 @@ async def student_purge(row_key: str, user=Depends(verify_token)):
     return {"ok": True}
 
 @app.post("/api/students-restore-bulk")
-async def students_restore_bulk(body: dict, user=Depends(verify_token)):
+def students_restore_bulk(body: dict, user=Depends(verify_token)):
     """Restore MANY soft-deleted students from Trash at once."""
     keys = [k for k in (body.get("row_keys", []) or []) if k][:2000]
     if not keys:
@@ -6432,7 +6432,7 @@ async def students_restore_bulk(body: dict, user=Depends(verify_token)):
     return {"ok": True, "restored": n}
 
 @app.post("/api/students-purge-bulk")
-async def students_purge_bulk(body: dict, user=Depends(verify_token)):
+def students_purge_bulk(body: dict, user=Depends(verify_token)):
     """Permanently delete MANY students from Trash at once (cannot be undone)."""
     keys = [k for k in (body.get("row_keys", []) or []) if k][:2000]
     if not keys:
@@ -6454,7 +6454,7 @@ async def students_purge_bulk(body: dict, user=Depends(verify_token)):
     return {"ok": True, "purged": n}
 
 @app.get("/api/student-get")
-async def student_get(row_key: str, user=Depends(verify_token)):
+def student_get(row_key: str, user=Depends(verify_token)):
     """Fetch ONE student's editable details (for the Edit modal)."""
     conn = get_db()
     r = conn.execute("SELECT row_key, student_name, mobile, alt_mobile, email, dob, reference_no, "
@@ -6468,7 +6468,7 @@ async def student_get(row_key: str, user=Depends(verify_token)):
     return dict(r)
 
 @app.post("/api/student-edit")
-async def student_edit(body: dict, user=Depends(verify_token)):
+def student_edit(body: dict, user=Depends(verify_token)):
     """Edit a student's uploaded details (DOB, Reference/Enrollment No, email, mobile,
     name, session) WITHOUT re-uploading the sheet. Resets the login-failed flag and the
     WhatsApp-sent flag so a re-run can verify the fix and send fresh."""
@@ -6498,7 +6498,7 @@ async def student_edit(body: dict, user=Depends(verify_token)):
     return {"ok": True}
 
 @app.post("/api/student-recheck")
-async def student_recheck(row_key: str, background_tasks: BackgroundTasks, user=Depends(verify_token)):
+def student_recheck(row_key: str, background_tasks: BackgroundTasks, user=Depends(verify_token)):
     """Re-run ONE student (after an edit). Runs in the background; the UI polls the
     student row to see the new status / login result."""
     from job_runner import recheck_one
@@ -6511,7 +6511,7 @@ async def student_recheck(row_key: str, background_tasks: BackgroundTasks, user=
     return {"ok": True, "message": "Re-checking this student…"}
 
 @app.post("/api/run-log-delete")
-async def run_log_delete(id: int, user=Depends(verify_token)):
+def run_log_delete(id: int, user=Depends(verify_token)):
     """Delete ONE run-log entry (e.g. a 'Nothing to check' or failed run). A run that is
     still 'running' cannot be deleted — cancel it first."""
     conn = get_db()
@@ -6528,7 +6528,7 @@ async def run_log_delete(id: int, user=Depends(verify_token)):
     return {"ok": True}
 
 @app.post("/api/run-logs-clear")
-async def run_logs_clear(user=Depends(verify_token)):
+def run_logs_clear(user=Depends(verify_token)):
     """Delete all run-log entries that are not currently running."""
     conn = get_db()
     n = conn.execute("SELECT COUNT(*) FROM run_logs WHERE status!='running'").fetchone()[0]
@@ -6740,7 +6740,7 @@ def _docreq_rows(conn, keys=None, pending_only=False):
 
 
 @app.get("/api/doc-requests")
-async def doc_requests(user=Depends(verify_token)):
+def doc_requests(user=Depends(verify_token)):
     """List Document-Required students with the (editable) document-request message that
     will be sent. The counsellor reviews/edits these on the portal before sending."""
     conn = get_db()
@@ -6763,7 +6763,7 @@ async def doc_requests(user=Depends(verify_token)):
 
 
 @app.post("/api/doc-request-save")
-async def doc_request_save(body: dict, user=Depends(verify_token)):
+def doc_request_save(body: dict, user=Depends(verify_token)):
     """Save the counsellor's edited document-request message for one student."""
     rk = body.get("row_key", "")
     msg = (body.get("message", "") or "").strip()
@@ -6959,7 +6959,7 @@ async def doc_request_image(request: Request, row_key: str = Form(...),
     return {"ok": True, "url": url}
 
 @app.post("/api/doc-request-image-remove")
-async def doc_request_image_remove(body: dict, user=Depends(verify_token)):
+def doc_request_image_remove(body: dict, user=Depends(verify_token)):
     rk = body.get("row_key", "")
     if not rk:
         raise HTTPException(status_code=400, detail="row_key required")
@@ -6996,6 +6996,14 @@ def _wa_send_one(row_key, verify=False):
                 conn.commit(); conn.close()
                 return False, lmsg, True
             conn.execute("UPDATE student_status SET login_failed=0, login_remark='' WHERE row_key=?", (row_key,))
+        # Cache-first: make sure this student's documents are saved on OUR server
+        # BEFORE the WhatsApp goes out — the first click then opens instantly from
+        # our copy. Already-cached students pass through in milliseconds; if a live
+        # fetch fails we still send (links fall back to live fetch with a loader).
+        try:
+            cache_student_docs(row_key)
+        except Exception:
+            pass
         ok, info = whatsapp.send_for_student(dict(row))
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if ok:
@@ -7007,13 +7015,7 @@ def _wa_send_one(row_key, verify=False):
                          "whatsapp_attempts=COALESCE(whatsapp_attempts,0)+1 WHERE row_key=?",
                          (str(info)[:180], row_key))
         conn.commit(); conn.close()
-        if ok:
-            # Proactively save this confirmed student's documents to our DB (background, capped),
-            # so their WhatsApp link opens from our copy even if NIOS later has issues.
-            try:
-                _threading.Thread(target=_bg_cache_student, args=(row_key,), daemon=True).start()
-            except Exception:
-                pass
+        # (Documents are now saved BEFORE the send above — no post-send caching needed.)
         return ok, info, False
     except Exception as e:
         try:
@@ -7034,6 +7036,18 @@ def auto_send_pending_whatsapp(batch=None, label="Auto sweep"):
         return {"sent": 0, "checked": 0}
     if WA_PROGRESS["running"]:
         return {"skipped": "already running"}
+    # Never compete with an active run — the run itself sends WhatsApp for new
+    # confirmations (documents cached first). Leftovers are picked up by the next
+    # sweep after the run finishes, so nothing is ever missed.
+    try:
+        _c = get_db()
+        _active = _c.execute("SELECT id FROM run_logs WHERE status='running'").fetchone()
+        _c.close()
+        if _active:
+            logger.info("WhatsApp auto sweep: a run is in progress — skipping this sweep")
+            return {"skipped": "run in progress"}
+    except Exception:
+        pass
     conn = get_db()
     q = ("SELECT row_key FROM student_status WHERE is_confirmed=1 "
          "AND COALESCE(whatsapp_sent,0)=0 AND COALESCE(login_failed,0)=0 "
@@ -7232,7 +7246,7 @@ async def refresh_student_docs(body: dict, user=Depends(verify_token)):
                         else "No documents to refresh for this student")}
 
 @app.get("/api/cache-docs-progress")
-async def cache_docs_progress(user=Depends(verify_token)):
+def cache_docs_progress(user=Depends(verify_token)):
     conn = get_db()
     total_cached = conn.execute("SELECT COUNT(*) FROM document_cache").fetchone()[0]
     students_cached = conn.execute("SELECT COUNT(DISTINCT row_key) FROM document_cache").fetchone()[0]
@@ -7299,7 +7313,7 @@ def _resend_notoc_worker(keys, label="Resend no-TOC corrected docs"):
         WA_PROGRESS["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 @app.post("/api/wa-resend-notoc")
-async def wa_resend_notoc(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+def wa_resend_notoc(background_tasks: BackgroundTasks, user=Depends(verify_token)):
     """One-time correction: re-send the CORRECT documents to every CONFIRMED student whose
     tocStatus is 'no'. They previously received the wrong (TOC-style) documents. The sent flag is
     reset so the message goes again — now via the no-TOC campaign with the right documents — while
@@ -7356,7 +7370,7 @@ def debug_idcard(ref: str, dob: str, user=Depends(verify_token)):
 # Danger zone — wipe all student data for a fresh upload (keeps settings)
 # ─────────────────────────────────────────────────────────────────────────────
 @app.post("/api/reset-data")
-async def reset_data(body: dict, user=Depends(verify_token)):
+def reset_data(body: dict, user=Depends(verify_token)):
     conn = get_db()
     conn.execute("DELETE FROM student_status")
     conn.execute("DELETE FROM status_history")
@@ -7429,7 +7443,7 @@ function openDoc(el,url){ if(el.dataset.b==='1')return; el.dataset.b='1';
 </body></html>"""
 
 @app.get("/d/{token}", response_class=HTMLResponse)
-async def public_doc_page(token: str):
+def public_doc_page(token: str):
     from links import verify_doc_token
     row_key = verify_doc_token(token)
     if not row_key:
