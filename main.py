@@ -617,8 +617,12 @@ function applySidebarPref(){
 
         <div class="stat-grid" id="stat-grid"></div>
         <div class="card">
-          <h3>Session-wise Students</h3>
-          <div id="source-counts"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+            <h3 style="margin:0">Session-wise Students</h3>
+            <button onclick="loadReconciliation()" style="background:var(--soft);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 13px;font-size:12.5px;font-weight:700;cursor:pointer">Reconcile with Portal</button>
+          </div>
+          <div id="reconcile-panel" style="display:none;margin:14px 0 4px;padding:16px;background:var(--soft);border:1px solid var(--border);border-radius:12px"></div>
+          <div id="source-counts" style="margin-top:14px"></div>
           <div id="session-counts"><div class="empty">Loading...</div></div>
         </div>
         <div class="card">
@@ -1968,25 +1972,36 @@ function renderSourceCounts(arr,tcount){
   const cell=(label,val,color)=>'<div style="text-align:center;flex:1;min-width:0">'+
     '<div style="font-size:17px;font-weight:800;color:'+color+';line-height:1.1">'+(val||0)+'</div>'+
     '<div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">'+label+'</div></div>';
-  var transferCard='<div style="padding:15px 16px;background:var(--soft);border:1px solid var(--border);border-radius:13px">'+
-    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
-      '<span style="font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px">'+
-        '<span style="width:9px;height:9px;border-radius:50%;background:#16A34A;display:inline-block;flex:none"></span>Tracker \u2192 Portal Transfer</span>'+
-      '<span style="font-size:12.5px;color:var(--muted);font-weight:600">Total&nbsp;<b style="color:var(--text);font-size:17px">'+(tcount||0)+'</b></span></div>'+
-    '<div style="display:flex;align-items:center;gap:8px;padding-top:11px;border-top:1px solid var(--border);font-size:11.5px;color:var(--muted)">'+
-      '<span style="flex:1">Already-checked students pushed to the Portal (no CapSolver, no duplicates).</span>'+
-      '<button onclick="nav(&quot;transfers&quot;)" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">View</button>'+
-    '</div></div>';
-  el.innerHTML='<div style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">By Data Source</div>'+
+  var cards=arr.filter(function(s){return s.key!=="combined";});
+  var combined=arr.filter(function(s){return s.key==="combined";})[0];
+  var combinedCard = combined ? (
+    '<div id="src-combined" style="display:none;padding:15px 16px;background:#EEF2FF;border:1px solid #C7D2FE;border-radius:13px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
+        '<span style="font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px">'+
+          '<span style="width:9px;height:9px;border-radius:50%;background:#4F46E5;display:inline-block;flex:none"></span>Both together (all portal data)</span>'+
+        '<span style="font-size:12.5px;color:var(--muted);font-weight:600">Total&nbsp;<b style="color:var(--text);font-size:17px">'+combined.cnt+'</b></span></div>'+
+      '<div style="display:flex;gap:4px;padding-top:11px;border-top:1px solid #C7D2FE">'+
+        cell("Confirmed",combined.confirmed,"#16A34A")+cell("Verified",combined.verified,"#2563EB")+
+        cell("Active",combined.active,"#7C3AED")+cell("Required",combined.required,"#EA580C")+
+      '</div></div>') : '';
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
+      '<span style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase">By Data Source</span>'+
+      (combined?'<button onclick="toggleCombined(this)" style="background:var(--soft);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">Show combined total</button>':'')+
+    '</div>'+
     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-bottom:18px">'+
-    arr.map(s=>{
-      var dot=(s.key==="mvs_portal")?"#7C3AED":"#0EA5E9";
-      var pnrow=(s.key==="mvs_portal")?
+    cards.map(function(s){
+      var isEnrol=(s.key==="enrol_portal");
+      var dot=isEnrol?"#7C3AED":"#0EA5E9";
+      var pnrow=isEnrol?
         ('<div style="display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--muted)">'+
           '<svg viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>'+
           '<span style="flex:1">New-data run in <b id="pn-timer" style="color:var(--text)">…</b></span>'+
           '<button id="pn-btn" onclick="togglePn(this)" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">Pause</button>'+
-        '</div>'):'';
+        '</div>'):
+        ('<div style="display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--muted)">'+
+          '<span style="flex:1">Excel-sheet uploads + students checked here and pushed to the Portal.</span>'+
+          '<button onclick="nav(&quot;transfers&quot;)" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">View</button>'+
+        '</div>');
       return '<div style="padding:15px 16px;background:var(--soft);border:1px solid var(--border);border-radius:13px">'+
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
           '<span style="font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px">'+
@@ -1998,9 +2013,58 @@ function renderSourceCounts(arr,tcount){
           cell("Active",s.active,"#7C3AED")+
           cell("Required",s.required,"#EA580C")+
         '</div>'+pnrow+'</div>';
-    }).join("")+transferCard+'</div>'+
+    }).join("")+combinedCard+'</div>'+
     '<div style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">By Session</div>';
   updatePnTimer();
+}
+function toggleCombined(btn){
+  var c=document.getElementById("src-combined");
+  if(!c)return;
+  var show=(c.style.display==="none");
+  c.style.display=show?"block":"none";
+  btn.textContent=show?"Hide combined total":"Show combined total";
+}
+async function loadReconciliation(){
+  var p=document.getElementById("reconcile-panel");
+  if(!p)return;
+  p.style.display="block";
+  p.innerHTML='<div style="color:var(--muted);font-size:13px">Loading breakdown…</div>';
+  try{
+    const d=await api("/api/reconciliation");
+    var row=function(lbl,val,note){
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">'+
+        '<span style="color:var(--muted);font-size:12.5px">'+lbl+(note?(' <span style="color:#94a3b8">'+note+'</span>'):'')+'</span>'+
+        '<b style="font-size:13px">'+val+'</b></div>';
+    };
+    var head=function(t){return '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin:14px 0 4px">'+t+'</div>';};
+    var c=d.confirmed||{}, s=d.statuses||{}, bs=d.by_source||{}, at=d.attention||{};
+    p.innerHTML=
+      '<div style="font-size:14px;font-weight:800;margin-bottom:4px">Tracker numbers — full breakdown</div>'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Compare these against your MVS Portal dashboard. The notes explain the usual reasons a number differs.</div>'+
+      head("Totals")+
+      row("Live total (not deleted)", d.total_live, "= the tracker Total card")+
+      row("Deleted here (still on Portal)", d.deleted, "Portal counts these; tracker does not")+
+      row("No reference/enrollment yet", d.no_reference, "pending — Portal has them, tracker can't check")+
+      head("By data source")+
+      row("Enrol. MVS Portal", bs.enrol_portal)+
+      row("Sheet + Transfer", bs.sheet_transfer)+
+      row("Transferred (tracker → Portal)", bs.transferred)+
+      head("Confirmed — counted 3 ways")+
+      row("By is-confirmed flag", c.by_flag, "the dashboard number")+
+      row("By flag, excluding failed-to-run", c.by_flag_excluding_failed)+
+      row("By NIOS status 'Admission Confirmed'", c.by_nios_status)+
+      row("Confirmed here, maybe not pushed to Portal", at.confirmed_maybe_not_pushed, "explains tracker > Portal confirmed")+
+      head("Other statuses")+
+      row("Verified", s.verified, "Portal 'Verified' may be defined differently")+
+      row("Documents Verification In Progress", s.documents_verification)+
+      row("Document Required", s.document_required)+
+      row("Unknown / Fetch Error", s.unknown_or_error)+
+      head("Needs attention")+
+      row("Failed to run", at.failed_to_run)+
+      row("Wrong data (NIOS rejected ref/DOB)", at.data_error)+
+      '<div style="margin-top:12px;font-size:12px;color:#92400E;background:#FEF3C7;border:1px solid #FDE68A;border-radius:9px;padding:10px 12px">'+
+      'Why totals differ: the Portal counts <b>pending (no-reference)</b> and <b>deleted</b> students that the tracker leaves out, and the tracker may have found <b>confirmations not yet reflected</b> on the Portal. "Verified/Verifying" are also defined differently in each system.</div>';
+  }catch(e){p.innerHTML='<div style="color:#B91C1C;font-size:13px">Could not load: '+e.message+'</div>';}
 }
 function statCard(lbl,val,svg,col){
   return '<div class="stat"><div class="ic" style="background:'+col+'1A;color:'+col+'">'+svg+
@@ -4188,16 +4252,22 @@ def dashboard(user=Depends(verify_token)):
         f"FROM student_status WHERE {ND} AND {NFAIL} AND session != '' GROUP BY session ORDER BY cnt DESC"
     ).fetchall()
 
-    # Same breakdown but grouped by DATA SOURCE (MVS Portal vs MVS Tracker), so the
-    # dashboard shows a card for the live portal data alongside the session cards.
+    # Break students into the buckets the dashboard shows, using the reliable flags we have:
+    #   • "Enrol. MVS Portal" = came straight from the Portal's enrollment (source=mvs_portal,
+    #     not a tracker->portal transfer)  -> source='mvs_portal' AND cross_dup=0
+    #   • "MVS Portal — Sheet + Transfer" = everything else on the portal side: Excel-sheet
+    #     uploads and students the tracker checked & pushed to the Portal
+    #     -> source='mvs_tracker' OR cross_dup=1
+    _bucket = ("CASE WHEN COALESCE(source,'mvs_tracker')='mvs_portal' AND COALESCE(cross_dup,0)=0 "
+               "THEN 'enrol_portal' ELSE 'sheet_transfer' END")
     src_counts = conn.execute(
-        f"SELECT source, COUNT(*) as cnt, "
+        f"SELECT {_bucket} AS bucket, COUNT(*) as cnt, "
         f"SUM(CASE WHEN is_confirmed=1 THEN 1 ELSE 0 END) as confirmed, "
         f"SUM(CASE WHEN COALESCE(is_confirmed,0)=0 AND current_status='Verified' THEN 1 ELSE 0 END) as verified, "
         f"SUM(CASE WHEN current_status='Document Required' THEN 1 ELSE 0 END) as required, "
         f"SUM(CASE WHEN COALESCE(is_confirmed,0)=0 AND COALESCE(current_status,'')!='SYC' "
         f"         AND (session IS NULL OR session NOT LIKE '%syc%') THEN 1 ELSE 0 END) as active "
-        f"FROM student_status WHERE {ND} AND {NFAIL} GROUP BY source"
+        f"FROM student_status WHERE {ND} AND {NFAIL} GROUP BY bucket"
     ).fetchall()
 
     # How many students have been transferred Tracker -> Portal (distinct, no duplicates) —
@@ -4230,17 +4300,30 @@ def dashboard(user=Depends(verify_token)):
     }
 
 def _normalized_source_counts(raw_rows):
-    """Per data-source totals (MVS Portal / MVS Tracker) with the same breakdown as the
-    session cards. MVS Portal is returned first so it leads the dashboard."""
-    label = {"mvs_portal": "MVS Portal", "mvs_tracker": "MVS Tracker"}
+    """Per-bucket totals for the dashboard:
+      • 'Enrol. MVS Portal'  — students that came from the Portal enrollment form.
+      • 'MVS Portal — Sheet + Transfer' — Excel-sheet uploads + tracker->portal transfers.
+    'Enrol. MVS Portal' leads; a combined total of both is added so the operator can see the
+    full portal-side figure at a glance."""
+    label = {"enrol_portal": "Enrol. MVS Portal",
+             "sheet_transfer": "MVS Portal — Sheet + Transfer"}
     out = []
     for r in raw_rows:
-        src = (r["source"] if "source" in r.keys() else "") or "mvs_tracker"
-        out.append({"source": label.get(src, src), "key": src,
+        b = (r["bucket"] if "bucket" in r.keys() else "") or "sheet_transfer"
+        out.append({"source": label.get(b, b), "key": b,
                     "cnt": r["cnt"] or 0, "confirmed": r["confirmed"] or 0,
                     "verified": r["verified"] or 0, "active": r["active"] or 0,
                     "required": r["required"] or 0})
-    out.sort(key=lambda x: 0 if x["key"] == "mvs_portal" else 1)
+    out.sort(key=lambda x: 0 if x["key"] == "enrol_portal" else 1)
+    # Combined total row (shown as a small 'Both together' summary in the UI).
+    if out:
+        combined = {"source": "Both together (all portal data)", "key": "combined",
+                    "cnt": sum(x["cnt"] for x in out),
+                    "confirmed": sum(x["confirmed"] for x in out),
+                    "verified": sum(x["verified"] for x in out),
+                    "active": sum(x["active"] for x in out),
+                    "required": sum(x["required"] for x in out)}
+        out.append(combined)
     return out
 
 def _normalized_session_counts(raw_rows):
@@ -4589,7 +4672,57 @@ def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token
     background_tasks.add_task(run_status_check, "all", None, "unknown")
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
 
-@app.get("/api/check-summary")
+@app.get("/api/reconciliation")
+def reconciliation(user=Depends(verify_token)):
+    """A precise breakdown of the tracker's own numbers so they can be reconciled against the
+    MVS Portal dashboard. Explains WHERE the tracker total comes from and which buckets differ."""
+    conn = get_db()
+    ND = "COALESCE(deleted,0)=0"
+    g = lambda q, *p: conn.execute(q, p).fetchone()[0]
+    total_live   = g(f"SELECT COUNT(*) FROM student_status WHERE {ND}")
+    total_all    = g("SELECT COUNT(*) FROM student_status")
+    deleted      = g("SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=1")
+    no_ref       = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} "
+                     "AND COALESCE(reference_no,'')='' AND COALESCE(enrollment_no,'')=''")
+    # source buckets
+    enrol        = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} "
+                     "AND COALESCE(source,'mvs_tracker')='mvs_portal' AND COALESCE(cross_dup,0)=0")
+    sheet_trans  = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} "
+                     "AND NOT (COALESCE(source,'mvs_tracker')='mvs_portal' AND COALESCE(cross_dup,0)=0)")
+    transferred  = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND COALESCE(cross_dup,0)=1")
+    # status buckets (two ways of counting 'confirmed' so any gap is visible)
+    conf_flag    = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1")
+    conf_status  = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Admission Confirmed'")
+    conf_flag_nf = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1 "
+                     "AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0")
+    verified     = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Verified'")
+    docverif     = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Documents Verification In Progress'")
+    docreq       = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status='Document Required'")
+    unknown      = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND current_status IN ('Unknown','Fetch Error')")
+    failed_run   = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} "
+                     "AND (COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)")
+    data_err     = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND COALESCE(data_error,0)=1")
+    # confirmations detected here but maybe not yet reflected on the Portal
+    not_pushed   = 0
+    try:
+        not_pushed = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1 "
+                       "AND COALESCE(cross_dup,0)=0 AND COALESCE(source,'')!='mvs_portal'")
+    except Exception:
+        pass
+    conn.close()
+    return {
+        "total_live": total_live, "total_including_deleted": total_all, "deleted": deleted,
+        "no_reference": no_ref,
+        "by_source": {"enrol_portal": enrol, "sheet_transfer": sheet_trans, "transferred": transferred},
+        "confirmed": {"by_flag": conf_flag, "by_flag_excluding_failed": conf_flag_nf,
+                      "by_nios_status": conf_status},
+        "statuses": {"verified": verified, "documents_verification": docverif,
+                     "document_required": docreq, "unknown_or_error": unknown},
+        "attention": {"failed_to_run": failed_run, "data_error": data_err,
+                      "confirmed_maybe_not_pushed": not_pushed},
+    }
+
+
 def check_summary(session_filter: str = "", source_filter: str = "", view: str = "normal",
                   user=Depends(verify_token)):
     """For the selected session (or All): how many students were checked in the latest run
