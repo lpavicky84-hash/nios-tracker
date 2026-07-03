@@ -1969,61 +1969,68 @@ function renderSourceCounts(arr,tcount){
   const el=document.getElementById("source-counts");
   if(!el)return;
   if(!arr.length){el.innerHTML="";return;}
+  window._srcData=arr; if(window._srcCombined===undefined)window._srcCombined=false;
+  drawSourceCards();
+}
+function drawSourceCards(){
+  const el=document.getElementById("source-counts");
+  if(!el)return;
+  var arr=window._srcData||[];
   const cell=(label,val,color)=>'<div style="text-align:center;flex:1;min-width:0">'+
     '<div style="font-size:17px;font-weight:800;color:'+color+';line-height:1.1">'+(val||0)+'</div>'+
     '<div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">'+label+'</div></div>';
-  var cards=arr.filter(function(s){return s.key!=="combined";});
-  var combined=arr.filter(function(s){return s.key==="combined";})[0];
-  var combinedCard = combined ? (
-    '<div id="src-combined" style="display:none;padding:15px 16px;background:#EEF2FF;border:1px solid #C7D2FE;border-radius:13px">'+
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
-        '<span style="font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px">'+
-          '<span style="width:9px;height:9px;border-radius:50%;background:#4F46E5;display:inline-block;flex:none"></span>Both together (all portal data)</span>'+
-        '<span style="font-size:12.5px;color:var(--muted);font-weight:600">Total&nbsp;<b style="color:var(--text);font-size:17px">'+combined.cnt+'</b></span></div>'+
-      '<div style="display:flex;gap:4px;padding-top:11px;border-top:1px solid #C7D2FE">'+
-        cell("Confirmed",combined.confirmed,"#16A34A")+cell("Verified",combined.verified,"#2563EB")+
-        cell("Active",combined.active,"#7C3AED")+cell("Required",combined.required,"#EA580C")+
-      '</div></div>') : '';
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'+
-      '<span style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase">By Data Source</span>'+
-      (combined?'<button onclick="toggleCombined(this)" style="background:var(--soft);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">Show combined total</button>':'')+
-    '</div>'+
+  var enrol=arr.filter(function(s){return s.key==="enrol_portal";})[0];
+  var portal=arr.filter(function(s){return s.key==="mvs_portal";})[0];
+  var tracker=arr.filter(function(s){return s.key==="mvs_tracker";})[0];
+  var combined=window._srcCombined;
+  var display=[];
+  if(combined && (enrol||portal)){
+    display.push({source:"MVS Portal (all)",key:"mvs_portal_all",combinable:true,
+      cnt:((enrol&&enrol.cnt)||0)+((portal&&portal.cnt)||0),
+      confirmed:((enrol&&enrol.confirmed)||0)+((portal&&portal.confirmed)||0),
+      verified:((enrol&&enrol.verified)||0)+((portal&&portal.verified)||0),
+      active:((enrol&&enrol.active)||0)+((portal&&portal.active)||0),
+      required:((enrol&&enrol.required)||0)+((portal&&portal.required)||0)});
+  }else{
+    if(enrol)display.push(enrol);
+    if(portal){portal.combinable=true;display.push(portal);}
+  }
+  if(tracker)display.push(tracker);
+  var dotFor=function(k){return k==="enrol_portal"?"#7C3AED":(k==="mvs_tracker"?"#0EA5E9":"#16A34A");};
+  el.innerHTML='<div style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">By Data Source</div>'+
     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-bottom:18px">'+
-    cards.map(function(s){
+    display.map(function(s){
       var isEnrol=(s.key==="enrol_portal");
-      var dot=isEnrol?"#7C3AED":"#0EA5E9";
-      var pnrow=isEnrol?
-        ('<div style="display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--muted)">'+
+      var footer;
+      if(isEnrol){
+        footer='<div style="display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--muted)">'+
           '<svg viewBox="0 0 24 24" fill="none" stroke="#16A34A" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>'+
           '<span style="flex:1">New-data run in <b id="pn-timer" style="color:var(--text)">…</b></span>'+
           '<button id="pn-btn" onclick="togglePn(this)" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">Pause</button>'+
-        '</div>'):
-        ('<div style="display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--muted)">'+
-          '<span style="flex:1">Excel-sheet uploads + students checked here and pushed to the Portal.</span>'+
-          '<button onclick="nav(&quot;transfers&quot;)" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">View</button>'+
-        '</div>');
+        '</div>';
+      }else if(s.combinable){
+        footer='<div style="display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--muted)">'+
+          '<span style="flex:1">'+(combined?"Enrol + MVS Portal combined.":"Sheet uploads on the Portal + transfers.")+'</span>'+
+          '<button onclick="toggleSrcCombine()" style="background:'+(combined?"#EDE9FE":"#dcfce7")+';color:'+(combined?"#6D28D9":"#15803d")+';border:1px solid '+(combined?"#DDD6FE":"#bbf7d0")+';border-radius:7px;padding:3px 11px;font-size:11px;font-weight:700;cursor:pointer">'+(combined?"Split":"Combine")+'</button>'+
+        '</div>';
+      }else{
+        footer='<div style="display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--muted)">'+
+          '<span style="flex:1">Uploaded straight into the tracker.</span></div>';
+      }
       return '<div style="padding:15px 16px;background:var(--soft);border:1px solid var(--border);border-radius:13px">'+
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'+
           '<span style="font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:7px">'+
-            '<span style="width:9px;height:9px;border-radius:50%;background:'+dot+';display:inline-block;flex:none"></span>'+(s.source||"—")+'</span>'+
+            '<span style="width:9px;height:9px;border-radius:50%;background:'+dotFor(s.key)+';display:inline-block;flex:none"></span>'+(s.source||"—")+'</span>'+
           '<span style="font-size:12.5px;color:var(--muted);font-weight:600">Total&nbsp;<b style="color:var(--text);font-size:17px">'+s.cnt+'</b></span></div>'+
         '<div style="display:flex;gap:4px;padding-top:11px;border-top:1px solid var(--border)">'+
-          cell("Confirmed",s.confirmed,"#16A34A")+
-          cell("Verified",s.verified,"#2563EB")+
-          cell("Active",s.active,"#7C3AED")+
-          cell("Required",s.required,"#EA580C")+
-        '</div>'+pnrow+'</div>';
-    }).join("")+combinedCard+'</div>'+
+          cell("Confirmed",s.confirmed,"#16A34A")+cell("Verified",s.verified,"#2563EB")+
+          cell("Active",s.active,"#7C3AED")+cell("Required",s.required,"#EA580C")+
+        '</div>'+footer+'</div>';
+    }).join("")+'</div>'+
     '<div style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px">By Session</div>';
   updatePnTimer();
 }
-function toggleCombined(btn){
-  var c=document.getElementById("src-combined");
-  if(!c)return;
-  var show=(c.style.display==="none");
-  c.style.display=show?"block":"none";
-  btn.textContent=show?"Hide combined total":"Show combined total";
-}
+function toggleSrcCombine(){ window._srcCombined=!window._srcCombined; drawSourceCards(); }
 async function loadReconciliation(){
   var p=document.getElementById("reconcile-panel");
   if(!p)return;
@@ -4263,14 +4270,18 @@ def dashboard(user=Depends(verify_token)):
         f"FROM student_status WHERE {ND} AND {NFAIL} AND session != '' GROUP BY session ORDER BY cnt DESC"
     ).fetchall()
 
-    # Break students into the buckets the dashboard shows, using the reliable flags we have:
-    #   • "Enrol. MVS Portal" = came straight from the Portal's enrollment (source=mvs_portal,
-    #     not a tracker->portal transfer)  -> source='mvs_portal' AND cross_dup=0
-    #   • "MVS Portal — Sheet + Transfer" = everything else on the portal side: Excel-sheet
-    #     uploads and students the tracker checked & pushed to the Portal
-    #     -> source='mvs_tracker' OR cross_dup=1
-    _bucket = ("CASE WHEN COALESCE(source,'mvs_tracker')='mvs_portal' AND COALESCE(cross_dup,0)=0 "
-               "THEN 'enrol_portal' ELSE 'sheet_transfer' END")
+    # Three dashboard cards, using the flags we have:
+    #   • "Enrol. MVS Portal" = came from the Portal enrollment form
+    #     -> source='mvs_portal' AND cross_dup=0 AND portal_origin != 'sheet'
+    #   • "MVS Portal"        = the rest of the Portal data (sheet-uploaded on the Portal +
+    #     students the tracker checked & pushed to the Portal)
+    #     -> source='mvs_portal' AND (cross_dup=1 OR portal_origin='sheet')
+    #   • "MVS Tracker"       = uploaded straight into the tracker, not (yet) on the Portal
+    #     -> source='mvs_tracker'
+    _bucket = ("CASE "
+               "WHEN COALESCE(source,'mvs_tracker')='mvs_tracker' THEN 'mvs_tracker' "
+               "WHEN COALESCE(cross_dup,0)=1 OR COALESCE(portal_origin,'')='sheet' THEN 'mvs_portal' "
+               "ELSE 'enrol_portal' END")
     src_counts = conn.execute(
         f"SELECT {_bucket} AS bucket, COUNT(*) as cnt, "
         f"SUM(CASE WHEN is_confirmed=1 THEN 1 ELSE 0 END) as confirmed, "
@@ -4311,30 +4322,23 @@ def dashboard(user=Depends(verify_token)):
     }
 
 def _normalized_source_counts(raw_rows):
-    """Per-bucket totals for the dashboard:
-      • 'Enrol. MVS Portal'  — students that came from the Portal enrollment form.
-      • 'MVS Portal — Sheet + Transfer' — Excel-sheet uploads + tracker->portal transfers.
-    'Enrol. MVS Portal' leads; a combined total of both is added so the operator can see the
-    full portal-side figure at a glance."""
-    label = {"enrol_portal": "Enrol. MVS Portal",
-             "sheet_transfer": "MVS Portal — Sheet + Transfer"}
+    """Three dashboard cards:
+      • 'Enrol. MVS Portal' — students from the Portal enrollment form.
+      • 'MVS Portal'        — the rest of the Portal data (sheet uploads on the Portal + transfers).
+      • 'MVS Tracker'       — uploaded straight into the tracker.
+    Order: Enrol, MVS Portal, MVS Tracker. The dashboard's Combine button merges Enrol + MVS
+    Portal in place (client-side), so no separate combined card is returned here."""
+    label = {"enrol_portal": "Enrol. MVS Portal", "mvs_portal": "MVS Portal",
+             "mvs_tracker": "MVS Tracker"}
+    order = {"enrol_portal": 0, "mvs_portal": 1, "mvs_tracker": 2}
     out = []
     for r in raw_rows:
-        b = (r["bucket"] if "bucket" in r.keys() else "") or "sheet_transfer"
+        b = (r["bucket"] if "bucket" in r.keys() else "") or "mvs_tracker"
         out.append({"source": label.get(b, b), "key": b,
                     "cnt": r["cnt"] or 0, "confirmed": r["confirmed"] or 0,
                     "verified": r["verified"] or 0, "active": r["active"] or 0,
                     "required": r["required"] or 0})
-    out.sort(key=lambda x: 0 if x["key"] == "enrol_portal" else 1)
-    # Combined total row (shown as a small 'Both together' summary in the UI).
-    if out:
-        combined = {"source": "Both together (all portal data)", "key": "combined",
-                    "cnt": sum(x["cnt"] for x in out),
-                    "confirmed": sum(x["confirmed"] for x in out),
-                    "verified": sum(x["verified"] for x in out),
-                    "active": sum(x["active"] for x in out),
-                    "required": sum(x["required"] for x in out)}
-        out.append(combined)
+    out.sort(key=lambda x: order.get(x["key"], 9))
     return out
 
 def _normalized_session_counts(raw_rows):

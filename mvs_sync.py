@@ -77,9 +77,27 @@ def fetch_students_for_tracker(session=None, include_done=False):
             "student_id": str(s.get("studentId") or "").strip(),
             "toc_status": normalize_toc(s.get("tocStatus") or s.get("tocstatus")
                                         or s.get("toc_status") or s.get("toc") or ""),
+            # How the student was added ON THE PORTAL: 'enrol' (enrollment form) vs 'sheet'
+            # (bulk sheet upload). The Portal knows this; if it sends any of these fields we use
+            # it to split the dashboard's "Enrol. MVS Portal" vs "MVS Portal" cards. If the Portal
+            # sends nothing, origin stays '' and the student is treated as enrol by default.
+            "portal_origin": _norm_origin(s.get("origin") or s.get("createdVia") or s.get("addedVia")
+                                          or s.get("dataSource") or s.get("enrolledVia")
+                                          or s.get("entrySource") or s.get("source") or ""),
         })
     logger.info(f"MVS: fetched {len(rows)} students")
     return rows
+
+
+def _norm_origin(v):
+    v = str(v or "").strip().lower()
+    if not v:
+        return ""
+    if any(k in v for k in ("sheet", "excel", "csv", "bulk", "import", "upload")):
+        return "sheet"
+    if any(k in v for k in ("enrol", "enroll", "form", "register", "signup", "portal")):
+        return "enrol"
+    return ""
 
 
 def _doc_link(row_key, kind):

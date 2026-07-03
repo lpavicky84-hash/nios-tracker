@@ -180,7 +180,8 @@ def init_db():
                       ("last_verified", "TEXT"),
                       ("data_error", "INTEGER DEFAULT 0"),
                       ("portal_pushed", "TEXT"),
-                      ("student_id", "TEXT")):
+                      ("student_id", "TEXT"),
+                      ("portal_origin", "TEXT")):
         try:
             c.execute(f"ALTER TABLE student_status ADD COLUMN {col} {decl}")
         except Exception:

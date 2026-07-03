@@ -397,6 +397,16 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 conn.commit()
         except Exception as _se:
             logger.warning(f"student_id persist skipped: {_se}")
+        # Persist how each PORTAL student was added (enrol form vs sheet) so the dashboard can
+        # split "Enrol. MVS Portal" vs "MVS Portal" accurately.
+        try:
+            _org_rows = [(s.get("portal_origin", ""), s["row_key"]) for s in all_students
+                         if s.get("portal_origin")]
+            if _org_rows:
+                c.executemany("UPDATE student_status SET portal_origin=? WHERE row_key=?", _org_rows)
+                conn.commit()
+        except Exception as _oe:
+            logger.warning(f"portal_origin persist skipped: {_oe}")
 
         # Clean any pre-existing duplicate rows (same reference under multiple keys):
         # keep the confirmed / most-recently-checked one.
