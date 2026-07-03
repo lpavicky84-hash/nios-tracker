@@ -115,10 +115,10 @@ def _docs_complete(row_key):
 
 def push_student(student, status_label, conn=None, timeout=40):
     if not enabled():
-        return
+        return False
     sid = str(student.get("student_id") or student.get("studentId") or "").strip()
     if not sid:
-        return
+        return False
     row_key = student.get("row_key", "")
     session = str(student.get("session") or "").lower()
     low     = str(status_label or "").strip().lower()
@@ -150,11 +150,14 @@ def push_student(student, status_label, conn=None, timeout=40):
     if student.get("enrollment_no"): data["enrollmentNo"] = student["enrollment_no"]
     if student.get("remark"): data["remark"] = student["remark"]
     if len(data) <= 3:
-        return
+        return False
     try:
         r = requests.post(MVS_API_URL, data=data, timeout=timeout)
         out = r.json()
         if out.get("status") != "success":
             logger.warning(f"MVS push {sid}: {out.get('message')}")
+            return False
+        return True
     except Exception as e:
         logger.warning(f"MVS push error {sid}: {e}")
+        return False

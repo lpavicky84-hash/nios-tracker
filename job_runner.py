@@ -388,6 +388,15 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         # MVS student-id map (for pushing status + doc links back to the portal).
         sid_by_key = {s["row_key"]: s.get("student_id", "")
                       for s in all_students if s.get("student_id")}
+        # Persist student_id so the portal-resync sweep can re-push a missed status later
+        # WITHOUT re-fetching the whole portal list.
+        try:
+            _sid_rows = [(sid, rk) for rk, sid in sid_by_key.items() if sid]
+            if _sid_rows:
+                c.executemany("UPDATE student_status SET student_id=? WHERE row_key=?", _sid_rows)
+                conn.commit()
+        except Exception as _se:
+            logger.warning(f"student_id persist skipped: {_se}")
 
         # Clean any pre-existing duplicate rows (same reference under multiple keys):
         # keep the confirmed / most-recently-checked one.
@@ -791,6 +800,8 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                             "alt_mobile": _eff_alt,
                             "session": res.get("session", ""),
                             "reference_no": new_ref,
+                            "enrollment_no": res.get("enrollment_no", ""),
+                            "toc_status": toc_by_key.get(row_key, res.get("toc_status", "")),
                             "dob": res.get("dob", ""),
                         })
                         # Only mark as sent on success; failures retry next run.
@@ -821,14 +832,24 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             except Exception as re_:
                 logger.warning(f"Required-reset error: {re_}")
 
-            # ── MVS portal: push status + doc links back (only if login isn't broken) ──
+            # ── MVS portal: push status + doc links back ──
+            # The STATUS push is a plain API call (no NIOS login needed), so it must happen even
+            # when the WhatsApp-verify login was blocked (captcha busy) — otherwise a correctly-
+            # detected 'Confirmed' would never reach the Portal and the two would disagree.
+            # Doc links are separately gated by document-completeness inside push_student.
             try:
-                if mvs_on and not login_blocked and sid_by_key.get(row_key):
+                if mvs_on and sid_by_key.get(row_key):
                     conn.commit()   # ensure student row + links are persisted first
-                    mvs_sync.push_student({**res,
+                    _pushed = mvs_sync.push_student({**res,
                         "student_id": sid_by_key[row_key], "row_key": row_key,
                         "discovered_ref": new_ref, "session": res.get("session", "")},
                         new_status, conn)
+                    if _pushed:
+                        # Remember exactly which status the Portal has now, so the resync sweep
+                        # can tell when the Portal is behind and re-push only what's needed.
+                        c.execute("UPDATE student_status SET portal_pushed=? WHERE row_key=?",
+                                  (new_status, row_key))
+                        conn.commit()
             except Exception as pe:
                 logger.warning(f"MVS push error {row_key}: {pe}")
 
@@ -866,6 +887,12 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 except Exception as _re:
                     logger.warning(f"Auto-retry pass error (run continues): {_re}")
                     _retry_mode[0] = False
+                # Make sure every status this run settled on has actually reached the Portal
+                # (catches any push that failed mid-run) BEFORE the report goes out.
+                try:
+                    _resync_after_run(conn, c, to_check)
+                except Exception as _pe:
+                    logger.warning(f"Post-run portal resync error (run continues): {_pe}")
 
         # Recompute the headline numbers from the FINAL DB state so the auto-retry pass is
         # reflected accurately (retries don't inflate the counters — they were guarded above).
@@ -1251,6 +1278,91 @@ def recheck_one(row_key):
 #     endlessly, and it stays visible in Failed/Unknown for Edit & fix).
 #   • Only students with a valid Reference/Enrollment No (digits, no '@').
 #   • Can be disabled with setting auto_retry_failed = '0'.
+def _resync_after_run(conn, c, to_check):
+    """After a run (and its retry pass), re-push any of THIS run's students whose settled status
+    didn't make it to the Portal, so the Portal matches the tracker before the report is sent."""
+    if not _mvs_on() or not to_check:
+        return
+    keys = [s["row_key"] for s in to_check if s.get("row_key")]
+    if not keys:
+        return
+    qm = ",".join("?" * len(keys))
+    rows = c.execute(
+        f"SELECT row_key, student_id, reference_no, enrollment_no, session, current_status, remark "
+        f"FROM student_status WHERE row_key IN ({qm}) AND COALESCE(deleted,0)=0 "
+        "AND COALESCE(student_id,'') != '' "
+        "AND current_status IN ('Admission Confirmed','Verified','Documents Verification In Progress','Document Required') "
+        "AND COALESCE(portal_pushed,'') != current_status", keys).fetchall()
+    if not rows:
+        return
+    logger.info(f"Post-run resync: {len(rows)} student(s) not yet on the Portal — pushing")
+    import mvs_sync
+    for r in rows:
+        try:
+            ok = mvs_sync.push_student({
+                "student_id": r["student_id"], "row_key": r["row_key"],
+                "reference_no": r["reference_no"], "enrollment_no": r["enrollment_no"],
+                "discovered_ref": r["reference_no"], "session": r["session"] or "",
+                "remark": r["remark"] or ""}, r["current_status"])
+            if ok:
+                c.execute("UPDATE student_status SET portal_pushed=? WHERE row_key=?",
+                          (r["current_status"], r["row_key"]))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Post-run resync push error {r['row_key']}: {e}")
+
+
+def portal_resync_sweep(max_students=150):
+    """Guarantees the Portal eventually matches the tracker for confirmed/verified/in-progress.
+    Finds students whose current NIOS status has NOT been successfully pushed to the Portal yet
+    (push failed, Portal was briefly down, or an old confirm predates this tracking) and re-pushes
+    them. Bounded and never overlaps a run, so it can't slow the tracker or clash with writes."""
+    try:
+        if not _mvs_on():
+            return
+        conn = get_db()
+        c = conn.cursor()
+        active = c.execute("SELECT id FROM run_logs WHERE status='running'").fetchone()
+        if active:
+            conn.close()
+            return
+        # Students with a real, mapped status that the Portal doesn't have yet:
+        #   portal_pushed is NULL/empty  -> never pushed
+        #   portal_pushed != current_status -> status changed since last successful push
+        rows = c.execute(
+            "SELECT row_key, student_id, reference_no, enrollment_no, session, current_status, remark "
+            "FROM student_status WHERE COALESCE(deleted,0)=0 "
+            "AND COALESCE(student_id,'') != '' "
+            "AND current_status IN ('Admission Confirmed','Verified','Documents Verification In Progress','Document Required') "
+            "AND COALESCE(portal_pushed,'') != current_status "
+            "ORDER BY (current_status='Admission Confirmed') DESC, last_changed DESC "
+            "LIMIT ?", (max_students,)).fetchall()
+        conn.close()
+        if not rows:
+            return
+        logger.info(f"Portal resync: {len(rows)} student(s) whose status the Portal is missing — re-pushing")
+        import mvs_sync
+        pushed = 0
+        for r in rows:
+            try:
+                ok = mvs_sync.push_student({
+                    "student_id": r["student_id"], "row_key": r["row_key"],
+                    "reference_no": r["reference_no"], "enrollment_no": r["enrollment_no"],
+                    "discovered_ref": r["reference_no"], "session": r["session"] or "",
+                    "remark": r["remark"] or ""}, r["current_status"])
+                if ok:
+                    cc = get_db()
+                    cc.execute("UPDATE student_status SET portal_pushed=? WHERE row_key=?",
+                               (r["current_status"], r["row_key"]))
+                    cc.commit(); cc.close()
+                    pushed += 1
+            except Exception as e:
+                logger.warning(f"Portal resync push error {r['row_key']}: {e}")
+        logger.info(f"Portal resync done | re-pushed {pushed}/{len(rows)}")
+    except Exception as e:
+        logger.warning(f"Portal resync sweep error: {e}")
+
+
 def auto_retry_failed_sweep(max_students=10, min_age_hours=6):
     try:
         if get_setting("auto_retry_failed", "1") != "1":

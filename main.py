@@ -4144,6 +4144,17 @@ async def startup():
                           next_run_time=datetime.now() + timedelta(minutes=20))
     except Exception as e:
         logger.warning(f"Auto-retry job not scheduled: {e}")
+    # Portal resync — every 30 min re-push any confirmed/verified/in-progress student whose
+    # status didn't reach the Portal (failed push / Portal briefly down), so the two dashboards
+    # stay in agreement. Skips while a run is active; bounded per sweep.
+    try:
+        from job_runner import portal_resync_sweep
+        from apscheduler.triggers.interval import IntervalTrigger as _IT3
+        scheduler.add_job(portal_resync_sweep, trigger=_IT3(minutes=30),
+                          id="job_portal_resync", replace_existing=True,
+                          next_run_time=datetime.now() + timedelta(minutes=8))
+    except Exception as e:
+        logger.warning(f"Portal resync job not scheduled: {e}")
     scheduler.start()
     logger.info("Scheduler started")
 
