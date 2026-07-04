@@ -3129,18 +3129,20 @@ async function tocCheckSelected(which,btn){
   }catch(e){showToast(""+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
+let TOC_POLL_WAS_RUNNING=false, TOC_POLL_TIMER=null;
 async function pollTocProgress(){
   const box=document.getElementById("toc-progress");
   if(!box)return;
+  if(TOC_POLL_TIMER){clearTimeout(TOC_POLL_TIMER);TOC_POLL_TIMER=null;}
   try{
     const d=await api("/api/toc-check-progress");
-    if((d.total||0)===0 && !d.running){box.style.display="none";return;}
+    if((d.total||0)===0 && !d.running){box.style.display="none";TOC_POLL_WAS_RUNNING=false;return;}
     box.style.display="block";
     var pct=d.percent||0;
     var cell=function(lbl,val,col){return '<span style="font-weight:700;color:'+col+'">'+(val||0)+'</span> <span style="color:var(--muted);font-size:12px">'+lbl+'</span>';};
     box.innerHTML=
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px">'+
-        '<span style="font-weight:700;font-size:13.5px">'+(d.running?"Checking confirmed students\u2019 TOC\u2026":"Confirmed TOC check")+'</span>'+
+        '<span style="font-weight:700;font-size:13.5px">'+(d.running?"Checking students\u2019 TOC\u2026":"Confirmed TOC check")+'</span>'+
         '<span style="font-size:13px;color:var(--muted)"><b style="color:var(--text)">'+(d.done||0)+'</b> / '+(d.total||0)+' &nbsp;('+pct+'%)</span>'+
       '</div>'+
       '<div style="height:9px;background:var(--border);border-radius:6px;overflow:hidden;margin-bottom:11px"><div style="height:100%;width:'+pct+'%;background:#4F46E5;transition:width .4s"></div></div>'+
@@ -3150,9 +3152,15 @@ async function pollTocProgress(){
         (d.running?'<button onclick="cancelTocCheck()" style="margin-left:auto;background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;border-radius:7px;padding:3px 12px;font-size:12px;font-weight:700;cursor:pointer">Stop</button>':'')+
       '</div>'+
       (d.message?('<div style="margin-top:10px;font-size:12px;color:var(--muted)">'+d.message+'</div>'):'');
-    if(d.running){setTimeout(pollTocProgress,2000);}
-    else{loadTocErrors();}
-  }catch(e){setTimeout(pollTocProgress,3000);}
+    if(d.running){
+      TOC_POLL_WAS_RUNNING=true;
+      TOC_POLL_TIMER=setTimeout(pollTocProgress,2000);
+    } else if(TOC_POLL_WAS_RUNNING){
+      // Just transitioned running -> done: refresh the mismatch table ONCE (not in a loop).
+      TOC_POLL_WAS_RUNNING=false;
+      loadTocErrors();
+    }
+  }catch(e){ if(TOC_POLL_WAS_RUNNING){TOC_POLL_TIMER=setTimeout(pollTocProgress,3000);} }
 }
 async function cancelTocCheck(){
   try{ await api("/api/toc-check-cancel","POST",{}); showToast("Stopping…"); }catch(e){}
