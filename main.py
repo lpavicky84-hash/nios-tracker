@@ -766,6 +766,7 @@ function applySidebarPref(){
         </div>
       </section>
 
+      <section id="sec-confirmed" class="page-section">
         <div class="card">
           <h3>Admission Confirmed Students</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
