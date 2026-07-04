@@ -659,6 +659,7 @@ function applySidebarPref(){
               <option>Approved</option><option>Rejected</option><option>Fetch Error</option><option>Unknown</option>
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
+            <select id="s-toc" onchange="loadStudents(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="s-datepreset" onchange="onDatePreset('s',()=>loadStudents(1))">
@@ -691,6 +692,7 @@ function applySidebarPref(){
             <span style="font-weight:600;font-size:13.5px"><span id="sel-count">0</span> selected <span style="color:var(--muted);font-weight:400">(max 20)</span></span>
             <button class="btn btn-success btn-sm" id="sel-run-btn" onclick="runSelected()">
               <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Selected</button>
+            <button class="btn btn-sm" style="background:#7C3AED;color:#fff" onclick="tocCheckSelected('active',this)" title="Read the real NIOS TOC (Previous Subject Details) for the selected students and flag any mismatch with the Portal into 'TOC Status Error'.">Check TOC (selected)</button>
             <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="deleteSelectedStudents()">&#128465; Delete selected</button>
             <select onchange="changeSelectedSource(this)" style="max-width:170px" title="Move selected students to a data type">
               <option value="">Change source&hellip;</option>
@@ -786,6 +788,7 @@ function applySidebarPref(){
               <option value="failed">Failed</option>
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
+            <select id="c-toc" onchange="loadConfirmed(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether the documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">Documents saved</option><option value="notsaved">Not saved yet</option></select>
@@ -809,6 +812,7 @@ function applySidebarPref(){
           <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <span style="font-weight:700;font-size:13px"><span id="c-selcount">0</span> selected</span>
             <button class="btn btn-primary btn-sm" onclick="resendSelected(this)">Resend WhatsApp to selected</button>
+            <button class="btn btn-sm" style="background:#7C3AED;color:#fff" onclick="tocCheckSelected('confirmed',this)" title="Read the real NIOS TOC (Previous Subject Details) for the selected students and flag any mismatch with the Portal into 'TOC Status Error'.">Check TOC (selected)</button>
             <button class="btn btn-sm" style="background:#F97316;color:#fff" onclick="refreshSelectedDocs(this)" title="Re-fetch and overwrite the saved documents for the selected students (use if their documents changed on NIOS).">Refresh docs for selected</button>
             <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDeleteConf()">&#128465; Delete selected</button>
             <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="clearConfSel()">Clear</button>
@@ -2400,6 +2404,7 @@ async function loadStudents(page){
     status_filter:document.getElementById("s-status").value,
     session_filter:document.getElementById("s-session").value,
     class_filter:fval("s-class"),source_filter:fval("s-source"),date_from:dr.from,date_to:dr.to,
+    toc_filter:fval("s-toc"),
     check_state:(document.getElementById("s-checkstate")?document.getElementById("s-checkstate").value:"")});
   try{
     const d=await api("/api/students?"+q.toString());
@@ -2531,6 +2536,7 @@ async function loadConfirmed(page){
     wa_status:fval("c-wa"),
     session_filter:document.getElementById("c-session").value,
     class_filter:fval("c-class"),source_filter:fval("c-source"),
+    toc_filter:fval("c-toc"),
     saved_filter:(document.getElementById("c-saved")?document.getElementById("c-saved").value:""),
     date_from:dr.from,date_to:dr.to});
   try{
@@ -3106,6 +3112,20 @@ async function runTocCheckConfirmed(btn){
     const r=await api("/api/toc-check-confirmed","POST",{});
     showToast(r.message||"Started");
     if(r.count>0) pollTocProgress();
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function tocCheckSelected(which,btn){
+  var keys = (which==="confirmed") ? Array.from((typeof CONF_SEL!=="undefined")?CONF_SEL:[])
+                                   : Array.from((typeof SELECTED!=="undefined")?SELECTED:[]);
+  if(!keys.length){showToast("Select at least one student first");return;}
+  if(!confirm("Read the real NIOS TOC for the "+keys.length+" selected student(s)? Uses CapSolver per student. Any mismatch with the Portal appears in TOC Status Error (WhatsApp held until verified)."))return;
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await api("/api/toc-check-confirmed","POST",{row_keys:keys});
+    showToast(r.message||"Started");
+    if(r.count>0){ nav("tocerror"); pollTocProgress(); }
   }catch(e){showToast(""+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
@@ -3730,12 +3750,12 @@ function onDatePreset(prefix,reload){
   if(!custom&&reload)reload();
 }
 async function exportStudents(view){
-  let search="",status="",session="",cls="",from="",to="",source="";
-  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");source=fval("c-source");const dr=dateRange("c");from=dr.from;to=dr.to;}
+  let search="",status="",session="",cls="",from="",to="",source="",toc="";
+  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");source=fval("c-source");toc=fval("c-toc");const dr=dateRange("c");from=dr.from;to=dr.to;}
   else if(view==="required"){search=fval("r-search");status=fval("r-status");session=fval("r-session");source=fval("r-source");}
-  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");source=fval("s-source");const dr=dateRange("s");from=dr.from;to=dr.to;}
+  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");source=fval("s-source");toc=fval("s-toc");const dr=dateRange("s");from=dr.from;to=dr.to;}
   const q=new URLSearchParams({view:view,search:search,status_filter:status,session_filter:session,
-    class_filter:cls,source_filter:source,date_from:from,date_to:to});
+    class_filter:cls,source_filter:source,toc_filter:toc,date_from:from,date_to:to});
   try{
     showToast("Preparing Excel...");
     const r=await fetch(API+"/api/export-students?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
@@ -4552,13 +4572,24 @@ _SPECIAL_TOC_CLAUSE = (
 
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to="", source_filter="",
-                         wa_status="", saved_filter="", check_state="", check_boundary=None):
+                         wa_status="", saved_filter="", check_state="", check_boundary=None,
+                         toc_filter=""):
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
     wc.append("COALESCE(deleted,0) = 0")          # never show soft-deleted (in Trash)
     wc.append("COALESCE(login_failed,0) = 0")     # login-failed -> only in 'Failed to Run'
     wc.append("COALESCE(check_failed,0) = 0")     # status-check-failed -> only in 'Failed to Run'
+    # tocStatus filter: yes / no / blank (not set) / mismatch (unverified TOC error)
+    tf = (toc_filter or "").strip().lower()
+    if tf == "yes":
+        wc.append("LOWER(COALESCE(toc_status,'')) = 'yes'")
+    elif tf == "no":
+        wc.append("LOWER(COALESCE(toc_status,'')) = 'no'")
+    elif tf == "blank":
+        wc.append("COALESCE(toc_status,'') = ''")
+    elif tf == "mismatch":
+        wc.append("COALESCE(toc_mismatch,0) = 1 AND COALESCE(toc_verified,0) = 0")
     if view == "confirmed":
         wc.append("is_confirmed = 1")
     elif view == "required":
@@ -4672,14 +4703,15 @@ def get_students(page: int=1, per_page: int=50, search: str="",
                        status_filter: str="", session_filter: str="",
                        class_filter: str="", date_from: str="", date_to: str="",
                        source_filter: str="", view: str="normal", wa_status: str="",
-                       saved_filter: str="", check_state: str="",
+                       saved_filter: str="", check_state: str="", toc_filter: str="",
                        user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
     boundary = _verify_boundary(conn, view, session_filter, source_filter)
     where, params = _build_student_where(view, search, status_filter, session_filter,
                                          class_filter, date_from, date_to, source_filter,
-                                         wa_status, saved_filter, check_state, boundary)
+                                         wa_status, saved_filter, check_state, boundary,
+                                         toc_filter)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
@@ -4834,29 +4866,44 @@ TOC_CHECK_STATE = {"running": False, "total": 0, "done": 0, "no_toc": 0, "yes_to
 
 
 @app.post("/api/toc-check-confirmed")
-def toc_check_confirmed(background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    """Kick off a ONE-TIME TOC read for every confirmed student that hasn't been TOC-checked yet
-    (nios_toc empty). Each is read from NIOS (one captcha each, no login needed — the public status
-    page carries the Previous Subject Details). Mismatches land in 'TOC Status Error'. Re-clicking
-    only picks up whatever's left, so it's safe and resumable."""
+def toc_check_confirmed(background_tasks: BackgroundTasks, body: dict = None, user=Depends(verify_token)):
+    """Kick off a TOC read from NIOS.
+    • No body: ONE-TIME pass over every confirmed student not yet TOC-checked (nios_toc empty).
+    • body {row_keys:[...]}: check exactly the SELECTED students (any status — Active/Confirmed/etc),
+      re-checking even if previously checked (an explicit selection means the operator wants it now).
+    Each read is one public status-page request (one captcha, no login). Mismatches land in
+    'TOC Status Error'. Verified students are never re-flagged. Re-clicking the one-time pass is
+    safe — it only picks up whatever's left."""
     if TOC_CHECK_STATE["running"]:
-        return {"ok": False, "running": True, "message": "A confirmed-TOC check is already running."}
+        return {"ok": False, "running": True, "message": "A TOC check is already running."}
+    body = body or {}
+    sel_keys = [str(k) for k in (body.get("row_keys") or []) if k]
     conn = get_db()
-    rows = conn.execute(
-        "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 AND is_confirmed=1 "
-        "AND COALESCE(nios_toc,'')='' AND COALESCE(toc_verified,0)=0 "
-        "AND COALESCE(dob,'')!='' "
-        "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
+    if sel_keys:
+        qm = ",".join("?" * len(sel_keys))
+        rows = conn.execute(
+            f"SELECT row_key FROM student_status WHERE row_key IN ({qm}) "
+            "AND COALESCE(deleted,0)=0 AND COALESCE(dob,'')!='' "
+            "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')",
+            sel_keys).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 AND is_confirmed=1 "
+            "AND COALESCE(nios_toc,'')='' AND COALESCE(toc_verified,0)=0 "
+            "AND COALESCE(dob,'')!='' "
+            "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
     keys = [r["row_key"] for r in rows]
     conn.close()
     if not keys:
-        return {"ok": True, "count": 0, "message": "All confirmed students are already TOC-checked."}
+        return {"ok": True, "count": 0,
+                "message": ("None of the selected students can be TOC-checked (need a Reference/Enrollment + DOB)."
+                            if sel_keys else "All confirmed students are already TOC-checked.")}
     TOC_CHECK_STATE.update({"running": True, "total": len(keys), "done": 0, "no_toc": 0,
                             "yes_toc": 0, "errors": 0, "cancel": False,
-                            "message": f"Checking {len(keys)} confirmed students…"})
+                            "message": f"Checking {len(keys)} student(s)…"})
     background_tasks.add_task(_run_toc_check_confirmed, keys)
     return {"ok": True, "count": len(keys),
-            "message": f"Checking TOC for {len(keys)} confirmed students… watch the progress."}
+            "message": f"Checking TOC for {len(keys)} student(s)… progress shows in TOC Status Error."}
 
 
 @app.get("/api/toc-check-progress")
@@ -5190,6 +5237,7 @@ def failed_count(user=Depends(verify_token)):
 def export_students(view: str="normal", search: str="", status_filter: str="",
                          session_filter: str="", class_filter: str="",
                          date_from: str="", date_to: str="", source_filter: str="",
+                         toc_filter: str="",
                          user=Depends(verify_token)):
     """Export the CURRENTLY FILTERED list (active / confirmed / required) to .xlsx.
     Honours the exact same filters as the on-screen table (search, status, session,
@@ -5200,7 +5248,8 @@ def export_students(view: str="normal", search: str="", status_filter: str="",
 
     conn = get_db()
     where, params = _build_student_where(view, search, status_filter, session_filter,
-                                         class_filter, date_from, date_to, source_filter)
+                                         class_filter, date_from, date_to, source_filter,
+                                         toc_filter=toc_filter)
     rows = conn.execute(f"SELECT * FROM student_status {where} ORDER BY student_name", params).fetchall()
     conn.close()
 
