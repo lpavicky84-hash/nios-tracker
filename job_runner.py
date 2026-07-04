@@ -564,9 +564,11 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             is_conf = 1 if new_status == "Admission Confirmed" else 0
             now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            old = c.execute("SELECT current_status, source FROM student_status WHERE row_key=?",
+            old = c.execute("SELECT current_status, source, COALESCE(is_confirmed,0) AS was_confirmed "
+                            "FROM student_status WHERE row_key=?",
                             (row_key,)).fetchone()
             old_status = old["current_status"] if old else None
+            _was_confirmed = bool(old and old["was_confirmed"] == 1)
             # Data source + cross-source duplicate detection. If this student already
             # exists from a DIFFERENT source, it's the SAME student in both MVS Portal
             # and MVS Tracker -> keep ONE row, give priority to MVS Portal, and flag it.
@@ -594,7 +596,17 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # "Verified -> Unknown" flips that never actually happened on NIOS.
             _failed_check = new_status in ("Unknown", "Fetch Error")
             _has_real_old = (old_status not in (None, "", "Unknown", "Fetch Error"))
-            _ignored_downgrade = _failed_check and _has_real_old
+            # NEW: a CONFIRMED student must never be silently downgraded by a lower real status
+            # either. NIOS occasionally flips a confirmed student's page back to 'Documents
+            # Verification In Progress' (RC re-processing) — the documents already went out on
+            # WhatsApp, so downgrading here (and pushing that to the Portal) only creates the
+            # tracker-vs-Portal mismatch the operator saw. Keep 'Admission Confirmed'; log it.
+            _conf_downgrade = (_was_confirmed and not _failed_check
+                               and new_status != "Admission Confirmed")
+            if _conf_downgrade:
+                logger.info(f"  {row_key}: NIOS showed '{new_status}' for a CONFIRMED student — "
+                            f"keeping Admission Confirmed (no downgrade, no portal push)")
+            _ignored_downgrade = (_failed_check and _has_real_old) or _conf_downgrade
             # "Not checked this run" = the run could not read a real NIOS status (captcha/proxy
             # fell back, or NIOS returned nothing). Whether we kept an old status or it stays
             # Unknown, the student was effectively NOT freshly checked — count it so the operator
@@ -646,14 +658,21 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                              AND current_status IS NOT NULL
                              AND current_status NOT IN ('Unknown','Fetch Error','')
                         THEN current_status
+                        WHEN COALESCE(is_confirmed,0)=1
+                             AND excluded.current_status != 'Admission Confirmed'
+                        THEN current_status
                         ELSE excluded.current_status END,
                     remark = CASE
                         WHEN excluded.current_status IN ('Unknown','Fetch Error')
                              AND current_status IS NOT NULL
                              AND current_status NOT IN ('Unknown','Fetch Error','')
                         THEN remark
+                        WHEN COALESCE(is_confirmed,0)=1
+                             AND excluded.current_status != 'Admission Confirmed'
+                        THEN remark
                         ELSE excluded.remark END,
                     is_confirmed = CASE
+                        WHEN COALESCE(is_confirmed,0)=1 THEN 1
                         WHEN excluded.current_status IN ('Unknown','Fetch Error')
                         THEN is_confirmed
                         ELSE excluded.is_confirmed END,
@@ -890,7 +909,7 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # detected 'Confirmed' would never reach the Portal and the two would disagree.
             # Doc links are separately gated by document-completeness inside push_student.
             try:
-                if mvs_on and sid_by_key.get(row_key):
+                if mvs_on and sid_by_key.get(row_key) and not _conf_downgrade:
                     conn.commit()   # ensure student row + links are persisted first
                     _pushed = mvs_sync.push_student({**res,
                         "student_id": sid_by_key[row_key], "row_key": row_key,
@@ -1202,13 +1221,22 @@ def recheck_one(row_key):
         new_status = res["status"]
         new_ref = res.get("discovered_ref") or res.get("reference_no") or student["reference_no"]
         is_conf = 1 if new_status == "Admission Confirmed" else 0
-        old = c.execute("SELECT current_status FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+        old = c.execute("SELECT current_status, COALESCE(is_confirmed,0) AS was_confirmed "
+                        "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
         old_status = old["current_status"] if old else None
+        _was_confirmed = bool(old and old["was_confirmed"] == 1)
         # A failed check (Unknown/Fetch Error) must NOT downgrade a student who already has a
         # real status — keep it, only refresh last_checked. Status only moves forward.
+        # A CONFIRMED student is likewise never downgraded by a lower real status (NIOS
+        # sometimes flips a confirmed page back to 'Documents Verification In Progress').
         _failed_check = new_status in ("Unknown", "Fetch Error")
         _has_real_old = (old_status not in (None, "", "Unknown", "Fetch Error"))
-        _ignored_downgrade = _failed_check and _has_real_old
+        _conf_downgrade = (_was_confirmed and not _failed_check
+                           and new_status != "Admission Confirmed")
+        if _conf_downgrade:
+            logger.info(f"  {row_key}: NIOS showed '{new_status}' for a CONFIRMED student — "
+                        f"keeping Admission Confirmed (manual run)")
+        _ignored_downgrade = (_failed_check and _has_real_old) or _conf_downgrade
         if (old_status != new_status) and not _ignored_downgrade:
             c.execute("""INSERT INTO status_history
                 (reference_no, student_name, old_status, new_status, changed_at, run_id, source)
