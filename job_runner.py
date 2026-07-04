@@ -824,7 +824,21 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                         # complete yet, DON'T send now; the WhatsApp auto-sweep re-tries caching
                         # and sends the moment it's complete (with an attempt-based fallback so a
                         # rarely-available doc can't block the link forever).
-                        if not _complete:
+                        # ALSO hold if this student has an unverified TOC mismatch — sending the
+                        # wrong (no-TOC) campaign is exactly what panics students. The counsellor
+                        # verifies in 'TOC Status Error' first; then the sweep sends correctly.
+                        _toc_hold = False
+                        _tmr = c.execute("SELECT COALESCE(toc_mismatch,0), COALESCE(toc_verified,0) "
+                                         "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+                        if _tmr and _tmr[0] == 1 and _tmr[1] == 0:
+                            _toc_hold = True
+                        if _toc_hold:
+                            c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                                      ("Held — TOC mismatch needs counsellor verification", row_key))
+                            conn.commit()
+                            logger.info(f"WhatsApp held (TOC mismatch) {row_key}")
+                            ok, info = None, None
+                        elif not _complete:
                             c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
                                       ("Waiting — saving documents before sending", row_key))
                             conn.commit()
@@ -1348,6 +1362,65 @@ def _resync_after_run(conn, c, to_check):
                 conn.commit()
         except Exception as e:
             logger.warning(f"Post-run resync push error {r['row_key']}: {e}")
+
+
+def toc_backfill_sweep(max_students=12):
+    """Confirmed students are never re-run, so their TOC would otherwise never be read from NIOS.
+    This sweep reads the REAL TOC (Previous Subject Details) for a small batch of students who
+    (a) have never been TOC-checked yet (nios_toc empty), (b) the Portal marks tocStatus='no',
+    and (c) aren't already verified — i.e. exactly the ones at risk of a wrong no-TOC WhatsApp.
+    Any mismatch is flagged into 'TOC Status Error' for the counsellor. Once a student's TOC is
+    read it's never re-read (one-time per student). Bounded + skips while a run is active."""
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        if c.execute("SELECT id FROM run_logs WHERE status='running'").fetchone():
+            conn.close()
+            return
+        rows = c.execute(
+            "SELECT row_key, reference_no, enrollment_no, dob FROM student_status "
+            "WHERE COALESCE(deleted,0)=0 AND COALESCE(toc_status,'')='no' "
+            "AND COALESCE(toc_verified,0)=0 AND COALESCE(nios_toc,'')='' "
+            "AND COALESCE(dob,'')!='' "
+            "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='') "
+            "ORDER BY is_confirmed DESC, last_checked DESC LIMIT ?", (max_students,)).fetchall()
+        conn.close()
+        if not rows:
+            return
+        import nios_login
+        logger.info(f"TOC backfill: reading NIOS TOC for {len(rows)} not-yet-checked no-TOC student(s)")
+        checked = flagged = 0
+        for r in rows:
+            # stop if a run has since started (don't clash with it)
+            cc = get_db()
+            if cc.execute("SELECT id FROM run_logs WHERE status='running'").fetchone():
+                cc.close(); break
+            cc.close()
+            try:
+                nios_toc, subs, ok = nios_login.fetch_nios_toc(r["reference_no"], r["dob"],
+                                                               r["enrollment_no"] or "")
+            except Exception as e:
+                logger.warning(f"TOC backfill fetch error {r['row_key']}: {e}")
+                continue
+            if not ok or not nios_toc:
+                continue
+            checked += 1
+            cc = get_db()
+            subs_json = json.dumps(subs) if subs else ""
+            if nios_toc == "yes":
+                cc.execute("UPDATE student_status SET nios_toc='yes', toc_subjects=?, toc_mismatch=1, "
+                           "remark=? WHERE row_key=? AND COALESCE(toc_verified,0)=0",
+                           (subs_json,
+                            "mismatch toc status: NIOS official site says YES, MVS Portal says NO",
+                            r["row_key"]))
+                flagged += 1
+            else:
+                cc.execute("UPDATE student_status SET nios_toc='no', toc_mismatch=0 WHERE row_key=?",
+                           (r["row_key"],))
+            cc.commit(); cc.close()
+        logger.info(f"TOC backfill done | checked {checked}, mismatches flagged {flagged}")
+    except Exception as e:
+        logger.warning(f"TOC backfill sweep error: {e}")
 
 
 def portal_resync_sweep(max_students=150):

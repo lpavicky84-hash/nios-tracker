@@ -745,8 +745,12 @@ function applySidebarPref(){
         <div class="card">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
             <h3 style="margin:0">TOC Status Error</h3>
-            <button class="btn btn-primary btn-sm" onclick="runTocCheck(this)">Check TOC from NIOS</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="runTocCheckConfirmed(this)" title="One-time: read the real NIOS TOC for every confirmed student that hasn't been checked yet. Confirmed students are never re-run, so this covers them. Safe to re-click — it only picks up whatever is left.">Check all confirmed students' TOC (one-time)</button>
+              <button class="btn btn-primary btn-sm" onclick="runTocCheck(this)" title="Read NIOS TOC for unverified no-TOC students.">Check TOC from NIOS</button>
+            </div>
           </div>
+          <div id="toc-progress" style="display:none;margin:14px 0 4px;padding:14px 16px;background:var(--soft);border:1px solid var(--border);border-radius:12px"></div>
           <p style="color:var(--muted);font-size:13px;margin:10px 0 16px">
             NIOS official site (Previous Subject Details) shows <b>TOC = Yes</b> for at least one subject,
             but the MVS Portal has <b>tocStatus = "no"</b>. The WhatsApp is <b>held</b> for these until a
@@ -3039,6 +3043,7 @@ function renderUnknownPg(page,total,totalRows){
 async function loadTocErrors(){
   var tb=document.getElementById("te-body");
   if(!tb)return;
+  try{ pollTocProgress(); }catch(e){}
   tb.innerHTML='<tr><td colspan="7" class="empty">Loading…</td></tr>';
   try{
     const d=await api("/api/toc-errors");
@@ -3085,12 +3090,51 @@ async function tocEdit(rk){
   }catch(e){showToast(""+e.message);}
 }
 async function runTocCheck(btn){
-  if(!confirm("Read the real TOC from NIOS for all unverified no-TOC students? This logs into NIOS per student (uses CapSolver) and flags mismatches here. It won't run while a status run is active."))return;
+  if(!confirm("Read the real TOC from NIOS for all unverified no-TOC students? This uses CapSolver per student and flags mismatches here. It won't run while a status run is active."))return;
   var old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Starting…";}
   try{ const r=await api("/api/toc-check","POST",{}); showToast(r.message||"TOC check started"); }
   catch(e){showToast(""+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function runTocCheckConfirmed(btn){
+  if(!confirm("One-time: read the real NIOS TOC for every confirmed student not yet checked. This uses CapSolver per student and can take a while for many students — it runs in the background and you can watch the progress. Safe to re-click later to finish any that remain."))return;
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await api("/api/toc-check-confirmed","POST",{});
+    showToast(r.message||"Started");
+    if(r.count>0) pollTocProgress();
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function pollTocProgress(){
+  const box=document.getElementById("toc-progress");
+  if(!box)return;
+  try{
+    const d=await api("/api/toc-check-progress");
+    if((d.total||0)===0 && !d.running){box.style.display="none";return;}
+    box.style.display="block";
+    var pct=d.percent||0;
+    var cell=function(lbl,val,col){return '<span style="font-weight:700;color:'+col+'">'+(val||0)+'</span> <span style="color:var(--muted);font-size:12px">'+lbl+'</span>';};
+    box.innerHTML=
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px">'+
+        '<span style="font-weight:700;font-size:13.5px">'+(d.running?"Checking confirmed students\u2019 TOC\u2026":"Confirmed TOC check")+'</span>'+
+        '<span style="font-size:13px;color:var(--muted)"><b style="color:var(--text)">'+(d.done||0)+'</b> / '+(d.total||0)+' &nbsp;('+pct+'%)</span>'+
+      '</div>'+
+      '<div style="height:9px;background:var(--border);border-radius:6px;overflow:hidden;margin-bottom:11px"><div style="height:100%;width:'+pct+'%;background:#4F46E5;transition:width .4s"></div></div>'+
+      '<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px">'+
+        cell("checked",d.done,"#111827")+cell("yes-TOC",d.yes_toc,"#047857")+
+        cell("no-TOC",d.no_toc,"#B45309")+cell("mismatch (error)",d.errors,"#B91C1C")+
+        (d.running?'<button onclick="cancelTocCheck()" style="margin-left:auto;background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;border-radius:7px;padding:3px 12px;font-size:12px;font-weight:700;cursor:pointer">Stop</button>':'')+
+      '</div>'+
+      (d.message?('<div style="margin-top:10px;font-size:12px;color:var(--muted)">'+d.message+'</div>'):'');
+    if(d.running){setTimeout(pollTocProgress,2000);}
+    else{loadTocErrors();}
+  }catch(e){setTimeout(pollTocProgress,3000);}
+}
+async function cancelTocCheck(){
+  try{ await api("/api/toc-check-cancel","POST",{}); showToast("Stopping…"); }catch(e){}
 }
 async function runNotChecked(){
   var sess=document.getElementById("s-session").value;
@@ -4780,6 +4824,115 @@ def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token
         return {"message": "No Unknown students to re-check.", "count": 0}
     background_tasks.add_task(run_status_check, "all", None, "unknown")
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
+
+# One-time "check TOC for ALL confirmed students" job state (confirmed students are never
+# re-run, so this button reads their real NIOS TOC once and flags any mismatch). Live progress
+# is polled by the dashboard. In-memory is fine — single-process app; resets on restart.
+TOC_CHECK_STATE = {"running": False, "total": 0, "done": 0, "no_toc": 0, "yes_toc": 0,
+                   "errors": 0, "cancel": False, "message": ""}
+
+
+@app.post("/api/toc-check-confirmed")
+def toc_check_confirmed(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Kick off a ONE-TIME TOC read for every confirmed student that hasn't been TOC-checked yet
+    (nios_toc empty). Each is read from NIOS (one captcha each, no login needed — the public status
+    page carries the Previous Subject Details). Mismatches land in 'TOC Status Error'. Re-clicking
+    only picks up whatever's left, so it's safe and resumable."""
+    if TOC_CHECK_STATE["running"]:
+        return {"ok": False, "running": True, "message": "A confirmed-TOC check is already running."}
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 AND is_confirmed=1 "
+        "AND COALESCE(nios_toc,'')='' AND COALESCE(toc_verified,0)=0 "
+        "AND COALESCE(dob,'')!='' "
+        "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
+    keys = [r["row_key"] for r in rows]
+    conn.close()
+    if not keys:
+        return {"ok": True, "count": 0, "message": "All confirmed students are already TOC-checked."}
+    TOC_CHECK_STATE.update({"running": True, "total": len(keys), "done": 0, "no_toc": 0,
+                            "yes_toc": 0, "errors": 0, "cancel": False,
+                            "message": f"Checking {len(keys)} confirmed students…"})
+    background_tasks.add_task(_run_toc_check_confirmed, keys)
+    return {"ok": True, "count": len(keys),
+            "message": f"Checking TOC for {len(keys)} confirmed students… watch the progress."}
+
+
+@app.get("/api/toc-check-progress")
+def toc_check_progress(user=Depends(verify_token)):
+    s = dict(TOC_CHECK_STATE)
+    s["percent"] = int(s["done"] * 100 / s["total"]) if s["total"] else 0
+    return s
+
+
+@app.post("/api/toc-check-cancel")
+def toc_check_cancel(user=Depends(verify_token)):
+    TOC_CHECK_STATE["cancel"] = True
+    return {"ok": True, "message": "Stopping after the current student…"}
+
+
+def _run_toc_check_confirmed(keys):
+    """Background: read the real NIOS TOC for the given confirmed students via the public status
+    page (same request that returns status also returns Previous Subject Details), and flag any
+    mismatch with the Portal. Updates TOC_CHECK_STATE live so the dashboard shows a progress bar
+    with checked / no-TOC / yes-TOC / errors."""
+    try:
+        from scraper import scrape_students
+        conn = get_db()
+        students = []
+        for rk in keys:
+            r = conn.execute("SELECT row_key, reference_no, enrollment_no, dob, session, toc_status, "
+                             "student_name FROM student_status WHERE row_key=?", (rk,)).fetchone()
+            if r:
+                students.append(dict(r))
+        conn.close()
+
+        def _cb(res):
+            rk = res.get("row_key")
+            nt = (res.get("nios_toc") or "").lower()
+            try:
+                cc = get_db()
+                if nt in ("yes", "no"):
+                    prow = cc.execute("SELECT COALESCE(toc_status,''), COALESCE(toc_verified,0) "
+                                      "FROM student_status WHERE row_key=?", (rk,)).fetchone()
+                    ptoc = (prow[0] or "").lower() if prow else ""
+                    verified = bool(prow and prow[1] == 1)
+                    subs_json = json.dumps(res.get("toc_subjects") or []) if res.get("toc_subjects") else ""
+                    mismatch = 1 if (not verified and ptoc in ("yes", "no") and ptoc != nt) else 0
+                    if subs_json:
+                        cc.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_mismatch=? WHERE row_key=?",
+                                   (nt, subs_json, mismatch, rk))
+                    else:
+                        cc.execute("UPDATE student_status SET nios_toc=?, toc_mismatch=? WHERE row_key=?",
+                                   (nt, mismatch, rk))
+                    if mismatch:
+                        cc.execute("UPDATE student_status SET remark=? WHERE row_key=?",
+                                   (f"mismatch toc status: NIOS official site says {nt.upper()}, "
+                                    f"MVS Portal says {ptoc.upper()}", rk))
+                        TOC_CHECK_STATE["errors"] += 1
+                    if nt == "yes":
+                        TOC_CHECK_STATE["yes_toc"] += 1
+                    else:
+                        TOC_CHECK_STATE["no_toc"] += 1
+                    cc.commit()
+                    cc.close()
+                else:
+                    cc.close()
+            except Exception as e:
+                logger.warning(f"confirmed-TOC cb error {rk}: {e}")
+            TOC_CHECK_STATE["done"] += 1
+
+        scrape_students(students, should_cancel=lambda: TOC_CHECK_STATE["cancel"], on_result=_cb)
+        TOC_CHECK_STATE["message"] = (
+            f"Done — checked {TOC_CHECK_STATE['done']} of {TOC_CHECK_STATE['total']}: "
+            f"{TOC_CHECK_STATE['yes_toc']} yes-TOC, {TOC_CHECK_STATE['no_toc']} no-TOC, "
+            f"{TOC_CHECK_STATE['errors']} mismatch(es) flagged.")
+    except Exception as e:
+        logger.warning(f"confirmed-TOC check error: {e}")
+        TOC_CHECK_STATE["message"] = f"Stopped due to an error: {e}"
+    finally:
+        TOC_CHECK_STATE["running"] = False
+
 
 @app.get("/api/toc-errors")
 def toc_errors(search: str = "", session_filter: str = "", user=Depends(verify_token)):
