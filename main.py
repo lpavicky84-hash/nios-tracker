@@ -1,5 +1,6 @@
 import os
 import logging
+import json
 import threading as _threading
 import time as _time
 os.environ["TZ"] = "Asia/Kolkata"
@@ -505,6 +506,9 @@ function applySidebarPref(){
     <div class="nav-item" data-page="notoc" onclick="nav('notoc')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span><span class="lbl">No-TOC Students</span>
       <span class="badge-count" id="nav-notoc-badge" style="display:none;background:#92400e">0</span></div>
+    <div class="nav-item" data-page="tocerror" onclick="nav('tocerror')">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span><span class="lbl">TOC Status Error</span>
+      <span class="badge-count" id="nav-tocerror-badge" style="display:none;background:#b91c1c">0</span></div>
     <div class="nav-sep">Activity</div>
     <div class="nav-item" data-page="history" onclick="nav('history')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="lbl">Change History</span></div>
@@ -700,7 +704,7 @@ function applySidebarPref(){
             <table><thead><tr>
               <th style="width:34px"><input type="checkbox" id="sel-all" onclick="toggleSelectAll(this)" title="Select all on this page"></th>
               <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
-              <th>Status</th><th>Last Checked</th><th>Action</th>
+              <th>Status</th><th>tocStatus</th><th>Last Checked</th><th>Action</th>
             </tr></thead><tbody id="s-body"></tbody></table>
           </div>
           <div class="pg-bar" id="s-pg"></div>
@@ -737,7 +741,27 @@ function applySidebarPref(){
         </div>
       </section>
 
-      <section id="sec-confirmed" class="page-section">
+      <section id="sec-tocerror" class="page-section">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+            <h3 style="margin:0">TOC Status Error</h3>
+            <button class="btn btn-primary btn-sm" onclick="runTocCheck(this)">Check TOC from NIOS</button>
+          </div>
+          <p style="color:var(--muted);font-size:13px;margin:10px 0 16px">
+            NIOS official site (Previous Subject Details) shows <b>TOC = Yes</b> for at least one subject,
+            but the MVS Portal has <b>tocStatus = "no"</b>. The WhatsApp is <b>held</b> for these until a
+            counsellor verifies — so no wrong (no-TOC) message goes out. Review each, then
+            <b>Verify</b> (accept NIOS) or <b>Edit</b> (change it), and the correct TOC is pushed to the Portal.
+          </p>
+          <div style="overflow-x:auto">
+            <table class="tbl"><thead><tr>
+              <th>Student</th><th>Reference</th><th>Session</th><th>Status</th>
+              <th>NIOS says</th><th>TOC subjects (NIOS)</th><th>Action</th>
+            </tr></thead><tbody id="te-body"></tbody></table>
+          </div>
+        </div>
+      </section>
+
         <div class="card">
           <h3>Admission Confirmed Students</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
@@ -828,7 +852,7 @@ function applySidebarPref(){
             <table><thead><tr>
               <th style="width:34px"><input type="checkbox" id="c-selall" onclick="toggleConfAll(this)" title="Select all on this page"></th>
               <th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th>
-              <th>Status</th><th>Downloads</th><th>Confirmed On</th><th>Action</th>
+              <th>Status</th><th>tocStatus</th><th>Downloads</th><th>Confirmed On</th><th>Action</th>
             </tr></thead><tbody id="c-body"></tbody></table>
           </div>
           <div class="pg-bar" id="c-pg"></div>
@@ -1732,6 +1756,7 @@ function nav(page){
   if(page==="failed")loadFailed(1);
   if(page==="unknown")loadUnknown(1);
   if(page==="notoc")loadNoToc(1);
+  if(page==="tocerror")loadTocErrors();
   if(page==="docreq")loadDocReq();
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
@@ -2382,14 +2407,27 @@ async function loadStudents(page){
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td>'+badge(s.current_status)+loginWarn(s)+'</td>'+
+      '<td>'+tocCell(s)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"—")+checkBadge(s)+'</td>'+
       '<td>'+delBtn(s)+'</td></tr>').join("")
-      :'<tr><td colspan="8" class="empty">No active students found</td></tr>';
+      :'<tr><td colspan="9" class="empty">No active students found</td></tr>';
     renderPg("s-pg",page,d.pages,"loadStudents");
     updateSelBar();
     const sa=document.getElementById("sel-all");if(sa)sa.checked=false;
     loadCheckSummary();
   }catch(e){showToast(""+e.message);}
+}
+function tocCell(s){
+  var t=((s.toc_status||"")+"").toLowerCase();
+  var pill=function(txt,col,bg){return '<span style="font-size:11px;font-weight:700;color:'+col+';background:'+bg+';padding:2px 8px;border-radius:6px">'+txt+'</span>';};
+  var base = t==="yes"?pill("yes","#047857","#D1FAE5"):(t==="no"?pill("no","#92400E","#FEF3C7"):'<span style="color:var(--muted);font-size:12px">—</span>');
+  if(s.toc_mismatch==1 && s.toc_verified!=1){
+    return base+'<div style="margin-top:4px"><span style="font-size:10.5px;font-weight:700;color:#B91C1C;background:#FEE2E2;padding:2px 7px;border-radius:6px" title="NIOS says '+((s.nios_toc||"").toUpperCase())+', Portal says '+t.toUpperCase()+'">TOC mismatch</span></div>';
+  }
+  if(s.toc_verified==1){
+    return base+'<div style="margin-top:4px"><span style="font-size:10.5px;font-weight:700;color:#047857;background:#D1FAE5;padding:2px 7px;border-radius:6px">verified</span></div>';
+  }
+  return base;
 }
 function checkBadge(s){
   if(s.check_state==="stale")
@@ -2500,10 +2538,10 @@ async function loadConfirmed(page){
       '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
-      '<td>'+badge(s.current_status)+loginWarn(s)+'</td><td style="font-size:12px">'+dlLinks(s)+waBtn(s)+'</td>'+
+      '<td>'+badge(s.current_status)+loginWarn(s)+'</td><td>'+tocCell(s)+'</td><td style="font-size:12px">'+dlLinks(s)+waBtn(s)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_changed||"—")+'</td>'+
       '<td>'+delBtn(s)+'</td></tr>').join("")
-      :'<tr><td colspan="9" class="empty">No confirmed students yet</td></tr>';
+      :'<tr><td colspan="10" class="empty">No confirmed students yet</td></tr>';
     const sa=document.getElementById("c-selall");if(sa)sa.checked=false;
     renderPg("c-pg",page,d.pages,"loadConfirmed");
     if(!WA_POLL){pollWaOnce().then(p=>{if(p&&p.running){renderWaProgress(p);startWaProgressPoll();}else{setWaBox(false);}});}
@@ -2997,6 +3035,62 @@ function renderUnknownPg(page,total,totalRows){
     [10,20,50,100].map(n=>'<option value="'+n+'" '+(n===perPage?"selected":"")+'>'+n+'</option>').join("")+
     '</select></div>';
   el.innerHTML=ctrl+sel;
+}
+async function loadTocErrors(){
+  var tb=document.getElementById("te-body");
+  if(!tb)return;
+  tb.innerHTML='<tr><td colspan="7" class="empty">Loading…</td></tr>';
+  try{
+    const d=await api("/api/toc-errors");
+    var badge=document.getElementById("nav-tocerror-badge");
+    if(badge){var n=d.count||0;badge.style.display=n?"inline-block":"none";badge.textContent=n;}
+    if(!d.students||!d.students.length){tb.innerHTML='<tr><td colspan="7" class="empty">No TOC mismatches. Run "Check TOC from NIOS" to scan no-TOC students.</td></tr>';return;}
+    tb.innerHTML=d.students.map(function(s){
+      var subs=(s.toc_subjects||[]).join(", ")||"—";
+      var verified=(s.toc_verified==1);
+      var rk=(s.row_key||"").replace(/'/g,"\\'");
+      return '<tr>'+
+        '<td><b>'+(s.student_name||"—")+'</b>'+(verified?' <span style="font-size:11px;color:#15803d">verified</span>':'')+'</td>'+
+        '<td>'+(s.reference_no||s.enrollment_no||"—")+'</td>'+
+        '<td>'+(s.session||"—")+'</td>'+
+        '<td style="font-size:12px">'+(s.current_status||"—")+'</td>'+
+        '<td><span style="font-weight:700;color:#B45309">TOC = '+(s.nios_toc||"?").toUpperCase()+'</span></td>'+
+        '<td style="font-size:12px">'+subs+'</td>'+
+        '<td style="white-space:nowrap">'+
+          '<button class="btn btn-primary btn-sm" onclick="tocVerify(&quot;'+rk+'&quot;,&quot;yes&quot;)">Verify (TOC yes)</button> '+
+          '<button class="btn btn-outline btn-sm" onclick="tocEdit(&quot;'+rk+'&quot;)">Edit</button>'+
+        '</td></tr>';
+    }).join("");
+  }catch(e){tb.innerHTML='<tr><td colspan="7" class="empty">'+e.message+'</td></tr>';}
+}
+async function tocVerify(rk,status,subs){
+  if(!confirm("Verify this student as TOC = "+status.toUpperCase()+"? The correct TOC is pushed to the Portal and the WhatsApp goes with the right campaign."))return;
+  try{
+    const r=await api("/api/toc-verify","POST",{row_key:rk,toc_status:status,toc_subjects:subs||[]});
+    showToast(r.message||"Verified"); loadTocErrors();
+  }catch(e){showToast(""+e.message);}
+}
+async function tocEdit(rk){
+  var choice=prompt("Set TOC status - type 'yes' or 'no':","yes");
+  if(!choice)return; choice=choice.trim().toLowerCase();
+  if(choice!=="yes"&&choice!=="no"){showToast("Type yes or no");return;}
+  var subs=[];
+  if(choice==="yes"){
+    var s=prompt("Which subjects are TOC (Yes)? Comma-separated (optional):","");
+    if(s)subs=s.split(",").map(function(x){return x.trim();}).filter(Boolean);
+  }
+  try{
+    const r=await api("/api/toc-verify","POST",{row_key:rk,toc_status:choice,toc_subjects:subs});
+    showToast(r.message||"Saved"); loadTocErrors();
+  }catch(e){showToast(""+e.message);}
+}
+async function runTocCheck(btn){
+  if(!confirm("Read the real TOC from NIOS for all unverified no-TOC students? This logs into NIOS per student (uses CapSolver) and flags mismatches here. It won't run while a status run is active."))return;
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{ const r=await api("/api/toc-check","POST",{}); showToast(r.message||"TOC check started"); }
+  catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 async function runNotChecked(){
   var sess=document.getElementById("s-session").value;
@@ -4687,6 +4781,120 @@ def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token
     background_tasks.add_task(run_status_check, "all", None, "unknown")
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
 
+@app.get("/api/toc-errors")
+def toc_errors(search: str = "", session_filter: str = "", user=Depends(verify_token)):
+    """Students where NIOS says TOC=yes but the Portal has tocStatus=no — a mismatch a counsellor
+    must verify before the (wrong) no-TOC WhatsApp goes out."""
+    conn = get_db()
+    wc = ["COALESCE(deleted,0)=0", "COALESCE(toc_mismatch,0)=1"]
+    params = []
+    if session_filter:
+        clause, sp = _session_clause(session_filter); wc.append(clause); params += sp
+    if search:
+        wc.append("(student_name LIKE ? OR reference_no LIKE ? OR enrollment_no LIKE ?)")
+        params += [f"%{search}%"] * 3
+    where = "WHERE " + " AND ".join(wc)
+    rows = conn.execute(f"SELECT row_key, reference_no, enrollment_no, student_name, session, "
+                        f"current_status, nios_toc, toc_subjects, toc_verified, last_checked "
+                        f"FROM student_status {where} ORDER BY toc_verified ASC, last_checked DESC "
+                        f"LIMIT 500", params).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["toc_subjects"] = json.loads(r["toc_subjects"]) if r["toc_subjects"] else []
+        except Exception:
+            d["toc_subjects"] = []
+        out.append(d)
+    return {"students": out, "count": len(out)}
+
+@app.post("/api/toc-verify")
+def toc_verify(body: dict, user=Depends(verify_token)):
+    """Counsellor resolves a TOC mismatch. body: {row_key, toc_status:'yes'|'no', toc_subjects:[...]}.
+    Applies the corrected TOC, pushes it to the Portal, clears the mismatch and marks it verified —
+    after which the run/WhatsApp proceeds with the correct campaign."""
+    row_key = str(body.get("row_key") or "")
+    toc_status = str(body.get("toc_status") or "").lower()
+    toc_subjects = body.get("toc_subjects") or []
+    if not row_key or toc_status not in ("yes", "no"):
+        return {"ok": False, "error": "row_key and toc_status (yes/no) required"}
+    conn = get_db()
+    r = conn.execute("SELECT student_id FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+    if not r:
+        conn.close(); return {"ok": False, "error": "student not found"}
+    subs_json = json.dumps(toc_subjects) if toc_subjects else ""
+    conn.execute("UPDATE student_status SET toc_status=?, toc_verified=1, toc_mismatch=0, "
+                 "nios_toc=?, toc_subjects=?, whatsapp_sent=0, whatsapp_info='' WHERE row_key=?",
+                 (toc_status, toc_status, subs_json, row_key))
+    conn.commit()
+    pushed = False
+    try:
+        import mvs_sync
+        if mvs_sync.enabled() and r["student_id"]:
+            pushed = mvs_sync.push_toc(r["student_id"], toc_status, toc_subjects)
+    except Exception as e:
+        logger.warning(f"TOC push error {row_key}: {e}")
+    conn.close()
+    return {"ok": True, "pushed_to_portal": pushed,
+            "message": f"TOC set to '{toc_status}' and verified. WhatsApp will now use the correct campaign."}
+
+@app.post("/api/toc-check")
+def toc_check(background_tasks: BackgroundTasks, body: dict = None, user=Depends(verify_token)):
+    """Read the REAL TOC from NIOS (Previous Subject Details) for unverified no-TOC students and
+    flag any mismatch with the Portal. Runs in the background; results appear in 'TOC Status Error'."""
+    body = body or {}
+    session_filter = str(body.get("session_filter", "") or "")
+    conn = get_db()
+    wc = ["COALESCE(deleted,0)=0", "COALESCE(toc_status,'')='no'", "COALESCE(toc_verified,0)=0",
+          "COALESCE(dob,'')!=''", "(COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')"]
+    params = []
+    if session_filter:
+        clause, sp = _session_clause(session_filter); wc.append(clause); params += sp
+    rows = conn.execute(f"SELECT row_key FROM student_status WHERE {' AND '.join(wc)} LIMIT 1000",
+                        params).fetchall()
+    keys = [r["row_key"] for r in rows]
+    conn.close()
+    if not keys:
+        return {"message": "No unverified no-TOC students to check.", "count": 0}
+    background_tasks.add_task(_run_toc_check, keys)
+    return {"message": f"Checking NIOS TOC for {len(keys)} student(s)… results appear in TOC Status Error.",
+            "count": len(keys)}
+
+def _run_toc_check(keys):
+    """Background: read NIOS 'Previous Subject Details' per no-TOC student and flag a mismatch if
+    NIOS shows TOC=yes. Skips while a run is active (no NIOS/captcha clash)."""
+    try:
+        import nios_login
+        conn = get_db()
+        if conn.execute("SELECT id FROM run_logs WHERE status='running'").fetchone():
+            conn.close()
+            logger.info("TOC check: a run is active — skipping to avoid clash; run it again after")
+            return
+        checked = flagged = 0
+        for rk in keys:
+            r = conn.execute("SELECT reference_no, enrollment_no, dob FROM student_status WHERE row_key=?",
+                             (rk,)).fetchone()
+            if not r:
+                continue
+            nios_toc, subs, ok = nios_login.fetch_nios_toc(r["reference_no"], r["dob"], r["enrollment_no"] or "")
+            if not ok or not nios_toc:
+                continue
+            checked += 1
+            subs_json = json.dumps(subs) if subs else ""
+            if nios_toc == "yes":
+                conn.execute("UPDATE student_status SET nios_toc='yes', toc_subjects=?, toc_mismatch=1, "
+                             "remark=? WHERE row_key=?",
+                             (subs_json, "mismatch toc status: NIOS official site says YES, MVS Portal says NO", rk))
+                flagged += 1
+            else:
+                conn.execute("UPDATE student_status SET nios_toc='no', toc_subjects='', toc_mismatch=0 WHERE row_key=?", (rk,))
+            conn.commit()
+        conn.close()
+        logger.info(f"TOC check done | checked {checked}, mismatches flagged {flagged}")
+    except Exception as e:
+        logger.warning(f"TOC check error: {e}")
+
 @app.get("/api/reconciliation")
 def reconciliation(user=Depends(verify_token)):
     """A precise breakdown of the tracker's own numbers so they can be reconciled against the
@@ -4738,6 +4946,7 @@ def reconciliation(user=Depends(verify_token)):
     }
 
 
+@app.get("/api/check-summary")
 def check_summary(session_filter: str = "", source_filter: str = "", view: str = "normal",
                   user=Depends(verify_token)):
     """For the selected session (or All): how many students were checked in the latest run
@@ -7315,6 +7524,15 @@ def _wa_send_one(row_key, verify=False):
         # we send anyway (a rare doc that NIOS never provides shouldn't block the link forever;
         # the link still live-fetches that one doc on demand).
         if not verify:
+            # HOLD the WhatsApp if this student has a TOC mismatch that a counsellor hasn't
+            # verified yet — sending the wrong (no-TOC) message is exactly what panics students.
+            _tm = conn.execute("SELECT COALESCE(toc_mismatch,0), COALESCE(toc_verified,0) "
+                               "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+            if _tm and _tm[0] == 1 and _tm[1] == 0:
+                conn.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                             ("Held — TOC mismatch needs counsellor verification", row_key))
+                conn.commit(); conn.close()
+                return False, "TOC mismatch — waiting for counsellor to verify before sending", False
             _att = (conn.execute("SELECT COALESCE(whatsapp_attempts,0) FROM student_status WHERE row_key=?",
                                  (row_key,)).fetchone() or [0])[0]
             if (not docs_all_cached(row_key)) and _att < 4:

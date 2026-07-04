@@ -181,7 +181,11 @@ def init_db():
                       ("data_error", "INTEGER DEFAULT 0"),
                       ("portal_pushed", "TEXT"),
                       ("student_id", "TEXT"),
-                      ("portal_origin", "TEXT")):
+                      ("portal_origin", "TEXT"),
+                      ("nios_toc", "TEXT"),
+                      ("toc_subjects", "TEXT"),
+                      ("toc_mismatch", "INTEGER DEFAULT 0"),
+                      ("toc_verified", "INTEGER DEFAULT 0")):
         try:
             c.execute(f"ALTER TABLE student_status ADD COLUMN {col} {decl}")
         except Exception:

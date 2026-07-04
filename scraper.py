@@ -253,6 +253,17 @@ def fetch_status(session, ref_no, email, csrf, token):
         result["nios_name"] = (data.get("name of candidate", "") or "").strip()
         result["remark"] = remark[:400] if (label == "Document Required" and remark) else ""
         result["success"] = (label != "Unknown")
+        # The check-admission-status page also carries the 'Previous Subject Details' table (with a
+        # TOC=Yes/No column). Read the REAL TOC right here, from the SAME response — so every status
+        # check (manual or automatic) also verifies TOC, with no extra login/captcha.
+        try:
+            import nios_login
+            _nt, _subs = nios_login.parse_toc_subjects(resp.text)
+            if _nt:
+                result["nios_toc"] = _nt
+                result["toc_subjects"] = _subs
+        except Exception:
+            pass
         logger.info(f"  {ref_no or email} -> {label}" + (f" | remark: {remark[:50]}" if remark else ""))
 
     except Exception as e:

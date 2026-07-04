@@ -284,7 +284,81 @@ def find_download_links(session, html, base_url=BASE):
             found[kind] = urljoin(base_url, href)
     return found
 
-def diagnose_login(reference_no, dob, enrollment_no=""):
+def parse_toc_subjects(html):
+    """Read the REAL TOC from a NIOS logged-in page (the 'Previous Subject Details' table which
+    has a TOC = Yes/No column per subject). Returns (nios_toc, toc_subjects):
+      nios_toc = 'yes' if ANY subject is TOC=Yes, 'no' if every subject is No, '' if not found.
+      toc_subjects = list of subject names whose TOC is Yes.
+    Defensive: finds any table that has both a 'Subject' and a 'TOC' column, whatever the layout."""
+    try:
+        soup = BeautifulSoup(html or "", "html.parser")
+    except Exception:
+        return "", []
+    for table in soup.find_all("table"):
+        headers = [th.get_text(" ", strip=True).lower() for th in table.find_all(["th", "td"], limit=12)]
+        # header row must mention a subject column AND a TOC column
+        toc_idx = subj_idx = None
+        head_cells = None
+        for tr in table.find_all("tr"):
+            cells = tr.find_all(["th", "td"])
+            texts = [c.get_text(" ", strip=True).lower() for c in cells]
+            if any("toc" == t or t == "t.o.c" or "toc" in t for t in texts) and any("subject" in t for t in texts):
+                for i, t in enumerate(texts):
+                    if t == "toc" or "toc" in t:
+                        toc_idx = i
+                    if "subject" in t:
+                        subj_idx = i
+                head_cells = cells
+                break
+        if toc_idx is None or subj_idx is None:
+            continue
+        # read data rows
+        toc_subjects = []
+        any_yes = False
+        seen_data = False
+        for tr in table.find_all("tr"):
+            cells = tr.find_all(["td", "th"])
+            if cells is head_cells or len(cells) <= max(toc_idx, subj_idx):
+                continue
+            subj = cells[subj_idx].get_text(" ", strip=True)
+            tocv = cells[toc_idx].get_text(" ", strip=True).lower()
+            if not subj or subj.lower() in ("subject", "#"):
+                continue
+            seen_data = True
+            if tocv.startswith("y"):
+                any_yes = True
+                toc_subjects.append(subj)
+        if seen_data:
+            return ("yes" if any_yes else "no"), toc_subjects
+    return "", []
+
+
+def fetch_nios_toc(reference_no, dob, enrollment_no=""):
+    """Log into NIOS and read the student's REAL TOC (from 'Previous Subject Details').
+    Returns (nios_toc, toc_subjects, ok): ok=False if login/parse failed (transient)."""
+    for attempt in range(_LOGIN_TRIES):
+        try:
+            session, resp = login_student(reference_no, dob, enrollment_no=enrollment_no)
+        except Exception as e:
+            logger.warning(f"fetch_nios_toc login error: {e}")
+            resp = None
+        if resp is None or not is_logged_in(resp.text):
+            continue
+        nios_toc, subs = parse_toc_subjects(resp.text)
+        if nios_toc:
+            return nios_toc, subs, True
+        # logged in but the subject table wasn't on this page — try a couple of likely pages
+        for path in ("/student/admission-status", "/student/profile", "/student/dashboard",
+                     "/student/registration-summary"):
+            try:
+                r2 = session.get(urljoin(BASE, path), headers=HEADERS, timeout=25, allow_redirects=True)
+                nios_toc, subs = parse_toc_subjects(r2.text)
+                if nios_toc:
+                    return nios_toc, subs, True
+            except Exception:
+                continue
+        return "", [], True   # logged in fine, but couldn't locate the table
+    return "", [], False
     """Deep, live diagnostic for a failing NIOS login. Reveals the actual cause: whether the
     reCAPTCHA site key on the page still matches ours, whether CapSolver returns a token, and
     exactly how NIOS responds. Read the 'verdict' first."""

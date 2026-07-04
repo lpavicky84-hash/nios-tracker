@@ -131,6 +131,33 @@ def _docs_complete(row_key):
         return False
 
 
+def push_toc(student_id, toc_status, toc_subjects=None):
+    """Push a counsellor-verified TOC (and the TOC subjects) to the Portal, so the Portal is
+    corrected without a manual edit. Returns True on success."""
+    if not enabled():
+        return False
+    sid = str(student_id or "").strip()
+    if not sid:
+        return False
+    data = {"action": "trackerUpdate", "trackerKey": MVS_TRACKER_KEY, "studentId": sid,
+            "tocStatus": ("yes" if str(toc_status).lower() == "yes" else "no")}
+    if toc_subjects:
+        try:
+            data["tocSubjects"] = ",".join([str(s) for s in toc_subjects])
+        except Exception:
+            pass
+    try:
+        r = requests.post(MVS_API_URL, data=data, timeout=40)
+        out = r.json()
+        if out.get("status") != "success":
+            logger.warning(f"MVS push_toc {sid}: {out.get('message')}")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"MVS push_toc error {sid}: {e}")
+        return False
+
+
 def push_student(student, status_label, conn=None, timeout=40):
     if not enabled():
         return False
