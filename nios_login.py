@@ -284,38 +284,46 @@ def find_download_links(session, html, base_url=BASE):
             found[kind] = urljoin(base_url, href)
     return found
 
-def parse_toc_subjects(html):
-    """Read the REAL TOC from a NIOS logged-in page (the 'Previous Subject Details' table which
-    has a TOC = Yes/No column per subject). Returns (nios_toc, toc_subjects):
+def is_public_session(session):
+    """April / October ('public') sessions — the only ones where the NIOS result page hides the
+    'Previous Subject Details' table for no-TOC students. On Demand / Stream 2 always show it."""
+    s = (session or "").lower()
+    return any(k in s for k in ("april", "october", "apr ", "oct ", "apr-", "oct-", "public"))
+
+
+def parse_toc_subjects_detail(html):
+    """Read the REAL TOC from a NIOS page ('Previous Subject Details' table with a TOC column).
+    Returns (nios_toc, toc_subjects, trace):
       nios_toc = 'yes' if ANY subject is TOC=Yes, 'no' if every subject is No, '' if not found.
-      toc_subjects = list of subject names whose TOC is Yes.
-    Defensive: finds any table that has both a 'Subject' and a 'TOC' column, whatever the layout."""
+      toc_subjects = subject names whose TOC is Yes.
+      trace = evidence string like 'Hindi=Yes, English=Yes, Mathematics=No' (what was read).
+    STRICT on purpose (learned from production misreads):
+      • The TOC header cell must BE 'toc' (or close variant) — NOT merely contain 'toc', so a
+        fee table with a 'TOC fee per subject' column can never be mistaken for the subject list.
+      • A table only counts if at least ONE row actually has a Yes/No value in the TOC column —
+        a header-lookalike with no real values is skipped and scanning continues."""
     try:
         soup = BeautifulSoup(html or "", "html.parser")
     except Exception:
-        return "", []
+        return "", [], ""
     for table in soup.find_all("table"):
-        headers = [th.get_text(" ", strip=True).lower() for th in table.find_all(["th", "td"], limit=12)]
-        # header row must mention a subject column AND a TOC column
         toc_idx = subj_idx = None
         head_cells = None
         for tr in table.find_all("tr"):
             cells = tr.find_all(["th", "td"])
             texts = [c.get_text(" ", strip=True).lower() for c in cells]
-            if any("toc" == t or t == "t.o.c" or "toc" in t for t in texts) and any("subject" in t for t in texts):
-                for i, t in enumerate(texts):
-                    if t == "toc" or "toc" in t:
-                        toc_idx = i
-                    if "subject" in t:
-                        subj_idx = i
-                head_cells = cells
+            t_i = [i for i, t in enumerate(texts) if t in ("toc", "t.o.c", "t.o.c.", "toc status", "toc?")]
+            s_i = [i for i, t in enumerate(texts) if t == "subject" or t.startswith("subject ")
+                   or t in ("subject name", "subjects")]
+            if t_i and s_i:
+                toc_idx, subj_idx, head_cells = t_i[0], s_i[0], cells
                 break
         if toc_idx is None or subj_idx is None:
             continue
-        # read data rows
         toc_subjects = []
+        trace_parts = []
         any_yes = False
-        seen_data = False
+        valued = 0
         for tr in table.find_all("tr"):
             cells = tr.find_all(["td", "th"])
             if cells is head_cells or len(cells) <= max(toc_idx, subj_idx):
@@ -324,13 +332,24 @@ def parse_toc_subjects(html):
             tocv = cells[toc_idx].get_text(" ", strip=True).lower()
             if not subj or subj.lower() in ("subject", "#"):
                 continue
-            seen_data = True
             if tocv.startswith("y"):
+                valued += 1
                 any_yes = True
                 toc_subjects.append(subj)
-        if seen_data:
-            return ("yes" if any_yes else "no"), toc_subjects
-    return "", []
+                trace_parts.append(f"{subj}=Yes")
+            elif tocv.startswith("n"):
+                valued += 1
+                trace_parts.append(f"{subj}=No")
+            # anything else (blank / dash / amounts) is NOT a TOC value — ignore the row
+        if valued > 0:
+            return ("yes" if any_yes else "no"), toc_subjects, ", ".join(trace_parts)[:280]
+    return "", [], ""
+
+
+def parse_toc_subjects(html):
+    """Back-compat wrapper: returns (nios_toc, toc_subjects)."""
+    toc, subs, _ = parse_toc_subjects_detail(html)
+    return toc, subs
 
 
 def fetch_nios_toc(reference_no, dob, enrollment_no=""):

@@ -185,7 +185,8 @@ def init_db():
                       ("nios_toc", "TEXT"),
                       ("toc_subjects", "TEXT"),
                       ("toc_mismatch", "INTEGER DEFAULT 0"),
-                      ("toc_verified", "INTEGER DEFAULT 0")):
+                      ("toc_verified", "INTEGER DEFAULT 0"),
+                      ("toc_src", "TEXT")):
         try:
             c.execute(f"ALTER TABLE student_status ADD COLUMN {col} {decl}")
         except Exception:

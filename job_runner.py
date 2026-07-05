@@ -737,6 +737,15 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # the WhatsApp goes out. Once verified (toc_verified=1) we never re-flag it.
             try:
                 _nt = (res.get("nios_toc") or "").lower()
+                if not _nt and res.get("nios_toc_absent"):
+                    # Page read fine, table absent. For April/October NIOS hides the table for
+                    # no-TOC students -> absence IS the answer: TOC = No. On Demand / Stream 2
+                    # always show the table, so absence there stays 'could not read'.
+                    import nios_login as _nl
+                    if _nl.is_public_session(res.get("session", "")):
+                        _nt = "no"
+                        res["toc_src"] = ("No Previous-Subject-Details table on the NIOS page — "
+                                          "for April/October sessions this means TOC = No")
                 if _nt in ("yes", "no"):
                     _ptoc = (toc_by_key.get(row_key, "") or "").lower()
                     _subs_json = json.dumps(res.get("toc_subjects") or []) if res.get("toc_subjects") else ""
@@ -744,17 +753,21 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                                       (row_key,)).fetchone()
                     _verified = bool(_vrow and _vrow[0] == 1)
                     _mismatch = 1 if (not _verified and _ptoc in ("yes", "no") and _ptoc != _nt) else 0
+                    _tsrc = (res.get("toc_src") or "")[:280]
                     if _subs_json:
-                        c.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_mismatch=? WHERE row_key=?",
-                                  (_nt, _subs_json, _mismatch, row_key))
+                        c.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_mismatch=?, toc_src=? WHERE row_key=?",
+                                  (_nt, _subs_json, _mismatch, _tsrc, row_key))
                     else:
-                        c.execute("UPDATE student_status SET nios_toc=?, toc_mismatch=? WHERE row_key=?",
-                                  (_nt, _mismatch, row_key))
+                        c.execute("UPDATE student_status SET nios_toc=?, toc_mismatch=?, toc_src=? WHERE row_key=?",
+                                  (_nt, _mismatch, _tsrc, row_key))
                     if _mismatch:
                         c.execute("UPDATE student_status SET remark=? WHERE row_key=?",
                                   (f"mismatch toc status: NIOS official site says {_nt.upper()}, "
                                    f"MVS Portal says {_ptoc.upper()}", row_key))
                         logger.info(f"  TOC mismatch {row_key}: NIOS={_nt} Portal={_ptoc}")
+                    else:
+                        c.execute("UPDATE student_status SET remark='' WHERE row_key=? "
+                                  "AND remark LIKE 'mismatch toc status%'", (row_key,))
             except Exception as _te:
                 logger.warning(f"TOC check error {row_key}: {_te}")
 

@@ -258,10 +258,16 @@ def fetch_status(session, ref_no, email, csrf, token):
         # check (manual or automatic) also verifies TOC, with no extra login/captcha.
         try:
             import nios_login
-            _nt, _subs = nios_login.parse_toc_subjects(resp.text)
+            _nt, _subs, _trace = nios_login.parse_toc_subjects_detail(resp.text)
             if _nt:
                 result["nios_toc"] = _nt
                 result["toc_subjects"] = _subs
+                result["toc_src"] = _trace
+            elif result["success"]:
+                # Page read fine but NO Previous-Subject table. For April/October (public)
+                # students NIOS only renders that table when TOC = Yes — so absence there means
+                # TOC = No. The caller decides using the student's session (we may not have it here).
+                result["nios_toc_absent"] = 1
         except Exception:
             pass
         logger.info(f"  {ref_no or email} -> {label}" + (f" | remark: {remark[:50]}" if remark else ""))

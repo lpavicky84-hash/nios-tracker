@@ -748,6 +748,7 @@ function applySidebarPref(){
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
             <h3 style="margin:0">TOC Status Error</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA" onclick="recheckFlagged(this)" title="Fresh NIOS read for every currently-flagged mismatch. Ones that now match auto-unflag; real mismatches stay for Verify/Edit.">Re-check flagged</button>
               <button class="btn btn-outline btn-sm" onclick="runTocCheckConfirmed(this)" title="One-time: read the real NIOS TOC for every confirmed student that hasn't been checked yet. Confirmed students are never re-run, so this covers them. Safe to re-click — it only picks up whatever is left.">Check all confirmed students' TOC (one-time)</button>
               <button class="btn btn-primary btn-sm" onclick="runTocCheck(this)" title="Read NIOS TOC for unverified no-TOC students.">Check TOC from NIOS</button>
             </div>
@@ -784,6 +785,7 @@ function applySidebarPref(){
               <option value="">All WhatsApp</option>
               <option value="delivered">Delivered</option>
               <option value="sent">Sent (pending delivery)</option>
+              <option value="pending24">Sent, pending &gt; 24h</option>
               <option value="notsent">Not sent yet</option>
               <option value="failed">Failed</option>
             </select>
@@ -3061,15 +3063,18 @@ async function loadTocErrors(){
       var subs=(s.toc_subjects||[]).join(", ")||"—";
       var verified=(s.toc_verified==1);
       var rk=(s.row_key||"").replace(/'/g,"\\'");
+      var nv=((s.nios_toc||"")+"").toLowerCase()==="no"?"no":"yes";
+      var ev=(s.toc_src||"").replace(/"/g,"&quot;");
       return '<tr>'+
         '<td><b>'+(s.student_name||"—")+'</b>'+(verified?' <span style="font-size:11px;color:#15803d">verified</span>':'')+'</td>'+
         '<td>'+(s.reference_no||s.enrollment_no||"—")+'</td>'+
         '<td>'+(s.session||"—")+'</td>'+
         '<td style="font-size:12px">'+(s.current_status||"—")+'</td>'+
-        '<td><span style="font-weight:700;color:#B45309">TOC = '+(s.nios_toc||"?").toUpperCase()+'</span></td>'+
-        '<td style="font-size:12px">'+subs+'</td>'+
+        '<td'+(ev?' title="NIOS page read: '+ev+'"':'')+'><span style="font-weight:700;color:#B45309">NIOS = '+(s.nios_toc||"?").toUpperCase()+'</span>'+
+          '<div style="font-size:11px;color:var(--muted)">Portal = '+((s.toc_status||"?")+"").toUpperCase()+'</div></td>'+
+        '<td style="font-size:12px"'+(ev?' title="'+ev+'"':'')+'>'+subs+'</td>'+
         '<td style="white-space:nowrap">'+
-          '<button class="btn btn-primary btn-sm" onclick="tocVerify(&quot;'+rk+'&quot;,&quot;yes&quot;)">Verify (TOC yes)</button> '+
+          '<button class="btn btn-primary btn-sm" onclick="tocVerify(&quot;'+rk+'&quot;,&quot;'+nv+'&quot;)">Verify (TOC '+nv+')</button> '+
           '<button class="btn btn-outline btn-sm" onclick="tocEdit(&quot;'+rk+'&quot;)">Edit</button>'+
         '</td></tr>';
     }).join("");
@@ -3115,6 +3120,17 @@ async function runTocCheckConfirmed(btn){
   }catch(e){showToast(""+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
+async function recheckFlagged(btn){
+  if(!confirm("Fresh NIOS read for every flagged (unverified) mismatch? Wrong flags from an earlier misread will clear automatically; genuine mismatches stay for Verify/Edit."))return;
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await api("/api/toc-check-confirmed","POST",{flagged:true});
+    showToast(r.message||"Started");
+    if(r.count>0) pollTocProgress();
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
 async function tocCheckSelected(which,btn){
   var keys = (which==="confirmed") ? Array.from((typeof CONF_SEL!=="undefined")?CONF_SEL:[])
                                    : Array.from((typeof SELECTED!=="undefined")?SELECTED:[]);
@@ -3149,6 +3165,7 @@ async function pollTocProgress(){
       '<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px">'+
         cell("checked",d.done,"#111827")+cell("yes-TOC",d.yes_toc,"#047857")+
         cell("no-TOC",d.no_toc,"#B45309")+cell("mismatch (error)",d.errors,"#B91C1C")+
+        cell("could not read",Math.max(0,(d.done||0)-((d.yes_toc||0)+(d.no_toc||0))),"#6B7280")+
         (d.running?'<button onclick="cancelTocCheck()" style="margin-left:auto;background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;border-radius:7px;padding:3px 12px;font-size:12px;font-weight:700;cursor:pointer">Stop</button>':'')+
       '</div>'+
       (d.message?('<div style="margin-top:10px;font-size:12px;color:var(--muted)">'+d.message+'</div>'):'');
@@ -4630,6 +4647,12 @@ def _build_student_where(view, search, status_filter, session_filter,
             wc.append("(whatsapp_delivery = 'failed' OR COALESCE(login_failed,0)=1)")
         elif wa_status == "sent":
             wc.append("COALESCE(whatsapp_sent,0)=1 AND COALESCE(whatsapp_delivery,'')=''")
+        elif wa_status == "pending24":
+            # Sent 24h+ ago and STILL no delivery confirmation — the ones most likely to have
+            # silently not reached the student (like the June-29 case). Bulk-resend candidates.
+            wc.append("COALESCE(whatsapp_sent,0)=1 AND COALESCE(whatsapp_delivery,'')='' "
+                      "AND COALESCE(whatsapp_sent_at,'') != '' "
+                      "AND whatsapp_sent_at <= datetime('now','localtime','-24 hours')")
         elif wa_status == "notsent":
             wc.append("COALESCE(whatsapp_sent,0)=0")
     if class_filter:                       # "10" matches 10/10TH, "12" matches 12/12TH
@@ -4886,8 +4909,17 @@ def toc_check_confirmed(background_tasks: BackgroundTasks, body: dict = None, us
         return {"ok": False, "running": True, "message": "A TOC check is already running."}
     body = body or {}
     sel_keys = [str(k) for k in (body.get("row_keys") or []) if k]
+    flagged_only = bool(body.get("flagged"))
     conn = get_db()
-    if sel_keys:
+    if flagged_only:
+        # Re-check exactly the currently-flagged (unverified) mismatches — a fresh NIOS read.
+        # Ones that now MATCH auto-unflag (and their stale remark clears); real mismatches stay.
+        rows = conn.execute(
+            "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 "
+            "AND COALESCE(toc_mismatch,0)=1 AND COALESCE(toc_verified,0)=0 "
+            "AND COALESCE(dob,'')!='' "
+            "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
+    elif sel_keys:
         qm = ",".join("?" * len(sel_keys))
         rows = conn.execute(
             f"SELECT row_key FROM student_status WHERE row_key IN ({qm}) "
@@ -4946,6 +4978,17 @@ def _run_toc_check_confirmed(keys):
         def _cb(res):
             rk = res.get("row_key")
             nt = (res.get("nios_toc") or "").lower()
+            if not nt and res.get("nios_toc_absent"):
+                # April/October pages hide the Previous-Subject table for no-TOC students —
+                # absence on a successfully-read public page means TOC = No.
+                try:
+                    import nios_login as _nl
+                    if _nl.is_public_session(res.get("session", "")):
+                        nt = "no"
+                        res["toc_src"] = ("No Previous-Subject-Details table on the NIOS page — "
+                                          "for April/October sessions this means TOC = No")
+                except Exception:
+                    pass
             try:
                 cc = get_db()
                 if nt in ("yes", "no"):
@@ -4955,17 +4998,22 @@ def _run_toc_check_confirmed(keys):
                     verified = bool(prow and prow[1] == 1)
                     subs_json = json.dumps(res.get("toc_subjects") or []) if res.get("toc_subjects") else ""
                     mismatch = 1 if (not verified and ptoc in ("yes", "no") and ptoc != nt) else 0
+                    _src = (res.get("toc_src") or "")[:280]
                     if subs_json:
-                        cc.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_mismatch=? WHERE row_key=?",
-                                   (nt, subs_json, mismatch, rk))
+                        cc.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_mismatch=?, toc_src=? WHERE row_key=?",
+                                   (nt, subs_json, mismatch, _src, rk))
                     else:
-                        cc.execute("UPDATE student_status SET nios_toc=?, toc_mismatch=? WHERE row_key=?",
-                                   (nt, mismatch, rk))
+                        cc.execute("UPDATE student_status SET nios_toc=?, toc_mismatch=?, toc_src=? WHERE row_key=?",
+                                   (nt, mismatch, _src, rk))
                     if mismatch:
                         cc.execute("UPDATE student_status SET remark=? WHERE row_key=?",
                                    (f"mismatch toc status: NIOS official site says {nt.upper()}, "
                                     f"MVS Portal says {ptoc.upper()}", rk))
                         TOC_CHECK_STATE["errors"] += 1
+                    else:
+                        # Values agree now — clear a stale mismatch remark from an earlier (bad) read.
+                        cc.execute("UPDATE student_status SET remark='' WHERE row_key=? "
+                                   "AND remark LIKE 'mismatch toc status%'", (rk,))
                     if nt == "yes":
                         TOC_CHECK_STATE["yes_toc"] += 1
                     else:
@@ -4979,10 +5027,17 @@ def _run_toc_check_confirmed(keys):
             TOC_CHECK_STATE["done"] += 1
 
         scrape_students(students, should_cancel=lambda: TOC_CHECK_STATE["cancel"], on_result=_cb)
+        _d, _t = TOC_CHECK_STATE["done"], TOC_CHECK_STATE["total"]
+        _read = TOC_CHECK_STATE["yes_toc"] + TOC_CHECK_STATE["no_toc"]
+        _noread = max(0, _d - _read)
+        _ok = max(0, _read - TOC_CHECK_STATE["errors"])
         TOC_CHECK_STATE["message"] = (
-            f"Done — checked {TOC_CHECK_STATE['done']} of {TOC_CHECK_STATE['total']}: "
-            f"{TOC_CHECK_STATE['yes_toc']} yes-TOC, {TOC_CHECK_STATE['no_toc']} no-TOC, "
-            f"{TOC_CHECK_STATE['errors']} mismatch(es) flagged.")
+            f"Done — checked {_d} of {_t}: {TOC_CHECK_STATE['yes_toc']} yes-TOC, "
+            f"{TOC_CHECK_STATE['no_toc']} no-TOC, {TOC_CHECK_STATE['errors']} mismatch(es) flagged. "
+            f"{_ok} student(s) match the Portal — no issue. "
+            + (f"{_noread} could not be read (no TOC table on their page / check failed) — "
+               f"re-run these later or check them via 'Check TOC (selected)'." if _noread else
+               "Every checked student's TOC was read successfully."))
     except Exception as e:
         logger.warning(f"confirmed-TOC check error: {e}")
         TOC_CHECK_STATE["message"] = f"Stopped due to an error: {e}"
@@ -5004,7 +5059,8 @@ def toc_errors(search: str = "", session_filter: str = "", user=Depends(verify_t
         params += [f"%{search}%"] * 3
     where = "WHERE " + " AND ".join(wc)
     rows = conn.execute(f"SELECT row_key, reference_no, enrollment_no, student_name, session, "
-                        f"current_status, nios_toc, toc_subjects, toc_verified, last_checked "
+                        f"current_status, nios_toc, toc_subjects, toc_verified, last_checked, "
+                        f"COALESCE(toc_status,'') AS toc_status, COALESCE(toc_src,'') AS toc_src "
                         f"FROM student_status {where} ORDER BY toc_verified ASC, last_checked DESC "
                         f"LIMIT 500", params).fetchall()
     conn.close()
@@ -6735,6 +6791,13 @@ async def whatsapp_delivery_webhook(token: str, request):
     conn = get_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     matched = 0
+    # Remember that the AiSensy webhook is LIVE — the auto-redeliver sweep only trusts
+    # "no delivery event = genuinely undelivered" once we know events actually flow.
+    try:
+        from database import set_setting
+        set_setting("wa_webhook_seen", "1")
+    except Exception:
+        pass
     for r in conn.execute("SELECT row_key, mobile FROM student_status WHERE whatsapp_sent=1").fetchall():
         m = "".join(ch for ch in (r["mobile"] or "") if ch.isdigit())
         if m and m[-10:] == phone10:
