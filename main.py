@@ -2118,12 +2118,17 @@ async function loadReconciliation(refresh){
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'+
         '<span style="font-size:14px;font-weight:800">Tracker vs Portal — quick check</span>'+
         '<span style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button onclick="compareConfirmed(this)" style="background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Compare confirmed</button>'+
+          '<button onclick="auditConfirmed(this)" style="background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Find confirmed gap</button>'+
           '<button onclick="probeOrigin(this)" style="background:#EDE9FE;color:#6D28D9;border:1px solid #DDD6FE;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Detect origin field</button>'+
+          '<button onclick="forceConfirmed(this)" style="background:#0F766E;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer" title="Re-push every confirmed student to the Portal and list any the Portal does not accept.">Re-push ALL confirmed</button>'+
           '<button onclick="syncPortalNow(this)" style="background:#4F46E5;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Sync Portal now</button>'+
           '<button onclick="document.getElementById(&quot;reconcile-panel&quot;).style.display=&quot;none&quot;" style="background:var(--soft);border:1px solid var(--border);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer">&times; Close</button>'+
         '</span></div>'+
       '<div id="rp-syncline" style="display:none;margin:2px 0 10px;font-size:12.5px;font-weight:700;color:#4F46E5"></div>'+
       '<div id="rp-probe" style="display:none;margin:2px 0 10px;font-size:12px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 12px"></div>'+
+      '<div id="rp-force" style="display:none;margin:2px 0 10px;font-size:12.5px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 12px"></div>'+
+      '<div id="rp-audit" style="display:none;margin:2px 0 10px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 12px"></div>'+
       row("Total students in tracker", d.total_live)+
       row("Portal has, tracker skips", (d.deleted||0)+(d.no_reference||0), "#B45309",
           "deleted: "+(d.deleted||0)+" + no-reference pending: "+(d.no_reference||0))+
@@ -2142,6 +2147,59 @@ async function loadReconciliation(refresh){
       '<div style="margin-top:10px;font-size:12px;color:var(--muted)">'+
       'Simple rule: <b>tracker total + deleted + pending = Portal total</b>, and confirmed matches once "not updated yet" reaches 0.</div>';
   }catch(e){p.innerHTML='<div style="color:#B91C1C;font-size:13px">Could not load: '+e.message+'</div>';}
+}
+async function auditConfirmed(btn){
+  var out=document.getElementById("rp-audit");
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Comparing…";}
+  if(out){out.style.display="block";out.textContent="Fetching the Portal list and comparing every confirmed student…";}
+  try{
+    const d=await api("/api/confirmed-audit");
+    if(!d.ok){if(out)out.textContent=d.message;return;}
+    var h='<b style="color:var(--text)">'+d.mismatch_count+' confirmed student(s) the Portal is NOT counting as confirmed</b> '+
+          '<span style="color:var(--muted)">(of '+d.total_confirmed_linked+' linked). Portal sends a status field: '+(d.portal_sends_status?"yes":"no")+'.</span>';
+    if(d.note)h+='<div style="margin-top:6px;color:#92400E">'+d.note+'</div>';
+    if(d.mismatches&&d.mismatches.length){
+      h+='<div style="overflow-x:auto;margin-top:8px"><table class="tbl" style="font-size:12px"><thead><tr>'+
+         '<th>Student</th><th>Reference</th><th>Mobile</th><th>Session</th><th>Portal says</th><th>Tracker</th></tr></thead><tbody>';
+      d.mismatches.forEach(function(m){
+        h+='<tr><td><b>'+(m.name||"—")+'</b></td><td>'+(m.reference_no||"—")+'</td><td>'+(m.mobile||"—")+'</td>'+
+           '<td>'+(m.session||"—")+'</td><td style="color:#B45309;font-weight:700">'+(m.portal_status||"—")+'</td>'+
+           '<td style="color:#047857">'+(m.tracker_status||"—")+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    }else{
+      h+='<div style="margin-top:6px;color:#047857">No per-student mismatch found — the two are aligned (any remaining difference is Portal-side display lag).</div>';
+    }
+    if(out)out.innerHTML=h;
+  }catch(e){if(out)out.textContent=""+e.message;}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function forceConfirmed(btn){
+  if(!confirm("Re-push EVERY confirmed student to the Portal? This re-sends 'Admission Confirmed' for all linked confirmed students and lists any the Portal does not accept. Safe to run anytime (not during a status run)."))return;
+  var box=document.getElementById("rp-force");
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await api("/api/portal-force-confirmed","POST",{});
+    if(box){box.style.display="block";box.textContent=r.message||"";}
+    if(!r.started){showToast(r.message);if(btn){btn.disabled=false;btn.textContent=old;}return;}
+    (async function poll(){
+      try{
+        const s=await api("/api/portal-force-status");
+        var html='<b>'+(s.running?("Re-pushing… "+s.done+" / "+s.total+" ("+(s.percent||0)+"%) — accepted "+s.ok+", not accepted "+s.failed):s.message)+'</b>';
+        if(!s.running && s.fail_list && s.fail_list.length){
+          html+='<div style="margin-top:8px;font-weight:700;color:#B91C1C">Portal did NOT accept these — check them on the Portal:</div>';
+          html+='<div style="max-height:220px;overflow:auto;margin-top:4px"><table class="tbl"><thead><tr><th>Name</th><th>Reference</th><th>Portal ID</th></tr></thead><tbody>'+
+            s.fail_list.map(function(f){return '<tr><td>'+(f.name||"—")+'</td><td>'+(f.reference||"—")+'</td><td style="font-size:12px;color:var(--muted)">'+(f.student_id||"—")+'</td></tr>';}).join("")+
+            '</tbody></table></div>';
+        }
+        if(box)box.innerHTML=html;
+        if(s.running){setTimeout(poll,1500);}
+        else{showToast(s.message||"Done");if(btn){btn.disabled=false;btn.textContent=old;}loadReconciliation(true);}
+      }catch(e){setTimeout(poll,2500);}
+    })();
+  }catch(e){showToast(""+e.message);if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 async function probeOrigin(btn){
   var out=document.getElementById("rp-probe");
@@ -2173,6 +2231,48 @@ async function probeOrigin(btn){
   }catch(e){if(out)out.textContent=""+e.message;}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
+async function compareConfirmed(btn){
+  var out=document.getElementById("rp-probe");
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Comparing…";}
+  if(out){out.style.display="block";out.textContent="Portal se poori list milakar student-by-student compare ho raha hai…";}
+  try{
+    const d=await api("/api/confirmed-compare");
+    if(!d.ok){if(out)out.textContent=d.message;return;}
+    var list=function(title,items,color,showPV){
+      if(!items||!items.length)return "";
+      var h='<div style="margin-top:9px"><b style="color:'+color+'">'+title+'</b><ul style="margin:4px 0 0 18px;padding:0">';
+      items.forEach(function(s){
+        h+='<li><b>'+(s.name||"—")+'</b> · '+(s.reference||"—")+' · '+(s.session||"—")+
+           (showPV?(' — Portal says: <b style="color:'+color+'">'+(s.portal_value||"?")+'</b>'):'')+'</li>';
+      });
+      return h+'</ul></div>';
+    };
+    var html='<b style="color:var(--text)">Tracker confirmed: '+d.tracker_confirmed+
+             (d.portal_confirmed_by_field!=null?(' · Portal confirmed (its own field "'+d.stage_field+'"): '+d.portal_confirmed_by_field):'')+
+             ' · matched: '+d.matched+'</b>';
+    if(d.differs_count){
+      html+=list("Portal ke paas hain par stage 'confirmed' NAHI ("+d.differs_count+") — ye hi gap hai:",d.differs,"#B91C1C",true);
+      var keys=d.differs.map(function(s){return s.row_key;});
+      window.__cmpDiffKeys=keys;
+      html+='<div style="margin-top:8px"><button onclick="forcePush(window.__cmpDiffKeys,this)" style="background:#DC2626;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12.5px;font-weight:700;cursor:pointer">Force re-push these '+d.differs_count+' now</button></div>';
+    }
+    if(d.missing_count) html+=list("Tracker linked hai par Portal list mein studentId NAHI mila ("+d.missing_count+") — Portal pe delete/merge hue honge:",d.missing,"#B45309",false);
+    if(d.no_link_count) html+=list("No Portal link ("+d.no_link_count+") — Transfer Data se bhejo:",d.no_link,"#6B7280",false);
+    if(!d.differs_count&&!d.missing_count&&!d.no_link_count) html+='<div style="margin-top:8px;color:#047857;font-weight:700">Sab match — koi gap nahi.</div>';
+    if(d.stage_field==null) html+='<div style="margin-top:8px;color:#B45309">Note: Portal list mein koi stage/status field nahi mila, isliye sirf membership compare hua (stage compare nahi ho paya).</div>';
+    if(out)out.innerHTML=html;
+  }catch(e){if(out)out.textContent=""+e.message;}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function forcePush(keys,btn){
+  if(!confirm("Force re-push "+keys.length+" student(s) ka current status Portal pe?"))return;
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Pushing…";}
+  try{const r=await api("/api/force-push","POST",{row_keys:keys});showToast(r.message||"Done");loadReconciliation(true);}
+  catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
 async function applyOrigin(btn){
   var old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Applying…";}
@@ -2183,17 +2283,28 @@ async function applyOrigin(btn){
   }catch(e){showToast(""+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
+function showUnlinked(list){
+  var out=document.getElementById("rp-probe");
+  if(!out||!list||!list.length)return;
+  out.style.display="block";
+  out.innerHTML='<b style="color:#B45309">Ye '+list.length+' confirmed student(s) Portal ki list mein NAHI mile (isliye push impossible) — Portal pe inka record banao/transfer karo, ya inka reference Portal se milao:</b>'+
+    '<ul style="margin:6px 0 0 18px;padding:0">'+
+    list.map(function(u){return '<li><b>'+(u.name||"—")+'</b> · '+(u.reference||"no ref")+' · '+(u.mobile||"no mobile")+'</li>';}).join("")+
+    '</ul>';
+}
 async function syncPortalNow(btn){
   var line=document.getElementById("rp-syncline");
   var old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Checking…";}
   try{
     const r=await api("/api/portal-resync-now","POST",{});
+    showUnlinked(r.unlinked);
     if(r.nothing || !r.started){
       // Nothing to push (or run active) — say it clearly, right in the panel.
       if(line){line.style.display="block";line.style.color=r.nothing?"#047857":"#B45309";line.textContent=r.message;}
       showToast(r.message);
       if(btn){btn.disabled=false;btn.textContent=old;}
+      if(r.linked>0){ loadReconciliation(true); }
       return;
     }
     // Started — poll live progress until done, then refresh the numbers in place.
@@ -5465,6 +5576,52 @@ def portal_resync_now(background_tasks: BackgroundTasks, user=Depends(verify_tok
                      "AND COALESCE(current_status,'') != 'Admission Confirmed'")
         conn.commit()
         logger.info(f"Portal sync: healed {drift} confirmed-status drift row(s)")
+    # ── LINK REPAIR ─────────────────────────────────────────────────────────────
+    # Old confirmed students never got their Portal student_id saved (confirmed students are
+    # skipped by runs, and the id is saved during runs). Without the id their status can NEVER
+    # be pushed — the exact cause of tracker-confirmed > Portal-confirmed. Match them to the
+    # full Portal list by reference / enrollment / mobile and save the id (+origin).
+    linked = 0
+    unlinked = []
+    try:
+        import mvs_sync
+        raw = mvs_sync._trackerlist(include_done=True, timeout=60)
+        by_ref, by_enr, by_mob = {}, {}, {}
+        for s in raw:
+            sid = str(s.get("studentId") or "").strip()
+            if not sid:
+                continue
+            org = mvs_sync._detect_origin(s)
+            rec = (sid, org)
+            rf = str(s.get("referenceNo") or "").strip().upper()
+            en = str(s.get("enrollmentNo") or "").strip().upper()
+            mb = "".join(ch for ch in str(s.get("mobile") or "") if ch.isdigit())[-10:]
+            if rf and mvs_sync._valid_ref(rf):
+                by_ref[rf] = rec
+            if en and mvs_sync._valid_ref(en):
+                by_enr[en] = rec
+            if len(mb) == 10:
+                by_mob.setdefault(mb, rec)
+        rows = conn.execute(
+            "SELECT row_key, COALESCE(reference_no,'') r, COALESCE(enrollment_no,'') e, "
+            "COALESCE(mobile,'') m, COALESCE(student_name,'') n, is_confirmed "
+            "FROM student_status WHERE COALESCE(deleted,0)=0 AND COALESCE(student_id,'')=''").fetchall()
+        for t in rows:
+            rec = (by_ref.get(t["r"].strip().upper())
+                   or by_enr.get(t["e"].strip().upper())
+                   or by_mob.get("".join(ch for ch in t["m"] if ch.isdigit())[-10:]))
+            if rec:
+                conn.execute("UPDATE student_status SET student_id=?, "
+                             "portal_origin=CASE WHEN COALESCE(portal_origin,'')='' THEN ? ELSE portal_origin END "
+                             "WHERE row_key=?", (rec[0], rec[1], t["row_key"]))
+                linked += 1
+            elif t["is_confirmed"] == 1:
+                unlinked.append({"name": t["n"], "reference": t["r"] or t["e"], "mobile": t["m"]})
+        if linked:
+            conn.commit()
+            logger.info(f"Portal sync: link-repair matched {linked} student(s) to Portal ids")
+    except Exception as _le:
+        logger.warning(f"Portal link-repair skipped: {_le}")
     pending = conn.execute(
         "SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
         "AND COALESCE(student_id,'') != '' "
@@ -5479,12 +5636,14 @@ def portal_resync_now(background_tasks: BackgroundTasks, user=Depends(verify_tok
         return {"ok": False, "message": "A status run is active — the sync will happen automatically right after it."}
     if pending == 0:
         msg = "Nothing pending — every linked student's status is already on the Portal."
+        if linked:
+            msg = f"Re-linked {linked} student(s) to the Portal. " + msg
         if drift:
             msg = f"Healed {drift} drifted confirmed student(s). " + msg
         if no_link:
             msg += (f" Note: {no_link} confirmed student(s) have NO Portal link (tracker-only) and can "
                     f"never be pushed — transfer them to the Portal from the Transfer Data page.")
-        return {"ok": True, "nothing": True, "message": msg}
+        return {"ok": True, "nothing": True, "message": msg, "linked": linked, "unlinked": unlinked[:30]}
     PORTAL_SYNC_STATE.update({"running": True, "total": pending, "done": 0, "pushed": 0,
                               "message": f"Re-pushing {pending} student(s) to the Portal…"})
 
@@ -5502,8 +5661,9 @@ def portal_resync_now(background_tasks: BackgroundTasks, user=Depends(verify_tok
             PORTAL_SYNC_STATE["running"] = False
 
     background_tasks.add_task(_run)
-    return {"ok": True, "started": True, "count": pending,
-            "message": f"Syncing {pending} student(s) to the Portal…"}
+    return {"ok": True, "started": True, "count": pending, "linked": linked, "unlinked": unlinked[:30],
+            "message": (f"Re-linked {linked} student(s). " if linked else "") +
+                       f"Syncing {pending} student(s) to the Portal…"}
 
 
 @app.get("/api/portal-sync-status")
@@ -5581,6 +5741,147 @@ def portal_origin_apply(user=Depends(verify_token)):
                         ". The data-source cards now match the Portal's split.")}
 
 
+@app.get("/api/confirmed-audit")
+def confirmed_audit(user=Depends(verify_token)):
+    """Find the EXACT students the tracker counts as Confirmed but the Portal does not.
+    Pulls the live Portal list, matches each tracker-confirmed (linked) student by studentId,
+    and reports those whose Portal-side status isn't 'confirmed' (or who aren't in the Portal
+    list at all). Also reports which status field the Portal sends, so we know the comparison
+    is real and not a field-name guess."""
+    import mvs_sync
+    try:
+        raw = mvs_sync._trackerlist(include_done=True, timeout=60)
+    except Exception as e:
+        return {"ok": False, "message": f"Could not fetch from the Portal: {e}", "mismatches": []}
+    STATUS_KEYS = ("niosAdmissionStatus", "admissionStatus", "nios_status", "status",
+                   "admission_status", "stage", "niosStatus", "admissionStage", "nios_stage")
+    by_sid = {}
+    portal_has_status = False
+    def pstatus(p):
+        nonlocal portal_has_status
+        for k in STATUS_KEYS:
+            v = p.get(k)
+            if v not in (None, ""):
+                portal_has_status = True
+                return str(v)
+        return ""
+    for s in raw:
+        sid = str(s.get("studentId") or "").strip()
+        if sid:
+            by_sid[sid] = s
+    conn = get_db()
+    confirmed = conn.execute(
+        "SELECT row_key, reference_no, enrollment_no, student_name, mobile, session, "
+        "student_id, current_status, COALESCE(portal_pushed,'') AS portal_pushed "
+        "FROM student_status WHERE COALESCE(deleted,0)=0 AND is_confirmed=1 "
+        "AND COALESCE(student_id,'') != ''").fetchall()
+    conn.close()
+    mismatches = []
+    for r in confirmed:
+        p = by_sid.get(str(r["student_id"]))
+        if not p:
+            mismatches.append({"name": r["student_name"], "reference_no": r["reference_no"] or r["enrollment_no"],
+                               "mobile": r["mobile"], "session": r["session"],
+                               "portal_status": "NOT in the Portal list",
+                               "tracker_status": r["current_status"], "pushed": r["portal_pushed"]})
+        else:
+            ps = pstatus(p)
+            if "confirm" not in ps.lower():
+                mismatches.append({"name": r["student_name"], "reference_no": r["reference_no"] or r["enrollment_no"],
+                                   "mobile": r["mobile"], "session": r["session"],
+                                   "portal_status": ps or "(no status field sent)",
+                                   "tracker_status": r["current_status"], "pushed": r["portal_pushed"]})
+    note = ""
+    if not portal_has_status:
+        note = ("The Portal's trackerList does NOT send a per-student status field, so a per-student "
+                "compare isn't possible — the 5-gap is a Portal-side counting rule (its 'Confirmed' "
+                "stage needs something beyond the status we push). The students below are all "
+                "tracker-confirmed & linked; check any of them on the Portal to see the extra step.")
+    return {"ok": True, "total_confirmed_linked": len(confirmed),
+            "mismatch_count": len(mismatches), "portal_sends_status": portal_has_status,
+            "note": note, "mismatches": mismatches[:200]}
+
+
+FORCE_CONF_STATE = {"running": False, "total": 0, "done": 0, "ok": 0, "failed": 0,
+                    "fail_list": [], "message": ""}
+
+
+@app.post("/api/portal-force-confirmed")
+def portal_force_confirmed(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Re-push EVERY confirmed + linked student to the Portal, ignoring portal_pushed. This is the
+    'they show 0 pending but the Portal is still short' fix: it re-sends 'Admission Confirmed' for
+    all of them and records EXACTLY which ones the Portal did not accept (with names), so the
+    remaining gap becomes a concrete, checkable list instead of a mystery number."""
+    if FORCE_CONF_STATE["running"]:
+        return {"ok": False, "running": True, "message": "A force re-push is already running."}
+    conn = get_db()
+    if conn.execute("SELECT id FROM run_logs WHERE status='running'").fetchone():
+        conn.close()
+        return {"ok": False, "message": "A status run is active — try again once it finishes."}
+    rows = conn.execute(
+        "SELECT row_key, student_id, reference_no, enrollment_no, session, student_name, remark "
+        "FROM student_status WHERE COALESCE(deleted,0)=0 AND is_confirmed=1 "
+        "AND COALESCE(student_id,'') != ''").fetchall()
+    students = [dict(r) for r in rows]
+    conn.close()
+    if not students:
+        return {"ok": True, "count": 0, "message": "No confirmed linked students to push."}
+    FORCE_CONF_STATE.update({"running": True, "total": len(students), "done": 0, "ok": 0,
+                             "failed": 0, "fail_list": [], "message": f"Re-pushing {len(students)}…"})
+
+    def _run():
+        try:
+            import mvs_sync
+            for s in students:
+                ok = False
+                try:
+                    ok = mvs_sync.push_student({
+                        "student_id": s["student_id"], "row_key": s["row_key"],
+                        "reference_no": s["reference_no"], "enrollment_no": s["enrollment_no"],
+                        "discovered_ref": s["reference_no"], "session": s["session"] or "",
+                        "remark": s["remark"] or ""}, "Admission Confirmed")
+                except Exception as e:
+                    logger.warning(f"force-confirmed push error {s['row_key']}: {e}")
+                if ok:
+                    FORCE_CONF_STATE["ok"] += 1
+                    try:
+                        cx = get_db()
+                        cx.execute("UPDATE student_status SET portal_pushed='Admission Confirmed' WHERE row_key=?",
+                                   (s["row_key"],))
+                        cx.commit(); cx.close()
+                    except Exception:
+                        pass
+                else:
+                    FORCE_CONF_STATE["failed"] += 1
+                    if len(FORCE_CONF_STATE["fail_list"]) < 200:
+                        FORCE_CONF_STATE["fail_list"].append({
+                            "name": s["student_name"] or "",
+                            "reference": s["reference_no"] or s["enrollment_no"] or "",
+                            "student_id": s["student_id"] or ""})
+                FORCE_CONF_STATE["done"] += 1
+            FORCE_CONF_STATE["message"] = (
+                f"Done — re-pushed {FORCE_CONF_STATE['ok']} of {FORCE_CONF_STATE['total']} confirmed. "
+                + (f"{FORCE_CONF_STATE['failed']} were NOT accepted by the Portal (listed below) — "
+                   f"check these students on the Portal directly." if FORCE_CONF_STATE["failed"] else
+                   "All accepted. If the Portal's confirmed count is still lower, those students are "
+                   "counted in a different stage on the Portal side."))
+        except Exception as e:
+            FORCE_CONF_STATE["message"] = f"Stopped: {e}"
+        finally:
+            FORCE_CONF_STATE["running"] = False
+
+    background_tasks.add_task(_run)
+    return {"ok": True, "started": True, "count": len(students),
+            "message": f"Re-pushing {len(students)} confirmed students to the Portal…"}
+
+
+@app.get("/api/portal-force-status")
+def portal_force_status(user=Depends(verify_token)):
+    s = dict(FORCE_CONF_STATE)
+    s["percent"] = int(s["done"] * 100 / s["total"]) if s["total"] else 0
+    return s
+
+
 @app.get("/api/pending-students")
 def pending_students(user=Depends(verify_token)):
     """LIVE list of Portal students who have NO usable Reference/Enrollment yet — the Portal has
@@ -5604,6 +5905,101 @@ def pending_students(user=Depends(verify_token)):
                     "session": str(s.get("examSession") or "").strip(),
                     "class_level": str(s.get("class") or "").strip()})
     return {"ok": True, "total": len(out), "students": out}
+
+
+@app.get("/api/confirmed-compare")
+def confirmed_compare(user=Depends(verify_token)):
+    """Student-by-student comparison of the tracker's confirmed list against the LIVE Portal
+    list — finds exactly WHO makes the two confirmed totals differ and why:
+      • portal_stage_differs — Portal has the student but its own stage field isn't 'confirmed'
+        (push was accepted yet the stage didn't move) — these can be force re-pushed.
+      • missing_on_portal   — tracker has them linked, but the Portal list no longer contains
+        that studentId (deleted/merged on the Portal side).
+      • no_link             — tracker-only students (no Portal id) — transfer to push."""
+    import mvs_sync
+    try:
+        raw = mvs_sync._trackerlist(include_done=True, timeout=90)
+    except Exception as e:
+        return {"ok": False, "message": f"Could not fetch from the Portal: {e}"}
+    stage_field = None
+    if raw:
+        keys = set()
+        for r in raw[:80]:
+            keys |= set(r.keys())
+        for cand in ("niosStatus", "nios_status", "admissionStatus", "admission_status",
+                     "niosStage", "stage", "trackerStatus", "status"):
+            if cand in keys:
+                stage_field = cand
+                break
+    pmap = {str(r.get("studentId") or "").strip(): r for r in raw if r.get("studentId")}
+    conn = get_db()
+    rows = conn.execute("SELECT row_key, student_id, reference_no, student_name, session, "
+                        "current_status FROM student_status WHERE COALESCE(deleted,0)=0 "
+                        "AND is_confirmed=1").fetchall()
+    conn.close()
+    missing, differs, no_link = [], [], []
+    matched = 0
+    for r in rows:
+        sid = (r["student_id"] or "").strip()
+        item = {"row_key": r["row_key"], "name": r["student_name"] or "",
+                "reference": r["reference_no"] or "", "session": r["session"] or ""}
+        if not sid:
+            no_link.append(item)
+            continue
+        p = pmap.get(sid)
+        if not p:
+            missing.append(item)
+            continue
+        if stage_field:
+            pv = str(p.get(stage_field) or "").strip()
+            if "confirm" in pv.lower():
+                matched += 1
+            else:
+                item["portal_value"] = pv or "(blank)"
+                differs.append(item)
+        else:
+            matched += 1
+    portal_conf = None
+    if stage_field:
+        portal_conf = sum(1 for r in raw if "confirm" in str(r.get(stage_field) or "").lower())
+    return {"ok": True, "stage_field": stage_field, "tracker_confirmed": len(rows),
+            "portal_confirmed_by_field": portal_conf, "matched": matched,
+            "differs": differs[:60], "differs_count": len(differs),
+            "missing": missing[:60], "missing_count": len(missing),
+            "no_link": no_link[:60], "no_link_count": len(no_link)}
+
+
+@app.post("/api/force-push")
+def force_push(body: dict, user=Depends(verify_token)):
+    """Force re-push the given students' current status to the Portal (ignores portal_pushed)."""
+    import mvs_sync
+    keys = [str(k) for k in (body.get("row_keys") or []) if k]
+    if not keys:
+        return {"ok": False, "message": "No students given."}
+    conn = get_db()
+    qm = ",".join("?" * len(keys))
+    rows = conn.execute(f"SELECT row_key, student_id, reference_no, enrollment_no, session, "
+                        f"current_status, remark FROM student_status WHERE row_key IN ({qm}) "
+                        "AND COALESCE(student_id,'') != ''", keys).fetchall()
+    conn.close()
+    pushed = 0
+    for r in rows:
+        try:
+            ok = mvs_sync.push_student({
+                "student_id": r["student_id"], "row_key": r["row_key"],
+                "reference_no": r["reference_no"], "enrollment_no": r["enrollment_no"],
+                "discovered_ref": r["reference_no"], "session": r["session"] or "",
+                "remark": r["remark"] or ""}, r["current_status"])
+            if ok:
+                cc = get_db()
+                cc.execute("UPDATE student_status SET portal_pushed=? WHERE row_key=?",
+                           (r["current_status"], r["row_key"]))
+                cc.commit(); cc.close()
+                pushed += 1
+        except Exception as e:
+            logger.warning(f"force-push error {r['row_key']}: {e}")
+    return {"ok": True, "pushed": pushed, "total": len(rows),
+            "message": f"Force re-pushed {pushed}/{len(rows)} student(s) to the Portal."}
 
 
 @app.get("/api/check-summary")
