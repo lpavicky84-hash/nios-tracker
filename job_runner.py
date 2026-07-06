@@ -748,26 +748,47 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                                           "for April/October sessions this means TOC = No")
                 if _nt in ("yes", "no"):
                     _ptoc = (toc_by_key.get(row_key, "") or "").lower()
-                    _subs_json = json.dumps(res.get("toc_subjects") or []) if res.get("toc_subjects") else ""
+                    _subs = res.get("toc_subjects") or []
+                    _subs_json = json.dumps(_subs) if _subs else ""
                     _vrow = c.execute("SELECT COALESCE(toc_verified,0) FROM student_status WHERE row_key=?",
                                       (row_key,)).fetchone()
                     _verified = bool(_vrow and _vrow[0] == 1)
-                    _mismatch = 1 if (not _verified and _ptoc in ("yes", "no") and _ptoc != _nt) else 0
+                    _mismatch = (not _verified and _ptoc in ("yes", "no") and _ptoc != _nt)
                     _tsrc = (res.get("toc_src") or "")[:280]
-                    if _subs_json:
-                        c.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_mismatch=?, toc_src=? WHERE row_key=?",
-                                  (_nt, _subs_json, _mismatch, _tsrc, row_key))
-                    else:
-                        c.execute("UPDATE student_status SET nios_toc=?, toc_mismatch=?, toc_src=? WHERE row_key=?",
-                                  (_nt, _mismatch, _tsrc, row_key))
-                    if _mismatch:
-                        c.execute("UPDATE student_status SET remark=? WHERE row_key=?",
-                                  (f"mismatch toc status: NIOS official site says {_nt.upper()}, "
-                                   f"MVS Portal says {_ptoc.upper()}", row_key))
-                        logger.info(f"  TOC mismatch {row_key}: NIOS={_nt} Portal={_ptoc}")
-                    else:
+                    if not _mismatch:
+                        # In sync — record the read + evidence, clear stale flags/remarks.
+                        if _subs_json:
+                            c.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_mismatch=0, toc_src=? WHERE row_key=?",
+                                      (_nt, _subs_json, _tsrc, row_key))
+                        else:
+                            c.execute("UPDATE student_status SET nios_toc=?, toc_mismatch=0, toc_src=? WHERE row_key=?",
+                                      (_nt, _tsrc, row_key))
                         c.execute("UPDATE student_status SET remark='' WHERE row_key=? "
                                   "AND remark LIKE 'mismatch toc status%'", (row_key,))
+                    else:
+                        # AUTO-CORRECT: NIOS is the source of truth. Apply on the tracker, push the
+                        # corrected TOC (+subjects) to the Portal, and log it for the audit list.
+                        c.execute("UPDATE student_status SET toc_status=?, nios_toc=?, toc_subjects=?, toc_src=?, "
+                                  "toc_mismatch=0, toc_verified=1, remark=? WHERE row_key=?",
+                                  (_nt, _nt, _subs_json, _tsrc,
+                                   f"TOC auto-corrected: MVS Portal said {_ptoc.upper()}, NIOS official site "
+                                   f"says {_nt.upper()} — updated and pushed to the Portal", row_key))
+                        # The rest of this run (WhatsApp campaign choice) must use the CORRECTED value.
+                        toc_by_key[row_key] = _nt
+                        _pushed = 0
+                        try:
+                            if mvs_on and sid_by_key.get(row_key):
+                                if mvs_sync.push_toc(sid_by_key[row_key], _nt, _subs):
+                                    _pushed = 1
+                        except Exception as _tpe:
+                            logger.warning(f"TOC auto-fix push failed {row_key}: {_tpe}")
+                        c.execute("INSERT INTO toc_fix_log (row_key, reference_no, student_name, session, "
+                                  "current_status, old_toc, new_toc, subjects, fixed_at, pushed) "
+                                  "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                  (row_key, new_ref, res.get("student_name", ""), res.get("session", ""),
+                                   new_status, _ptoc, _nt, ", ".join(_subs),
+                                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), _pushed))
+                        logger.info(f"  TOC auto-corrected {row_key}: Portal {_ptoc} -> NIOS {_nt} (pushed={_pushed})")
             except Exception as _te:
                 logger.warning(f"TOC check error {row_key}: {_te}")
 
@@ -1511,6 +1532,30 @@ def portal_resync_sweep(max_students=150):
             except Exception as e:
                 logger.warning(f"Portal resync push error {r['row_key']}: {e}")
         logger.info(f"Portal resync done | re-pushed {pushed}/{len(rows)}")
+        # Also retry any TOC auto-corrections whose Portal push failed at the time.
+        try:
+            conn2 = get_db()
+            trows = conn2.execute(
+                "SELECT l.id, l.row_key, l.new_toc, l.subjects, s.student_id "
+                "FROM toc_fix_log l JOIN student_status s ON s.row_key = l.row_key "
+                "WHERE COALESCE(l.pushed,0)=0 AND COALESCE(s.student_id,'') != '' "
+                "ORDER BY l.id DESC LIMIT 25").fetchall()
+            conn2.close()
+            if trows:
+                tp = 0
+                for t in trows:
+                    try:
+                        subs = [x.strip() for x in (t["subjects"] or "").split(",") if x.strip()]
+                        if mvs_sync.push_toc(t["student_id"], t["new_toc"], subs):
+                            cx = get_db()
+                            cx.execute("UPDATE toc_fix_log SET pushed=1 WHERE id=?", (t["id"],))
+                            cx.commit(); cx.close()
+                            tp += 1
+                    except Exception as te:
+                        logger.warning(f"TOC push retry error {t['row_key']}: {te}")
+                logger.info(f"TOC push retry | {tp}/{len(trows)} pending corrections pushed")
+        except Exception as e2:
+            logger.warning(f"TOC push retry sweep error: {e2}")
     except Exception as e:
         logger.warning(f"Portal resync sweep error: {e}")
 

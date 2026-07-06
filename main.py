@@ -748,24 +748,31 @@ function applySidebarPref(){
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
             <h3 style="margin:0">TOC Status Error</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA" onclick="recheckFlagged(this)" title="Fresh NIOS read for every currently-flagged mismatch. Ones that now match auto-unflag; real mismatches stay for Verify/Edit.">Re-check flagged</button>
+              <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA" onclick="recheckFlagged(this)" title="Fresh NIOS read for every still-flagged mismatch — genuine ones are auto-corrected and pushed to the Portal; wrong flags clear.">Re-check flagged</button>
               <button class="btn btn-outline btn-sm" onclick="runTocCheckConfirmed(this)" title="One-time: read the real NIOS TOC for every confirmed student that hasn't been checked yet. Confirmed students are never re-run, so this covers them. Safe to re-click — it only picks up whatever is left.">Check all confirmed students' TOC (one-time)</button>
               <button class="btn btn-primary btn-sm" onclick="runTocCheck(this)" title="Read NIOS TOC for unverified no-TOC students.">Check TOC from NIOS</button>
             </div>
           </div>
           <div id="toc-progress" style="display:none;margin:14px 0 4px;padding:14px 16px;background:var(--soft);border:1px solid var(--border);border-radius:12px"></div>
-          <p style="color:var(--muted);font-size:13px;margin:10px 0 16px">
-            NIOS official site (Previous Subject Details) shows <b>TOC = Yes</b> for at least one subject,
-            but the MVS Portal has <b>tocStatus = "no"</b>. The WhatsApp is <b>held</b> for these until a
-            counsellor verifies — so no wrong (no-TOC) message goes out. Review each, then
-            <b>Verify</b> (accept NIOS) or <b>Edit</b> (change it), and the correct TOC is pushed to the Portal.
+          <p style="color:var(--muted);font-size:13px;margin:10px 0 12px">
+            When a check finds the MVS Portal's <b>tocStatus</b> disagreeing with the NIOS official site
+            (Previous Subject Details), the tracker now <b>corrects it automatically</b> — the NIOS value is
+            applied, pushed to the Portal, and the WhatsApp goes with the right campaign. No manual Verify
+            needed. Every auto-corrected student is listed below (permanent audit list), so you can always
+            check who was changed, from what, to what.
           </p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+            <input id="te-search" placeholder="Search name / reference..." oninput="teSearch()"
+                   style="flex:1;min-width:220px;max-width:420px;padding:9px 13px;border:1px solid var(--border);border-radius:9px;font-size:13.5px">
+          </div>
+          <div id="te-count" style="font-size:12.5px;color:var(--muted);margin-bottom:8px"></div>
           <div style="overflow-x:auto">
             <table class="tbl"><thead><tr>
               <th>Student</th><th>Reference</th><th>Session</th><th>Status</th>
-              <th>NIOS says</th><th>TOC subjects (NIOS)</th><th>Action</th>
+              <th>Portal &rarr; NIOS</th><th>TOC subjects (NIOS)</th><th>Fixed at</th><th>Portal push</th><th>Action</th>
             </tr></thead><tbody id="te-body"></tbody></table>
           </div>
+          <div id="te-pg" style="margin-top:12px"></div>
         </div>
       </section>
 
@@ -3049,36 +3056,53 @@ function renderUnknownPg(page,total,totalRows){
     '</select></div>';
   el.innerHTML=ctrl+sel;
 }
-async function loadTocErrors(){
+let TE_PAGE=1, TE_TIMER=null;
+function teSearch(){ clearTimeout(TE_TIMER); TE_TIMER=setTimeout(function(){loadTocErrors(1);},400); }
+async function loadTocErrors(page){
+  if(page)TE_PAGE=page;
   var tb=document.getElementById("te-body");
   if(!tb)return;
   try{ pollTocProgress(); }catch(e){}
-  tb.innerHTML='<tr><td colspan="7" class="empty">Loading…</td></tr>';
+  var badge=document.getElementById("nav-tocerror-badge");
+  tb.innerHTML='<tr><td colspan="9" class="empty">Loading…</td></tr>';
   try{
-    const d=await api("/api/toc-errors");
-    var badge=document.getElementById("nav-tocerror-badge");
-    if(badge){var n=d.count||0;badge.style.display=n?"inline-block":"none";badge.textContent=n;}
-    if(!d.students||!d.students.length){tb.innerHTML='<tr><td colspan="7" class="empty">No TOC mismatches. Run "Check TOC from NIOS" to scan no-TOC students.</td></tr>';return;}
-    tb.innerHTML=d.students.map(function(s){
-      var subs=(s.toc_subjects||[]).join(", ")||"—";
-      var verified=(s.toc_verified==1);
-      var rk=(s.row_key||"").replace(/'/g,"\\'");
-      var nv=((s.nios_toc||"")+"").toLowerCase()==="no"?"no":"yes";
-      var ev=(s.toc_src||"").replace(/"/g,"&quot;");
+    const q=new URLSearchParams({search:(document.getElementById("te-search")?document.getElementById("te-search").value:""),
+                                 page:TE_PAGE,per_page:20});
+    const d=await api("/api/toc-fixes?"+q.toString());
+    if(badge){badge.style.display=(d.total>0)?"inline-block":"none";badge.textContent=d.total;}
+    var cnt=document.getElementById("te-count");
+    if(cnt)cnt.textContent=d.total+" auto-corrected student(s)";
+    if(!d.fixes||!d.fixes.length){
+      tb.innerHTML='<tr><td colspan="9" class="empty">No auto-corrections yet. Mismatches found during any check or run are fixed automatically and listed here.</td></tr>';
+      renderTePg(1,1);return;
+    }
+    tb.innerHTML=d.fixes.map(function(f){
+      var rk=(f.row_key||"").replace(/'/g,"\\'");
       return '<tr>'+
-        '<td><b>'+(s.student_name||"—")+'</b>'+(verified?' <span style="font-size:11px;color:#15803d">verified</span>':'')+'</td>'+
-        '<td>'+(s.reference_no||s.enrollment_no||"—")+'</td>'+
-        '<td>'+(s.session||"—")+'</td>'+
-        '<td style="font-size:12px">'+(s.current_status||"—")+'</td>'+
-        '<td'+(ev?' title="NIOS page read: '+ev+'"':'')+'><span style="font-weight:700;color:#B45309">NIOS = '+(s.nios_toc||"?").toUpperCase()+'</span>'+
-          '<div style="font-size:11px;color:var(--muted)">Portal = '+((s.toc_status||"?")+"").toUpperCase()+'</div></td>'+
-        '<td style="font-size:12px"'+(ev?' title="'+ev+'"':'')+'>'+subs+'</td>'+
-        '<td style="white-space:nowrap">'+
-          '<button class="btn btn-primary btn-sm" onclick="tocVerify(&quot;'+rk+'&quot;,&quot;'+nv+'&quot;)">Verify (TOC '+nv+')</button> '+
-          '<button class="btn btn-outline btn-sm" onclick="tocEdit(&quot;'+rk+'&quot;)">Edit</button>'+
-        '</td></tr>';
+        '<td><b>'+(f.student_name||"—")+'</b></td>'+
+        '<td>'+(f.reference_no||"—")+'</td>'+
+        '<td>'+(f.session||"—")+'</td>'+
+        '<td style="font-size:12px">'+(f.current_status||"—")+'</td>'+
+        '<td><span style="font-weight:700;color:#B45309">'+((f.old_toc||"?")+"").toUpperCase()+'</span> '+
+            '<span style="color:var(--muted)">&rarr;</span> '+
+            '<span style="font-weight:700;color:#047857">'+((f.new_toc||"?")+"").toUpperCase()+'</span></td>'+
+        '<td style="font-size:12px">'+(f.subjects||"—")+'</td>'+
+        '<td style="font-size:12px;color:var(--muted)">'+(f.fixed_at||"—")+'</td>'+
+        '<td>'+(f.pushed==1?'<span style="font-size:11.5px;font-weight:700;color:#047857;background:#D1FAE5;padding:2px 8px;border-radius:6px">pushed</span>'
+                           :'<span style="font-size:11.5px;font-weight:700;color:#B45309;background:#FEF3C7;padding:2px 8px;border-radius:6px" title="Push will be retried automatically">pending</span>')+'</td>'+
+        '<td><button class="btn btn-outline btn-sm" onclick="tocEdit(&quot;'+rk+'&quot;)">Edit</button></td></tr>';
     }).join("");
-  }catch(e){tb.innerHTML='<tr><td colspan="7" class="empty">'+e.message+'</td></tr>';}
+    renderTePg(d.page,d.pages);
+  }catch(e){tb.innerHTML='<tr><td colspan="9" class="empty">'+e.message+'</td></tr>';}
+}
+function renderTePg(page,total){
+  var el=document.getElementById("te-pg");
+  if(!el)return;
+  if(!total||total<=1){el.innerHTML="";return;}
+  el.innerHTML='<div class="pg-controls">'+
+    '<button class="btn btn-outline btn-sm" '+(page<=1?"disabled":"")+' onclick="loadTocErrors('+(page-1)+')">&lsaquo; Prev</button>'+
+    '<span style="font-size:12.5px;color:var(--muted);padding:0 10px">Page '+page+' of '+total+'</span>'+
+    '<button class="btn btn-outline btn-sm" '+(page>=total?"disabled":"")+' onclick="loadTocErrors('+(page+1)+')">Next &rsaquo;</button></div>';
 }
 async function tocVerify(rk,status,subs){
   if(!confirm("Verify this student as TOC = "+status.toUpperCase()+"? The correct TOC is pushed to the Portal and the WhatsApp goes with the right campaign."))return;
@@ -3121,7 +3145,7 @@ async function runTocCheckConfirmed(btn){
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 async function recheckFlagged(btn){
-  if(!confirm("Fresh NIOS read for every flagged (unverified) mismatch? Wrong flags from an earlier misread will clear automatically; genuine mismatches stay for Verify/Edit."))return;
+  if(!confirm("Fresh NIOS read for every still-flagged mismatch? Genuine mismatches are auto-corrected (NIOS value applied + pushed to the Portal) and listed below; wrong flags clear."))return;
   var old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Starting…";}
   try{
@@ -3164,7 +3188,7 @@ async function pollTocProgress(){
       '<div style="height:9px;background:var(--border);border-radius:6px;overflow:hidden;margin-bottom:11px"><div style="height:100%;width:'+pct+'%;background:#4F46E5;transition:width .4s"></div></div>'+
       '<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px">'+
         cell("checked",d.done,"#111827")+cell("yes-TOC",d.yes_toc,"#047857")+
-        cell("no-TOC",d.no_toc,"#B45309")+cell("mismatch (error)",d.errors,"#B91C1C")+
+        cell("no-TOC",d.no_toc,"#B45309")+cell("auto-fixed",d.errors,"#B91C1C")+
         cell("could not read",Math.max(0,(d.done||0)-((d.yes_toc||0)+(d.no_toc||0))),"#6B7280")+
         (d.running?'<button onclick="cancelTocCheck()" style="margin-left:auto;background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;border-radius:7px;padding:3px 12px;font-size:12px;font-weight:700;cursor:pointer">Stop</button>':'')+
       '</div>'+
@@ -3173,9 +3197,14 @@ async function pollTocProgress(){
       TOC_POLL_WAS_RUNNING=true;
       TOC_POLL_TIMER=setTimeout(pollTocProgress,2000);
     } else if(TOC_POLL_WAS_RUNNING){
-      // Just transitioned running -> done: refresh the mismatch table ONCE (not in a loop).
+      // Just transitioned running -> done: refresh the audit list ONCE, show the final summary
+      // briefly, then hide the panel (it no longer sticks around forever).
       TOC_POLL_WAS_RUNNING=false;
       loadTocErrors();
+      setTimeout(function(){var b=document.getElementById("toc-progress");if(b)b.style.display="none";},12000);
+    } else {
+      // Idle visit with a stale completed state — don't resurrect the old panel.
+      box.style.display="none";
     }
   }catch(e){ if(TOC_POLL_WAS_RUNNING){TOC_POLL_TIMER=setTimeout(pollTocProgress,3000);} }
 }
@@ -4889,6 +4918,59 @@ def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token
     background_tasks.add_task(run_status_check, "all", None, "unknown")
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
 
+def _auto_fix_toc(rk, nt, subs, src_trace):
+    """Apply one NIOS TOC read for a student.
+    If it MATCHES the Portal (or nothing to compare / already verified): just record the read
+    (nios_toc + evidence), clear any stale mismatch flag/remark. Returns 'match'.
+    If it DISAGREES with the Portal's tocStatus: AUTO-CORRECT — the NIOS value is applied on the
+    tracker, pushed to the Portal, and the correction is logged in toc_fix_log for the audit
+    list. No manual Verify needed. Returns 'fixed'."""
+    cc = get_db()
+    row = cc.execute("SELECT COALESCE(toc_status,''), COALESCE(toc_verified,0), COALESCE(student_id,''), "
+                     "COALESCE(reference_no,''), COALESCE(student_name,''), COALESCE(session,''), "
+                     "COALESCE(current_status,'') FROM student_status WHERE row_key=?", (rk,)).fetchone()
+    if not row:
+        cc.close()
+        return "skip"
+    ptoc = (row[0] or "").lower()
+    verified = bool(row[1] == 1)
+    sid = row[2]
+    subs_json = json.dumps(subs) if subs else ""
+    if verified or ptoc not in ("yes", "no") or ptoc == nt:
+        # In sync (or manually settled) — record the read + evidence, clear stale flags.
+        if subs_json:
+            cc.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_src=?, toc_mismatch=0 WHERE row_key=?",
+                       (nt, subs_json, (src_trace or "")[:280], rk))
+        else:
+            cc.execute("UPDATE student_status SET nios_toc=?, toc_src=?, toc_mismatch=0 WHERE row_key=?",
+                       (nt, (src_trace or "")[:280], rk))
+        cc.execute("UPDATE student_status SET remark='' WHERE row_key=? AND remark LIKE 'mismatch toc status%'", (rk,))
+        cc.commit()
+        cc.close()
+        return "match"
+    # MISMATCH -> auto-correct to the NIOS value (NIOS is the source of truth).
+    cc.execute("UPDATE student_status SET toc_status=?, nios_toc=?, toc_subjects=?, toc_src=?, "
+               "toc_mismatch=0, toc_verified=1, remark=? WHERE row_key=?",
+               (nt, nt, subs_json, (src_trace or "")[:280],
+                f"TOC auto-corrected: MVS Portal said {ptoc.upper()}, NIOS official site says {nt.upper()} — "
+                f"updated and pushed to the Portal", rk))
+    pushed = 0
+    try:
+        import mvs_sync
+        if sid and mvs_sync.push_toc(sid, nt, subs or []):
+            pushed = 1
+    except Exception as _pe:
+        logger.warning(f"TOC auto-fix push failed {rk}: {_pe}")
+    cc.execute("INSERT INTO toc_fix_log (row_key, reference_no, student_name, session, current_status, "
+               "old_toc, new_toc, subjects, fixed_at, pushed) VALUES (?,?,?,?,?,?,?,?,?,?)",
+               (rk, row[3], row[4], row[5], row[6], ptoc, nt, ", ".join(subs or []),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pushed))
+    cc.commit()
+    cc.close()
+    logger.info(f"TOC auto-corrected {rk}: Portal {ptoc} -> NIOS {nt} (pushed={pushed})")
+    return "fixed"
+
+
 # One-time "check TOC for ALL confirmed students" job state (confirmed students are never
 # re-run, so this button reads their real NIOS TOC once and flags any mismatch). Live progress
 # is polled by the dashboard. In-memory is fine — single-process app; resets on restart.
@@ -4991,37 +5073,16 @@ def _run_toc_check_confirmed(keys):
                     pass
             try:
                 cc = get_db()
+                cc.close()
                 if nt in ("yes", "no"):
-                    prow = cc.execute("SELECT COALESCE(toc_status,''), COALESCE(toc_verified,0) "
-                                      "FROM student_status WHERE row_key=?", (rk,)).fetchone()
-                    ptoc = (prow[0] or "").lower() if prow else ""
-                    verified = bool(prow and prow[1] == 1)
-                    subs_json = json.dumps(res.get("toc_subjects") or []) if res.get("toc_subjects") else ""
-                    mismatch = 1 if (not verified and ptoc in ("yes", "no") and ptoc != nt) else 0
-                    _src = (res.get("toc_src") or "")[:280]
-                    if subs_json:
-                        cc.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_mismatch=?, toc_src=? WHERE row_key=?",
-                                   (nt, subs_json, mismatch, _src, rk))
-                    else:
-                        cc.execute("UPDATE student_status SET nios_toc=?, toc_mismatch=?, toc_src=? WHERE row_key=?",
-                                   (nt, mismatch, _src, rk))
-                    if mismatch:
-                        cc.execute("UPDATE student_status SET remark=? WHERE row_key=?",
-                                   (f"mismatch toc status: NIOS official site says {nt.upper()}, "
-                                    f"MVS Portal says {ptoc.upper()}", rk))
-                        TOC_CHECK_STATE["errors"] += 1
-                    else:
-                        # Values agree now — clear a stale mismatch remark from an earlier (bad) read.
-                        cc.execute("UPDATE student_status SET remark='' WHERE row_key=? "
-                                   "AND remark LIKE 'mismatch toc status%'", (rk,))
+                    outcome = _auto_fix_toc(rk, nt, res.get("toc_subjects") or [],
+                                            res.get("toc_src") or "")
+                    if outcome == "fixed":
+                        TOC_CHECK_STATE["errors"] += 1   # shown as "auto-fixed" on the panel
                     if nt == "yes":
                         TOC_CHECK_STATE["yes_toc"] += 1
                     else:
                         TOC_CHECK_STATE["no_toc"] += 1
-                    cc.commit()
-                    cc.close()
-                else:
-                    cc.close()
             except Exception as e:
                 logger.warning(f"confirmed-TOC cb error {rk}: {e}")
             TOC_CHECK_STATE["done"] += 1
@@ -5033,8 +5094,8 @@ def _run_toc_check_confirmed(keys):
         _ok = max(0, _read - TOC_CHECK_STATE["errors"])
         TOC_CHECK_STATE["message"] = (
             f"Done — checked {_d} of {_t}: {TOC_CHECK_STATE['yes_toc']} yes-TOC, "
-            f"{TOC_CHECK_STATE['no_toc']} no-TOC, {TOC_CHECK_STATE['errors']} mismatch(es) flagged. "
-            f"{_ok} student(s) match the Portal — no issue. "
+            f"{TOC_CHECK_STATE['no_toc']} no-TOC, {TOC_CHECK_STATE['errors']} auto-corrected & pushed to the Portal "
+            f"(see the list below). {_ok} student(s) already matched — no issue. "
             + (f"{_noread} could not be read (no TOC table on their page / check failed) — "
                f"re-run these later or check them via 'Check TOC (selected)'." if _noread else
                "Every checked student's TOC was read successfully."))
@@ -5043,6 +5104,25 @@ def _run_toc_check_confirmed(keys):
         TOC_CHECK_STATE["message"] = f"Stopped due to an error: {e}"
     finally:
         TOC_CHECK_STATE["running"] = False
+
+
+@app.get("/api/toc-fixes")
+def toc_fixes(search: str = "", page: int = 1, per_page: int = 20, user=Depends(verify_token)):
+    """Paginated audit list of automatic TOC corrections (Portal value replaced by NIOS value)."""
+    conn = get_db()
+    wc, params = [], []
+    if search:
+        wc.append("(student_name LIKE ? OR reference_no LIKE ? OR row_key LIKE ?)")
+        params += [f"%{search}%"] * 3
+    where = ("WHERE " + " AND ".join(wc)) if wc else ""
+    total = conn.execute(f"SELECT COUNT(*) FROM toc_fix_log {where}", params).fetchone()[0]
+    per_page = max(1, min(100, per_page))
+    page = max(1, page)
+    rows = conn.execute(f"SELECT * FROM toc_fix_log {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                        params + [per_page, (page - 1) * per_page]).fetchall()
+    conn.close()
+    return {"fixes": [dict(r) for r in rows], "total": total, "page": page,
+            "pages": max(1, (total + per_page - 1) // per_page)}
 
 
 @app.get("/api/toc-errors")
@@ -5146,17 +5226,12 @@ def _run_toc_check(keys):
             if not ok or not nios_toc:
                 continue
             checked += 1
-            subs_json = json.dumps(subs) if subs else ""
-            if nios_toc == "yes":
-                conn.execute("UPDATE student_status SET nios_toc='yes', toc_subjects=?, toc_mismatch=1, "
-                             "remark=? WHERE row_key=?",
-                             (subs_json, "mismatch toc status: NIOS official site says YES, MVS Portal says NO", rk))
+            outcome = _auto_fix_toc(rk, nios_toc, subs or [],
+                                    "Read via NIOS student login (Previous Subject Details)")
+            if outcome == "fixed":
                 flagged += 1
-            else:
-                conn.execute("UPDATE student_status SET nios_toc='no', toc_subjects='', toc_mismatch=0 WHERE row_key=?", (rk,))
-            conn.commit()
         conn.close()
-        logger.info(f"TOC check done | checked {checked}, mismatches flagged {flagged}")
+        logger.info(f"TOC check done | checked {checked}, auto-corrected {flagged}")
     except Exception as e:
         logger.warning(f"TOC check error: {e}")
 

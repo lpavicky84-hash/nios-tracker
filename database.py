@@ -53,6 +53,25 @@ def init_db():
         except Exception:
             pass
 
+    # Audit log of automatic TOC corrections: whenever a check finds the Portal's tocStatus
+    # disagreeing with NIOS, the NIOS value is applied automatically (tracker + Portal) and the
+    # correction is recorded here so the operator can always review WHO was changed and WHEN.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS toc_fix_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            row_key TEXT,
+            reference_no TEXT,
+            student_name TEXT,
+            session TEXT,
+            current_status TEXT,
+            old_toc TEXT,
+            new_toc TEXT,
+            subjects TEXT,
+            fixed_at TEXT,
+            pushed INTEGER DEFAULT 0
+        )
+    """)
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS run_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
