@@ -509,6 +509,9 @@ function applySidebarPref(){
     <div class="nav-item" data-page="tocerror" onclick="nav('tocerror')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span><span class="lbl">TOC Status Error</span>
       <span class="badge-count" id="nav-tocerror-badge" style="display:none;background:#b91c1c">0</span></div>
+    <div class="nav-item" data-page="pending" onclick="nav('pending')">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span class="lbl">Pending Students</span>
+      <span class="badge-count" id="nav-pending-badge" style="display:none;background:#B45309">0</span></div>
     <div class="nav-sep">Activity</div>
     <div class="nav-item" data-page="history" onclick="nav('history')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="lbl">Change History</span></div>
@@ -773,6 +776,27 @@ function applySidebarPref(){
             </tr></thead><tbody id="te-body"></tbody></table>
           </div>
           <div id="te-pg" style="margin-top:12px"></div>
+        </div>
+      </section>
+
+      <section id="sec-pending" class="page-section">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+            <h3 style="margin:0">Pending Students <span style="font-weight:600;color:var(--muted);font-size:13px">(no reference yet)</span></h3>
+            <button class="btn btn-outline btn-sm" onclick="loadPending(true)">Refresh from Portal</button>
+          </div>
+          <p style="color:var(--muted);font-size:13px;margin:10px 0 12px">
+            These students exist on the MVS Portal but have <b>no Reference/Enrollment number yet</b>, so the
+            tracker cannot check them. This list is read <b>live from the Portal</b> every time (nothing is
+            stored) — the moment a reference is filled on the Portal, the next run imports the student
+            automatically and they drop off this list. Being here never blocks fetching.
+          </p>
+          <div id="pend-count" style="font-size:12.5px;color:var(--muted);margin-bottom:8px"></div>
+          <div style="overflow-x:auto">
+            <table class="tbl"><thead><tr>
+              <th>#</th><th>Student Name</th><th>Mobile</th><th>Session</th><th>Class</th><th>Portal ID</th>
+            </tr></thead><tbody id="pend-body"><tr><td colspan="6" class="empty">Open this page to load…</td></tr></tbody></table>
+          </div>
         </div>
       </section>
 
@@ -1775,6 +1799,7 @@ function nav(page){
   if(page==="unknown")loadUnknown(1);
   if(page==="notoc")loadNoToc(1);
   if(page==="tocerror")loadTocErrors();
+  if(page==="pending")loadPending();
   if(page==="docreq")loadDocReq();
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
@@ -3139,6 +3164,28 @@ function renderUnknownPg(page,total,totalRows){
     [10,20,50,100].map(n=>'<option value="'+n+'" '+(n===perPage?"selected":"")+'>'+n+'</option>').join("")+
     '</select></div>';
   el.innerHTML=ctrl+sel;
+}
+async function loadPending(force){
+  var tb=document.getElementById("pend-body");
+  if(!tb)return;
+  tb.innerHTML='<tr><td colspan="6" class="empty">Fetching live from the Portal…</td></tr>';
+  try{
+    const d=await api("/api/pending-students");
+    var badge=document.getElementById("nav-pending-badge");
+    if(badge){badge.style.display=(d.total>0)?"inline-block":"none";badge.textContent=d.total||0;}
+    var cnt=document.getElementById("pend-count");
+    if(cnt)cnt.textContent=(d.total||0)+" pending student(s) on the Portal right now";
+    if(!d.ok){tb.innerHTML='<tr><td colspan="6" class="empty">'+(d.message||"Could not load")+'</td></tr>';return;}
+    if(!d.students.length){tb.innerHTML='<tr><td colspan="6" class="empty">No pending students — every Portal student has a reference. 🎉</td></tr>';return;}
+    tb.innerHTML=d.students.map(function(s,i){
+      return '<tr><td>'+(i+1)+'</td>'+
+        '<td><b>'+(s.name||"—")+'</b></td>'+
+        '<td>'+(s.mobile||"—")+'</td>'+
+        '<td>'+(s.session||"—")+'</td>'+
+        '<td>'+(s.class_level||"—")+'</td>'+
+        '<td style="font-size:12px;color:var(--muted)">'+(s.student_id||"—")+'</td></tr>';
+    }).join("");
+  }catch(e){tb.innerHTML='<tr><td colspan="6" class="empty">'+e.message+'</td></tr>';}
 }
 let TE_PAGE=1, TE_TIMER=null;
 function teSearch(){ clearTimeout(TE_TIMER); TE_TIMER=setTimeout(function(){loadTocErrors(1);},400); }
@@ -5404,6 +5451,20 @@ def portal_resync_now(background_tasks: BackgroundTasks, user=Depends(verify_tok
     if PORTAL_SYNC_STATE["running"]:
         return {"ok": False, "running": True, "message": "A Portal sync is already running."}
     conn = get_db()
+    # HEAL drift first: students confirmed (flag=1, docs already sent) whose current_status
+    # slid below 'Admission Confirmed' before the confirmed-protection existed. The tracker
+    # counts them as Confirmed but keeps pushing the lower status — so the Portal shows
+    # verifying and the two confirmed totals differ by exactly these. Restore the status;
+    # that makes portal_pushed differ, so the push below sends 'Admission Confirmed'.
+    drift = conn.execute(
+        "SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
+        "AND is_confirmed=1 AND COALESCE(current_status,'') != 'Admission Confirmed'").fetchone()[0]
+    if drift:
+        conn.execute("UPDATE student_status SET current_status='Admission Confirmed' "
+                     "WHERE COALESCE(deleted,0)=0 AND is_confirmed=1 "
+                     "AND COALESCE(current_status,'') != 'Admission Confirmed'")
+        conn.commit()
+        logger.info(f"Portal sync: healed {drift} confirmed-status drift row(s)")
     pending = conn.execute(
         "SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
         "AND COALESCE(student_id,'') != '' "
@@ -5418,6 +5479,8 @@ def portal_resync_now(background_tasks: BackgroundTasks, user=Depends(verify_tok
         return {"ok": False, "message": "A status run is active — the sync will happen automatically right after it."}
     if pending == 0:
         msg = "Nothing pending — every linked student's status is already on the Portal."
+        if drift:
+            msg = f"Healed {drift} drifted confirmed student(s). " + msg
         if no_link:
             msg += (f" Note: {no_link} confirmed student(s) have NO Portal link (tracker-only) and can "
                     f"never be pushed — transfer them to the Portal from the Transfer Data page.")
@@ -5516,6 +5579,31 @@ def portal_origin_apply(user=Depends(verify_token)):
             "message": (f"Origin saved for {len(rows)} students — Real enrolments: {enrol}, "
                         f"Bulk imported: {sheet}" + (f", no origin: {none}" if none else "") +
                         ". The data-source cards now match the Portal's split.")}
+
+
+@app.get("/api/pending-students")
+def pending_students(user=Depends(verify_token)):
+    """LIVE list of Portal students who have NO usable Reference/Enrollment yet — the Portal has
+    them, the tracker can't check them. Read straight from the Portal every time (nothing is
+    stored), so the moment a student's reference is filled, the normal run imports them and they
+    drop off this list automatically — fetching is never blocked by this view."""
+    import mvs_sync
+    try:
+        raw = mvs_sync._trackerlist(include_done=True, timeout=60)
+    except Exception as e:
+        return {"ok": False, "message": f"Could not fetch from the Portal: {e}", "students": []}
+    out = []
+    for s in raw:
+        ref = str(s.get("referenceNo") or "").strip()
+        enr = str(s.get("enrollmentNo") or "").strip()
+        if mvs_sync._valid_ref(ref) or mvs_sync._valid_ref(enr):
+            continue   # has something checkable -> not pending
+        out.append({"student_id": str(s.get("studentId") or ""),
+                    "name": str(s.get("name") or "").strip(),
+                    "mobile": str(s.get("mobile") or "").strip(),
+                    "session": str(s.get("examSession") or "").strip(),
+                    "class_level": str(s.get("class") or "").strip()})
+    return {"ok": True, "total": len(out), "students": out}
 
 
 @app.get("/api/check-summary")
