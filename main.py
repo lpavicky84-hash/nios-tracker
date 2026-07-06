@@ -919,7 +919,7 @@ function applySidebarPref(){
               Export Excel</button>
           </div>
           <div id="r-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
-          <div id="r-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="r-selcount">0</span> selected</span><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('r')">&#128465; Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('r')">Clear</button></div>
+          <div id="r-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="r-selcount">0</span> selected</span><button class="btn btn-sm btn-success" onclick="runSelectedFrom('r')"><svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run selected</button><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('r')">&#128465; Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('r')">Clear</button></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th style="width:34px"><input type="checkbox" id="r-selall" onclick="selAll('r',this)" title="Select all on this page"></th><th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th><th>RC Comment / Remark</th><th>Action</th>
@@ -2077,44 +2077,49 @@ function toggleSrcCombine(){ window._srcCombined=!window._srcCombined; drawSourc
 async function loadReconciliation(){
   var p=document.getElementById("reconcile-panel");
   if(!p)return;
+  // Toggle: clicking the button again (or the ×) hides the panel.
+  if(p.style.display==="block"){p.style.display="none";return;}
   p.style.display="block";
-  p.innerHTML='<div style="color:var(--muted);font-size:13px">Loading breakdown…</div>';
+  p.innerHTML='<div style="color:var(--muted);font-size:13px">Loading…</div>';
   try{
     const d=await api("/api/reconciliation");
-    var row=function(lbl,val,note){
-      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">'+
-        '<span style="color:var(--muted);font-size:12.5px">'+lbl+(note?(' <span style="color:#94a3b8">'+note+'</span>'):'')+'</span>'+
-        '<b style="font-size:13px">'+val+'</b></div>';
+    var at=d.attention||{}, org=d.origin||{}, bs=d.by_source||{}, c=d.confirmed||{};
+    var row=function(lbl,val,color,note){
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">'+
+        '<span style="font-size:13px">'+lbl+(note?(' <span style="color:#94a3b8;font-size:11.5px">'+note+'</span>'):'')+'</span>'+
+        '<b style="font-size:14px;color:'+(color||"var(--text)")+'">'+val+'</b></div>';
     };
-    var head=function(t){return '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin:14px 0 4px">'+t+'</div>';};
-    var c=d.confirmed||{}, s=d.statuses||{}, bs=d.by_source||{}, at=d.attention||{};
     p.innerHTML=
-      '<div style="font-size:14px;font-weight:800;margin-bottom:4px">Tracker numbers — full breakdown</div>'+
-      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Compare these against your MVS Portal dashboard. The notes explain the usual reasons a number differs.</div>'+
-      head("Totals")+
-      row("Live total (not deleted)", d.total_live, "= the tracker Total card")+
-      row("Deleted here (still on Portal)", d.deleted, "Portal counts these; tracker does not")+
-      row("No reference/enrollment yet", d.no_reference, "pending — Portal has them, tracker can't check")+
-      head("By data source")+
-      row("Enrol. MVS Portal", bs.enrol_portal)+
-      row("Sheet + Transfer", bs.sheet_transfer)+
-      row("Transferred (tracker → Portal)", bs.transferred)+
-      head("Confirmed — counted 3 ways")+
-      row("By is-confirmed flag", c.by_flag, "the dashboard number")+
-      row("By flag, excluding failed-to-run", c.by_flag_excluding_failed)+
-      row("By NIOS status 'Admission Confirmed'", c.by_nios_status)+
-      row("Confirmed here, maybe not pushed to Portal", at.confirmed_maybe_not_pushed, "explains tracker > Portal confirmed")+
-      head("Other statuses")+
-      row("Verified", s.verified, "Portal 'Verified' may be defined differently")+
-      row("Documents Verification In Progress", s.documents_verification)+
-      row("Document Required", s.document_required)+
-      row("Unknown / Fetch Error", s.unknown_or_error)+
-      head("Needs attention")+
-      row("Failed to run", at.failed_to_run)+
-      row("Wrong data (NIOS rejected ref/DOB)", at.data_error)+
-      '<div style="margin-top:12px;font-size:12px;color:#92400E;background:#FEF3C7;border:1px solid #FDE68A;border-radius:9px;padding:10px 12px">'+
-      'Why totals differ: the Portal counts <b>pending (no-reference)</b> and <b>deleted</b> students that the tracker leaves out, and the tracker may have found <b>confirmations not yet reflected</b> on the Portal. "Verified/Verifying" are also defined differently in each system.</div>';
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'+
+        '<span style="font-size:14px;font-weight:800">Tracker vs Portal — quick check</span>'+
+        '<span style="display:flex;gap:8px">'+
+          '<button onclick="syncPortalNow(this)" style="background:#4F46E5;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Sync Portal now</button>'+
+          '<button onclick="document.getElementById(&quot;reconcile-panel&quot;).style.display=&quot;none&quot;" style="background:var(--soft);border:1px solid var(--border);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer">&times; Close</button>'+
+        '</span></div>'+
+      row("Total students in tracker", d.total_live)+
+      row("Portal has, tracker skips", (d.deleted||0)+(d.no_reference||0), "#B45309",
+          "deleted: "+(d.deleted||0)+" + no-reference pending: "+(d.no_reference||0))+
+      row("Confirmed (tracker)", (c.by_flag||0), "#047857")+
+      row("Confirmed but Portal not updated yet", at.confirmed_push_lag||0,
+          (at.confirmed_push_lag>0?"#B91C1C":"#047857"),
+          "auto-syncs every 30 min — or press Sync Portal now")+
+      row("Confirmed with NO Portal link", at.confirmed_no_link||0,
+          (at.confirmed_no_link>0?"#B45309":"#047857"),
+          "tracker-only students — transfer to Portal to push")+
+      row("Enrol vs Sheet split from Portal",
+          "enrol "+(org.enrol||0)+" · legacy/sheet "+(org.sheet||0)+" · not sent "+(org.blank||0),
+          "var(--text)",
+          (org.blank>0?"Portal is not sending origin for "+org.blank+" students — they default to Enrol":""))+
+      '<div style="margin-top:10px;font-size:12px;color:var(--muted)">'+
+      'Simple rule: <b>tracker total + deleted + pending = Portal total</b>, and confirmed matches once "not updated yet" reaches 0.</div>';
   }catch(e){p.innerHTML='<div style="color:#B91C1C;font-size:13px">Could not load: '+e.message+'</div>';}
+}
+async function syncPortalNow(btn){
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Syncing…";}
+  try{const r=await api("/api/portal-resync-now","POST",{});showToast(r.message||"Sync started");}
+  catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 function statCard(lbl,val,svg,col){
   return '<div class="stat"><div class="ic" style="background:'+col+'1A;color:'+col+'">'+svg+
@@ -2795,6 +2800,16 @@ function bulkBarHtml(k){
     '<span style="font-weight:700;font-size:13px"><span id="'+k+'-selcount">0</span> selected</span>'+
     '<button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete(&quot;'+k+'&quot;)">&#128465; Delete selected</button>'+
     '<button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear(&quot;'+k+'&quot;)">Clear</button></div>';
+}
+async function runSelectedFrom(k){
+  const keys=Array.from(selSet(k));
+  if(!keys.length){showToast("Select at least one student first");return;}
+  if(!confirm("Run a fresh NIOS check for "+keys.length+" selected student(s)? Status + TOC both get checked; any change is pushed to the Portal."))return;
+  try{
+    const r=await api("/api/run-selected","POST",{row_keys:keys});
+    showToast(r.message||"Run started");
+    selClear(k);
+  }catch(e){showToast(""+e.message);}
 }
 async function bulkDelete(k){
   const keys=Array.from(selSet(k));
@@ -5265,11 +5280,26 @@ def reconciliation(user=Depends(verify_token)):
     failed_run   = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} "
                      "AND (COALESCE(login_failed,0)=1 OR COALESCE(check_failed,0)=1)")
     data_err     = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND COALESCE(data_error,0)=1")
-    # confirmations detected here but maybe not yet reflected on the Portal
-    not_pushed   = 0
+    # Confirmed push health — the ACTUAL reasons tracker/Portal confirmed counts can differ:
+    #   push_lag = linked students whose latest status hasn't successfully reached the Portal yet
+    #              (the 30-min resync sweep clears these; 'Sync Portal now' forces it).
+    #   no_link  = confirmed students with NO Portal student-id — the tracker cannot push these
+    #              at all until they exist on the Portal (transfer them first).
+    push_lag = no_link = 0
     try:
-        not_pushed = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1 "
-                       "AND COALESCE(cross_dup,0)=0 AND COALESCE(source,'')!='mvs_portal'")
+        push_lag = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1 "
+                     "AND COALESCE(student_id,'') != '' "
+                     "AND COALESCE(portal_pushed,'') != COALESCE(current_status,'')")
+        no_link  = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1 "
+                     "AND COALESCE(student_id,'') = ''")
+    except Exception:
+        pass
+    # Origin visibility — shows whether the Portal is actually sending the enrol/legacy split.
+    org_enrol = org_sheet = org_blank = 0
+    try:
+        org_enrol = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND COALESCE(source,'')='mvs_portal' AND COALESCE(portal_origin,'')='enrol'")
+        org_sheet = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND COALESCE(source,'')='mvs_portal' AND COALESCE(portal_origin,'')='sheet'")
+        org_blank = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND COALESCE(source,'')='mvs_portal' AND COALESCE(portal_origin,'')=''")
     except Exception:
         pass
     conn.close()
@@ -5282,8 +5312,18 @@ def reconciliation(user=Depends(verify_token)):
         "statuses": {"verified": verified, "documents_verification": docverif,
                      "document_required": docreq, "unknown_or_error": unknown},
         "attention": {"failed_to_run": failed_run, "data_error": data_err,
-                      "confirmed_maybe_not_pushed": not_pushed},
+                      "confirmed_push_lag": push_lag, "confirmed_no_link": no_link},
+        "origin": {"enrol": org_enrol, "sheet": org_sheet, "blank": org_blank},
     }
+
+
+@app.post("/api/portal-resync-now")
+def portal_resync_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Force the tracker->Portal resync immediately (instead of waiting for the 30-min sweep).
+    Re-pushes every linked student whose latest status the Portal doesn't have yet."""
+    from job_runner import portal_resync_sweep
+    background_tasks.add_task(portal_resync_sweep)
+    return {"ok": True, "message": "Portal sync started in the background — re-check the numbers in a minute."}
 
 
 @app.get("/api/check-summary")

@@ -85,7 +85,12 @@ def fetch_students_for_tracker(session=None, include_done=False):
                                           or s.get("dataSource") or s.get("enrolledVia")
                                           or s.get("entrySource") or s.get("source") or ""),
         })
-    logger.info(f"MVS: fetched {len(rows)} students")
+    try:
+        from collections import Counter
+        _oc = Counter((r.get("portal_origin") or "(none)") for r in rows)
+        logger.info(f"MVS: fetched {len(rows)} students | origin breakdown: {dict(_oc)}")
+    except Exception:
+        logger.info(f"MVS: fetched {len(rows)} students")
     return rows
 
 
@@ -93,9 +98,10 @@ def _norm_origin(v):
     v = str(v or "").strip().lower()
     if not v:
         return ""
-    if any(k in v for k in ("sheet", "excel", "csv", "bulk", "import", "upload")):
+    # Portal's own split: "Real enrolments" vs "Bulk imported (legacy)".
+    if any(k in v for k in ("sheet", "excel", "csv", "bulk", "import", "upload", "legacy")):
         return "sheet"
-    if any(k in v for k in ("enrol", "enroll", "form", "register", "signup", "portal")):
+    if any(k in v for k in ("real", "enrol", "enroll", "form", "register", "signup", "portal")):
         return "enrol"
     return ""
 
