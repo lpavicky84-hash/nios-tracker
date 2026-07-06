@@ -2126,7 +2126,12 @@ async function probeOrigin(btn){
   try{
     const d=await api("/api/portal-origin-probe");
     if(!d.ok){if(out)out.textContent=d.message;return;}
+    var det=d.detected||{}; var found=((det["enrol"]||0)+(det["sheet"]||0))>0;
     var html='<b style="color:var(--text)">'+d.message+'</b>';
+    if(found){
+      html+='<div style="margin-top:8px"><button onclick="applyOrigin(this)" style="background:#16A34A;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12.5px;font-weight:700;cursor:pointer">Apply origin to ALL students now</button>'+
+            ' <span style="font-size:11.5px;color:var(--muted)">— ek click, poori list save, cards turant Portal jaisa split</span></div>';
+    }
     html+='<div style="margin-top:6px">Auto-detected in sample: '+Object.keys(d.detected).map(function(k){return k+" = "+d.detected[k];}).join(" · ")+'</div>';
     var ck=Object.keys(d.candidate_fields||{});
     if(ck.length){
@@ -2141,6 +2146,16 @@ async function probeOrigin(btn){
     }
     if(out)out.innerHTML=html;
   }catch(e){if(out)out.textContent=""+e.message;}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function applyOrigin(btn){
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Applying…";}
+  try{
+    const r=await api("/api/portal-origin-apply","POST",{});
+    showToast(r.message||"Done");
+    if(r.ok){ loadReconciliation(true); try{loadDashboard();}catch(e){} }
+  }catch(e){showToast(""+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 async function syncPortalNow(btn){
@@ -5462,6 +5477,37 @@ def portal_origin_probe(user=Depends(verify_token)):
                         if det.get("(blank)", 0) == 0 else
                         f"{det.get('(blank)',0)} of {len(sample)} sampled students have NO origin field the "
                         f"tracker can recognise — the Portal's trackerList must include one (see candidate fields).")}
+
+
+@app.post("/api/portal-origin-apply")
+def portal_origin_apply(user=Depends(verify_token)):
+    """One-click: fetch the full Portal list once and persist every student's origin
+    (real_enrolment vs bulk_imported) into the tracker DB — no NIOS checks, no waiting for the
+    next run. After this the Enrol vs MVS Portal cards match the Portal's own split instantly."""
+    conn = get_db()
+    if conn.execute("SELECT id FROM run_logs WHERE status='running'").fetchone():
+        conn.close()
+        return {"ok": False, "message": "A status run is active — origin will be saved automatically by the run itself."}
+    conn.close()
+    import mvs_sync
+    try:
+        students = mvs_sync.fetch_students_for_tracker()
+    except Exception as e:
+        return {"ok": False, "message": f"Could not fetch from the Portal: {e}"}
+    rows = [(s.get("portal_origin", ""), s["row_key"]) for s in students
+            if s.get("row_key") and s.get("portal_origin")]
+    enrol = sum(1 for o, _ in rows if o == "enrol")
+    sheet = sum(1 for o, _ in rows if o == "sheet")
+    conn = get_db()
+    if rows:
+        conn.executemany("UPDATE student_status SET portal_origin=? WHERE row_key=?", rows)
+        conn.commit()
+    conn.close()
+    none = len(students) - len(rows)
+    return {"ok": True, "updated": len(rows), "enrol": enrol, "sheet": sheet, "none": none,
+            "message": (f"Origin saved for {len(rows)} students — Real enrolments: {enrol}, "
+                        f"Bulk imported: {sheet}" + (f", no origin: {none}" if none else "") +
+                        ". The data-source cards now match the Portal's split.")}
 
 
 @app.get("/api/check-summary")
