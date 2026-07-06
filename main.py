@@ -2092,11 +2092,13 @@ async function loadReconciliation(refresh){
     p.innerHTML=
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'+
         '<span style="font-size:14px;font-weight:800">Tracker vs Portal — quick check</span>'+
-        '<span style="display:flex;gap:8px">'+
+        '<span style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button onclick="probeOrigin(this)" style="background:#EDE9FE;color:#6D28D9;border:1px solid #DDD6FE;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Detect origin field</button>'+
           '<button onclick="syncPortalNow(this)" style="background:#4F46E5;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Sync Portal now</button>'+
           '<button onclick="document.getElementById(&quot;reconcile-panel&quot;).style.display=&quot;none&quot;" style="background:var(--soft);border:1px solid var(--border);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer">&times; Close</button>'+
         '</span></div>'+
       '<div id="rp-syncline" style="display:none;margin:2px 0 10px;font-size:12.5px;font-weight:700;color:#4F46E5"></div>'+
+      '<div id="rp-probe" style="display:none;margin:2px 0 10px;font-size:12px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 12px"></div>'+
       row("Total students in tracker", d.total_live)+
       row("Portal has, tracker skips", (d.deleted||0)+(d.no_reference||0), "#B45309",
           "deleted: "+(d.deleted||0)+" + no-reference pending: "+(d.no_reference||0))+
@@ -2111,9 +2113,7 @@ async function loadReconciliation(refresh){
           "enrol "+(org.enrol||0)+" · legacy/sheet "+(org.sheet||0)+" · not sent "+(org.blank||0),
           "var(--text)",
           (org.blank>0?"Portal is not sending origin for "+org.blank+" students — they default to Enrol. ":""))+
-      (org.blank>0?('<div style="padding:8px 0;border-bottom:1px solid var(--border)">'+
-        '<button onclick="probeOrigin(this)" style="background:#EDE9FE;color:#6D28D9;border:1px solid #DDD6FE;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Detect origin field from Portal</button>'+
-        '<div id="rp-probe" style="margin-top:8px;font-size:12px;color:var(--muted)"></div></div>'):"")+
+
       '<div style="margin-top:10px;font-size:12px;color:var(--muted)">'+
       'Simple rule: <b>tracker total + deleted + pending = Portal total</b>, and confirmed matches once "not updated yet" reaches 0.</div>';
   }catch(e){p.innerHTML='<div style="color:#B91C1C;font-size:13px">Could not load: '+e.message+'</div>';}
@@ -2122,7 +2122,7 @@ async function probeOrigin(btn){
   var out=document.getElementById("rp-probe");
   var old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Checking Portal…";}
-  if(out)out.textContent="Fetching a sample from the Portal…";
+  if(out){out.style.display="block";out.textContent="Fetching a sample from the Portal…";}
   try{
     const d=await api("/api/portal-origin-probe");
     if(!d.ok){if(out)out.textContent=d.message;return;}
