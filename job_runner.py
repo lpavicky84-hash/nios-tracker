@@ -1485,7 +1485,7 @@ def toc_backfill_sweep(max_students=12):
         logger.warning(f"TOC backfill sweep error: {e}")
 
 
-def portal_resync_sweep(max_students=150):
+def portal_resync_sweep(max_students=150, progress_cb=None):
     """Guarantees the Portal eventually matches the tracker for confirmed/verified/in-progress.
     Finds students whose current NIOS status has NOT been successfully pushed to the Portal yet
     (push failed, Portal was briefly down, or an old confirm predates this tracking) and re-pushes
@@ -1516,6 +1516,7 @@ def portal_resync_sweep(max_students=150):
         logger.info(f"Portal resync: {len(rows)} student(s) whose status the Portal is missing — re-pushing")
         import mvs_sync
         pushed = 0
+        done = 0
         for r in rows:
             try:
                 ok = mvs_sync.push_student({
@@ -1531,6 +1532,12 @@ def portal_resync_sweep(max_students=150):
                     pushed += 1
             except Exception as e:
                 logger.warning(f"Portal resync push error {r['row_key']}: {e}")
+            done += 1
+            if progress_cb:
+                try:
+                    progress_cb(done, len(rows), pushed)
+                except Exception:
+                    pass
         logger.info(f"Portal resync done | re-pushed {pushed}/{len(rows)}")
         # Also retry any TOC auto-corrections whose Portal push failed at the time.
         try:

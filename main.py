@@ -2074,11 +2074,11 @@ function drawSourceCards(){
   updatePnTimer();
 }
 function toggleSrcCombine(){ window._srcCombined=!window._srcCombined; drawSourceCards(); }
-async function loadReconciliation(){
+async function loadReconciliation(refresh){
   var p=document.getElementById("reconcile-panel");
   if(!p)return;
-  // Toggle: clicking the button again (or the ×) hides the panel.
-  if(p.style.display==="block"){p.style.display="none";return;}
+  // Toggle: clicking the button again (or the ×) hides the panel. refresh=true re-renders in place.
+  if(!refresh && p.style.display==="block"){p.style.display="none";return;}
   p.style.display="block";
   p.innerHTML='<div style="color:var(--muted);font-size:13px">Loading…</div>';
   try{
@@ -2096,6 +2096,7 @@ async function loadReconciliation(){
           '<button onclick="syncPortalNow(this)" style="background:#4F46E5;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Sync Portal now</button>'+
           '<button onclick="document.getElementById(&quot;reconcile-panel&quot;).style.display=&quot;none&quot;" style="background:var(--soft);border:1px solid var(--border);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer">&times; Close</button>'+
         '</span></div>'+
+      '<div id="rp-syncline" style="display:none;margin:2px 0 10px;font-size:12.5px;font-weight:700;color:#4F46E5"></div>'+
       row("Total students in tracker", d.total_live)+
       row("Portal has, tracker skips", (d.deleted||0)+(d.no_reference||0), "#B45309",
           "deleted: "+(d.deleted||0)+" + no-reference pending: "+(d.no_reference||0))+
@@ -2115,11 +2116,36 @@ async function loadReconciliation(){
   }catch(e){p.innerHTML='<div style="color:#B91C1C;font-size:13px">Could not load: '+e.message+'</div>';}
 }
 async function syncPortalNow(btn){
+  var line=document.getElementById("rp-syncline");
   var old=btn?btn.textContent:"";
-  if(btn){btn.disabled=true;btn.textContent="Syncing…";}
-  try{const r=await api("/api/portal-resync-now","POST",{});showToast(r.message||"Sync started");}
-  catch(e){showToast(""+e.message);}
-  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+  if(btn){btn.disabled=true;btn.textContent="Checking…";}
+  try{
+    const r=await api("/api/portal-resync-now","POST",{});
+    if(r.nothing || !r.started){
+      // Nothing to push (or run active) — say it clearly, right in the panel.
+      if(line){line.style.display="block";line.style.color=r.nothing?"#047857":"#B45309";line.textContent=r.message;}
+      showToast(r.message);
+      if(btn){btn.disabled=false;btn.textContent=old;}
+      return;
+    }
+    // Started — poll live progress until done, then refresh the numbers in place.
+    if(line){line.style.display="block";line.style.color="#4F46E5";line.textContent=r.message;}
+    (async function poll(){
+      try{
+        const s=await api("/api/portal-sync-status");
+        if(line)line.textContent=(s.running?("Syncing… "+s.done+" / "+s.total+" ("+(s.percent||0)+"%) — pushed "+s.pushed):s.message);
+        if(s.running){setTimeout(poll,1500);}
+        else{
+          showToast(s.message||"Portal sync done");
+          if(btn){btn.disabled=false;btn.textContent=old;}
+          loadReconciliation(true);   // refresh the numbers in place (panel stays open)
+        }
+      }catch(e){ setTimeout(poll,2500); }
+    })();
+  }catch(e){
+    showToast(""+e.message);
+    if(btn){btn.disabled=false;btn.textContent=old;}
+  }
 }
 function statCard(lbl,val,svg,col){
   return '<div class="stat"><div class="ic" style="background:'+col+'1A;color:'+col+'">'+svg+
@@ -5317,13 +5343,62 @@ def reconciliation(user=Depends(verify_token)):
     }
 
 
+PORTAL_SYNC_STATE = {"running": False, "total": 0, "done": 0, "pushed": 0, "message": ""}
+
+
 @app.post("/api/portal-resync-now")
 def portal_resync_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
-    """Force the tracker->Portal resync immediately (instead of waiting for the 30-min sweep).
-    Re-pushes every linked student whose latest status the Portal doesn't have yet."""
-    from job_runner import portal_resync_sweep
-    background_tasks.add_task(portal_resync_sweep)
-    return {"ok": True, "message": "Portal sync started in the background — re-check the numbers in a minute."}
+    """Force the tracker->Portal resync immediately, WITH feedback:
+    • Nothing pending -> says so right away (plus how many can never push — no Portal link).
+    • Something pending -> starts in the background and reports live progress via
+      /api/portal-sync-status so the button can show 'Syncing… X/Y'."""
+    if PORTAL_SYNC_STATE["running"]:
+        return {"ok": False, "running": True, "message": "A Portal sync is already running."}
+    conn = get_db()
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 "
+        "AND COALESCE(student_id,'') != '' "
+        "AND current_status IN ('Admission Confirmed','Verified','Documents Verification In Progress','Document Required') "
+        "AND COALESCE(portal_pushed,'') != current_status").fetchone()[0]
+    no_link = conn.execute(
+        "SELECT COUNT(*) FROM student_status WHERE COALESCE(deleted,0)=0 AND is_confirmed=1 "
+        "AND COALESCE(student_id,'') = ''").fetchone()[0]
+    run_active = bool(conn.execute("SELECT id FROM run_logs WHERE status='running'").fetchone())
+    conn.close()
+    if run_active:
+        return {"ok": False, "message": "A status run is active — the sync will happen automatically right after it."}
+    if pending == 0:
+        msg = "Nothing pending — every linked student's status is already on the Portal."
+        if no_link:
+            msg += (f" Note: {no_link} confirmed student(s) have NO Portal link (tracker-only) and can "
+                    f"never be pushed — transfer them to the Portal from the Transfer Data page.")
+        return {"ok": True, "nothing": True, "message": msg}
+    PORTAL_SYNC_STATE.update({"running": True, "total": pending, "done": 0, "pushed": 0,
+                              "message": f"Re-pushing {pending} student(s) to the Portal…"})
+
+    def _run():
+        try:
+            from job_runner import portal_resync_sweep
+            def _cb(done, total, pushed):
+                PORTAL_SYNC_STATE.update({"done": done, "total": total, "pushed": pushed})
+            portal_resync_sweep(progress_cb=_cb)
+            PORTAL_SYNC_STATE["message"] = (f"Done — {PORTAL_SYNC_STATE['pushed']} of "
+                                            f"{PORTAL_SYNC_STATE['total']} pushed to the Portal.")
+        except Exception as e:
+            PORTAL_SYNC_STATE["message"] = f"Sync stopped: {e}"
+        finally:
+            PORTAL_SYNC_STATE["running"] = False
+
+    background_tasks.add_task(_run)
+    return {"ok": True, "started": True, "count": pending,
+            "message": f"Syncing {pending} student(s) to the Portal…"}
+
+
+@app.get("/api/portal-sync-status")
+def portal_sync_status(user=Depends(verify_token)):
+    s = dict(PORTAL_SYNC_STATE)
+    s["percent"] = int(s["done"] * 100 / s["total"]) if s["total"] else 0
+    return s
 
 
 @app.get("/api/check-summary")
