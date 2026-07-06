@@ -4577,7 +4577,9 @@ def dashboard(user=Depends(verify_token)):
     #     -> source='mvs_tracker'
     _bucket = ("CASE "
                "WHEN COALESCE(source,'mvs_tracker')='mvs_tracker' THEN 'mvs_tracker' "
-               "WHEN COALESCE(cross_dup,0)=1 OR COALESCE(portal_origin,'')='sheet' THEN 'mvs_portal' "
+               "WHEN COALESCE(portal_origin,'')='enrol' THEN 'enrol_portal' "
+               "WHEN COALESCE(portal_origin,'')='sheet' THEN 'mvs_portal' "
+               "WHEN COALESCE(cross_dup,0)=1 THEN 'mvs_portal' "
                "ELSE 'enrol_portal' END")
     src_counts = conn.execute(
         f"SELECT {_bucket} AS bucket, COUNT(*) as cnt, "
@@ -5333,9 +5335,13 @@ def reconciliation(user=Depends(verify_token)):
                      "AND COALESCE(reference_no,'')='' AND COALESCE(enrollment_no,'')=''")
     # source buckets
     enrol        = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} "
-                     "AND COALESCE(source,'mvs_tracker')='mvs_portal' AND COALESCE(cross_dup,0)=0")
+                     "AND COALESCE(source,'mvs_tracker')='mvs_portal' "
+                     "AND (COALESCE(portal_origin,'')='enrol' "
+                     "     OR (COALESCE(portal_origin,'')='' AND COALESCE(cross_dup,0)=0))")
     sheet_trans  = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} "
-                     "AND NOT (COALESCE(source,'mvs_tracker')='mvs_portal' AND COALESCE(cross_dup,0)=0)")
+                     "AND COALESCE(source,'mvs_tracker')='mvs_portal' "
+                     "AND NOT (COALESCE(portal_origin,'')='enrol' "
+                     "         OR (COALESCE(portal_origin,'')='' AND COALESCE(cross_dup,0)=0))")
     transferred  = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND COALESCE(cross_dup,0)=1")
     # status buckets (two ways of counting 'confirmed' so any gap is visible)
     conf_flag    = g(f"SELECT COUNT(*) FROM student_status WHERE {ND} AND is_confirmed=1")
@@ -5452,7 +5458,7 @@ def portal_origin_probe(user=Depends(verify_token)):
     field name — so the two dashboard cards can match the Portal's own numbers."""
     import mvs_sync
     try:
-        raw = mvs_sync._trackerlist(timeout=60)
+        raw = mvs_sync._trackerlist(include_done=True, timeout=60)
     except Exception as e:
         return {"ok": False, "message": f"Could not fetch from the Portal: {e}"}
     if not raw:
@@ -5491,7 +5497,9 @@ def portal_origin_apply(user=Depends(verify_token)):
     conn.close()
     import mvs_sync
     try:
-        students = mvs_sync.fetch_students_for_tracker()
+        # include_done=True -> the FULL portal list. Without it the Portal omits confirmed/done
+        # students, so their origin never got saved (that's why 1990 stayed 'not sent').
+        students = mvs_sync.fetch_students_for_tracker(include_done=True)
     except Exception as e:
         return {"ok": False, "message": f"Could not fetch from the Portal: {e}"}
     rows = [(s.get("portal_origin", ""), s["row_key"]) for s in students
