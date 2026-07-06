@@ -81,9 +81,7 @@ def fetch_students_for_tracker(session=None, include_done=False):
             # (bulk sheet upload). The Portal knows this; if it sends any of these fields we use
             # it to split the dashboard's "Enrol. MVS Portal" vs "MVS Portal" cards. If the Portal
             # sends nothing, origin stays '' and the student is treated as enrol by default.
-            "portal_origin": _norm_origin(s.get("origin") or s.get("createdVia") or s.get("addedVia")
-                                          or s.get("dataSource") or s.get("enrolledVia")
-                                          or s.get("entrySource") or s.get("source") or ""),
+            "portal_origin": _detect_origin(s),
         })
     try:
         from collections import Counter
@@ -92,6 +90,41 @@ def fetch_students_for_tracker(session=None, include_done=False):
     except Exception:
         logger.info(f"MVS: fetched {len(rows)} students")
     return rows
+
+
+def _detect_origin(s):
+    """Work out how the Portal added this student — 'enrol' (Real enrolments) vs 'sheet'
+    (Bulk imported / legacy) — from WHATEVER field name the Portal uses. Checks the known
+    explicit names first, then scans every key whose name hints at an origin, then
+    boolean-style flags (isLegacy / bulkImported / realEnrolment = true)."""
+    # 1) explicit well-known names
+    for f in ("origin", "createdVia", "addedVia", "dataSource", "enrolledVia", "entrySource",
+              "source", "studentSource", "importSource", "enrollmentType", "enrolmentType",
+              "regType", "registrationType", "uploadType", "addedBy", "createdFrom", "entryType"):
+        v = _norm_origin(s.get(f))
+        if v:
+            return v
+    # 2) generic scan — any key whose NAME hints at origin, with a recognizable VALUE
+    for k, val in s.items():
+        kl = str(k).lower()
+        if any(h in kl for h in ("origin", "source", "legacy", "import", "createdvia",
+                                 "entrytype", "enroltype", "enrollmenttype", "regtype",
+                                 "uploadtype", "addedvia", "createdfrom")):
+            v = _norm_origin(val)
+            if v:
+                return v
+    # 3) boolean-style flags (isLegacy: true / bulkImported: 1 / realEnrolment: "yes")
+    for k, val in s.items():
+        kl = str(k).lower()
+        sval = str(val).strip().lower()
+        if sval in ("1", "true", "yes"):
+            if any(h in kl for h in ("legacy", "bulk", "imported", "sheet")):
+                return "sheet"
+            if any(h in kl for h in ("realenrol", "real_enrol", "isreal", "isenrol")):
+                return "enrol"
+        if sval in ("0", "false", "no") and any(h in kl for h in ("legacy", "bulk", "imported")):
+            return "enrol"   # explicitly NOT legacy/bulk -> a real enrolment
+    return ""
 
 
 def _norm_origin(v):

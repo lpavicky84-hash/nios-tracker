@@ -2110,10 +2110,38 @@ async function loadReconciliation(refresh){
       row("Enrol vs Sheet split from Portal",
           "enrol "+(org.enrol||0)+" · legacy/sheet "+(org.sheet||0)+" · not sent "+(org.blank||0),
           "var(--text)",
-          (org.blank>0?"Portal is not sending origin for "+org.blank+" students — they default to Enrol":""))+
+          (org.blank>0?"Portal is not sending origin for "+org.blank+" students — they default to Enrol. ":""))+
+      (org.blank>0?('<div style="padding:8px 0;border-bottom:1px solid var(--border)">'+
+        '<button onclick="probeOrigin(this)" style="background:#EDE9FE;color:#6D28D9;border:1px solid #DDD6FE;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Detect origin field from Portal</button>'+
+        '<div id="rp-probe" style="margin-top:8px;font-size:12px;color:var(--muted)"></div></div>'):"")+
       '<div style="margin-top:10px;font-size:12px;color:var(--muted)">'+
       'Simple rule: <b>tracker total + deleted + pending = Portal total</b>, and confirmed matches once "not updated yet" reaches 0.</div>';
   }catch(e){p.innerHTML='<div style="color:#B91C1C;font-size:13px">Could not load: '+e.message+'</div>';}
+}
+async function probeOrigin(btn){
+  var out=document.getElementById("rp-probe");
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Checking Portal…";}
+  if(out)out.textContent="Fetching a sample from the Portal…";
+  try{
+    const d=await api("/api/portal-origin-probe");
+    if(!d.ok){if(out)out.textContent=d.message;return;}
+    var html='<b style="color:var(--text)">'+d.message+'</b>';
+    html+='<div style="margin-top:6px">Auto-detected in sample: '+Object.keys(d.detected).map(function(k){return k+" = "+d.detected[k];}).join(" · ")+'</div>';
+    var ck=Object.keys(d.candidate_fields||{});
+    if(ck.length){
+      html+='<div style="margin-top:6px">Origin-jaise fields jo Portal bhej raha hai:</div><ul style="margin:4px 0 0 18px;padding:0">';
+      ck.forEach(function(k){
+        var vals=d.candidate_fields[k];
+        html+='<li><b>'+k+'</b>: '+Object.keys(vals).map(function(v){return v+" ("+vals[v]+")";}).join(", ")+'</li>';
+      });
+      html+='</ul>';
+    }else{
+      html+='<div style="margin-top:6px;color:#B45309">Portal ke trackerList response mein koi origin-jaisa field NAHI mila — Portal side pe field add karni hogi (e.g. origin: "real_enrolment" / "bulk_imported").</div>';
+    }
+    if(out)out.innerHTML=html;
+  }catch(e){if(out)out.textContent=""+e.message;}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 async function syncPortalNow(btn){
   var line=document.getElementById("rp-syncline");
@@ -5399,6 +5427,41 @@ def portal_sync_status(user=Depends(verify_token)):
     s = dict(PORTAL_SYNC_STATE)
     s["percent"] = int(s["done"] * 100 / s["total"]) if s["total"] else 0
     return s
+
+
+@app.get("/api/portal-origin-probe")
+def portal_origin_probe(user=Depends(verify_token)):
+    """Fetch a sample from the Portal's trackerList and report EXACTLY what fields it sends,
+    plus what the origin auto-detector makes of them. This is how we see, without guessing,
+    whether the Portal is sending the Real-enrolments vs Bulk-imported split — and under which
+    field name — so the two dashboard cards can match the Portal's own numbers."""
+    import mvs_sync
+    try:
+        raw = mvs_sync._trackerlist(timeout=60)
+    except Exception as e:
+        return {"ok": False, "message": f"Could not fetch from the Portal: {e}"}
+    if not raw:
+        return {"ok": False, "message": "Portal returned no students."}
+    sample = raw[:300]
+    # union of keys + candidate origin-ish keys with their top values
+    from collections import Counter
+    all_keys = sorted({k for s in sample for k in s.keys()})
+    hints = ("origin", "source", "legacy", "import", "created", "entry", "type", "via", "added")
+    candidates = {}
+    for k in all_keys:
+        kl = k.lower()
+        if any(h in kl for h in hints) and kl not in ("tocstatus", "toc_status"):
+            vals = Counter(str(s.get(k))[:40] for s in sample if s.get(k) not in (None, ""))
+            if vals:
+                candidates[k] = dict(vals.most_common(5))
+    det = Counter(mvs_sync._detect_origin(s) or "(blank)" for s in sample)
+    return {"ok": True, "sampled": len(sample), "total": len(raw),
+            "fields": all_keys, "candidate_fields": candidates,
+            "detected": dict(det),
+            "message": ("Origin detected for the sample — deploy pe agla run cards ko sahi split karega."
+                        if det.get("(blank)", 0) == 0 else
+                        f"{det.get('(blank)',0)} of {len(sample)} sampled students have NO origin field the "
+                        f"tracker can recognise — the Portal's trackerList must include one (see candidate fields).")}
 
 
 @app.get("/api/check-summary")
