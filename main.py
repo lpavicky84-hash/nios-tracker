@@ -794,8 +794,8 @@ function applySidebarPref(){
           <div id="pend-count" style="font-size:12.5px;color:var(--muted);margin-bottom:8px"></div>
           <div style="overflow-x:auto">
             <table class="tbl"><thead><tr>
-              <th>#</th><th>Student Name</th><th>Mobile</th><th>Session</th><th>Class</th><th>Portal ID</th>
-            </tr></thead><tbody id="pend-body"><tr><td colspan="6" class="empty">Open this page to load…</td></tr></tbody></table>
+              <th>#</th><th>Student Name</th><th>Mobile</th><th>Session</th><th>Class</th><th>Reference on Portal</th><th>Why pending</th><th>Portal ID</th>
+            </tr></thead><tbody id="pend-body"><tr><td colspan="8" class="empty">Open this page to load…</td></tr></tbody></table>
           </div>
         </div>
       </section>
@@ -3285,18 +3285,23 @@ async function loadPending(force){
     var badge=document.getElementById("nav-pending-badge");
     if(badge){badge.style.display=(d.total>0)?"inline-block":"none";badge.textContent=d.total||0;}
     var cnt=document.getElementById("pend-count");
-    if(cnt)cnt.textContent=(d.total||0)+" pending student(s) on the Portal right now";
-    if(!d.ok){tb.innerHTML='<tr><td colspan="6" class="empty">'+(d.message||"Could not load")+'</td></tr>';return;}
-    if(!d.students.length){tb.innerHTML='<tr><td colspan="6" class="empty">No pending students — every Portal student has a reference. 🎉</td></tr>';return;}
+    var c=(d.counts||{});
+    if(cnt)cnt.textContent=(d.total||0)+" pending student(s) on the Portal right now"+
+      ((c.no_ref!=null)?("  —  "+(c.no_ref||0)+" with no reference at all, "+(c.bad_ref||0)+" with an invalid/incomplete reference"):"");
+    if(!d.ok){tb.innerHTML='<tr><td colspan="8" class="empty">'+(d.message||"Could not load")+'</td></tr>';return;}
+    if(!d.students.length){tb.innerHTML='<tr><td colspan="8" class="empty">No pending students — every Portal student has a valid reference. 🎉</td></tr>';return;}
     tb.innerHTML=d.students.map(function(s,i){
+      var bad=(s.reason||"").indexOf("No reference")!==0;
       return '<tr><td>'+(i+1)+'</td>'+
         '<td><b>'+(s.name||"—")+'</b></td>'+
         '<td>'+(s.mobile||"—")+'</td>'+
         '<td>'+(s.session||"—")+'</td>'+
         '<td>'+(s.class_level||"—")+'</td>'+
+        '<td style="font-size:12px">'+(s.reference?('<code style="background:var(--soft);padding:2px 6px;border-radius:5px">'+s.reference+'</code>'):'<span style="color:var(--muted)">—</span>')+'</td>'+
+        '<td style="font-size:12px;color:'+(bad?"#B91C1C":"var(--muted)")+'">'+(s.reason||"—")+'</td>'+
         '<td style="font-size:12px;color:var(--muted)">'+(s.student_id||"—")+'</td></tr>';
     }).join("");
-  }catch(e){tb.innerHTML='<tr><td colspan="6" class="empty">'+e.message+'</td></tr>';}
+  }catch(e){tb.innerHTML='<tr><td colspan="8" class="empty">'+e.message+'</td></tr>';}
 }
 let TE_PAGE=1, TE_TIMER=null;
 function teSearch(){ clearTimeout(TE_TIMER); TE_TIMER=setTimeout(function(){loadTocErrors(1);},400); }
@@ -5893,18 +5898,46 @@ def pending_students(user=Depends(verify_token)):
         raw = mvs_sync._trackerlist(include_done=True, timeout=60)
     except Exception as e:
         return {"ok": False, "message": f"Could not fetch from the Portal: {e}", "students": []}
+    import re as _re
+    # A REAL NIOS reference is one letter + 10 digits (B0526300834); a real enrollment is 11-12
+    # digits (920526301652). Anything else sitting in those fields — "0", "NA", a mobile number,
+    # a half-typed value — is NOT checkable. The Portal counts those students as pending too,
+    # which is why its pending count was higher than ours.
+    _REF = _re.compile(r"^[A-Za-z]\d{10}$")
+    _ENR = _re.compile(r"^\d{11,12}$")
+
+    def _classify(ref, enr):
+        has_ref, has_enr = bool(ref), bool(enr)
+        if _REF.match(ref or "") or _ENR.match(enr or ""):
+            return None                                  # properly checkable
+        if not has_ref and not has_enr:
+            return "No reference/enrollment yet"
+        bad = ref or enr
+        if "@" in bad:
+            return "Email sitting in the reference field"
+        return f"Reference looks invalid: \"{bad[:24]}\" (expected 1 letter + 10 digits)"
+
     out = []
+    counts = {"no_ref": 0, "bad_ref": 0}
     for s in raw:
         ref = str(s.get("referenceNo") or "").strip()
         enr = str(s.get("enrollmentNo") or "").strip()
-        if mvs_sync._valid_ref(ref) or mvs_sync._valid_ref(enr):
-            continue   # has something checkable -> not pending
+        reason = _classify(ref, enr)
+        if not reason:
+            continue
+        if reason.startswith("No reference"):
+            counts["no_ref"] += 1
+        else:
+            counts["bad_ref"] += 1
         out.append({"student_id": str(s.get("studentId") or ""),
                     "name": str(s.get("name") or "").strip(),
                     "mobile": str(s.get("mobile") or "").strip(),
                     "session": str(s.get("examSession") or "").strip(),
-                    "class_level": str(s.get("class") or "").strip()})
-    return {"ok": True, "total": len(out), "students": out}
+                    "class_level": str(s.get("class") or "").strip(),
+                    "reference": ref or enr or "",
+                    "reason": reason})
+    return {"ok": True, "total": len(out), "students": out,
+            "portal_total": len(raw), "counts": counts}
 
 
 @app.get("/api/confirmed-compare")
