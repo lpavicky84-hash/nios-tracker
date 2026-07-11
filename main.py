@@ -3286,8 +3286,14 @@ async function loadPending(force){
     if(badge){badge.style.display=(d.total>0)?"inline-block":"none";badge.textContent=d.total||0;}
     var cnt=document.getElementById("pend-count");
     var c=(d.counts||{});
-    if(cnt)cnt.textContent=(d.total||0)+" pending student(s) on the Portal right now"+
-      ((c.no_ref!=null)?("  —  "+(c.no_ref||0)+" with no reference at all, "+(c.bad_ref||0)+" with an invalid/incomplete reference"):"");
+    if(cnt){
+      cnt.innerHTML=(d.total||0)+" pending student(s) — "+(c.no_ref||0)+" with a blank reference, "+
+        (c.bad_ref||0)+" with an invalid one"+
+        '<div style="margin-top:4px;font-size:12px">The Portal API sent <b>'+(d.portal_total||0)+
+        '</b> students in total. If that is lower than the Total Students on your Portal dashboard, '+
+        'the missing ones are students the Portal API does not send at all (usually blank-reference ones) '+
+        '— they cannot appear here until the Portal includes them.</div>';
+    }
     if(!d.ok){tb.innerHTML='<tr><td colspan="8" class="empty">'+(d.message||"Could not load")+'</td></tr>';return;}
     if(!d.students.length){tb.innerHTML='<tr><td colspan="8" class="empty">No pending students — every Portal student has a valid reference. 🎉</td></tr>';return;}
     tb.innerHTML=d.students.map(function(s,i){
