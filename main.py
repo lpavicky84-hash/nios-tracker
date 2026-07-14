@@ -606,6 +606,7 @@ function applySidebarPref(){
           </div>
           <div class="pb-track"><div class="pb-fill" id="pb-fill" style="width:0%"></div></div>
           <div class="pb-sub" id="pb-sub">0 / 0 done</div>
+          <div id="run-queue-line" style="display:none;margin:9px 0 2px;font-size:12.5px;padding:8px 12px;background:#EEF2FF;border:1px solid #C7D2FE;border-radius:9px;color:#3730A3"></div>
           <div id="pb-srcwrap" style="margin-top:10px;display:none">
             <div id="pb-mvs-row">
               <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:3px">
@@ -4573,7 +4574,7 @@ def reschedule_jobs():
         nxt = last + timedelta(minutes=mins) if last else now + timedelta(minutes=mins)
         if nxt <= now:
             nxt = now + timedelta(minutes=mins)
-        scheduler.add_job(lambda g=grp: run_status_check(g, _group_source(g)),
+        scheduler.add_job(lambda g=grp: run_status_check(g, _group_source(g), is_auto=True),
                           trigger=IntervalTrigger(minutes=mins),
                           id=jid, replace_existing=True, next_run_time=nxt)
         logger.info(f"{jid}: every {mins}min | last_run={last} | next_run={nxt}")
@@ -4589,7 +4590,7 @@ def reschedule_jobs():
     else:
         pn_mins = _interval_minutes("portalnew", 3)
         pn_nxt = now + timedelta(minutes=pn_mins)
-        scheduler.add_job(lambda: run_status_check("all", "mvs_portal", "new"),
+        scheduler.add_job(lambda: run_status_check("all", "mvs_portal", "new", is_auto=True),
                           trigger=IntervalTrigger(minutes=pn_mins),
                           id="job_portalnew", replace_existing=True, next_run_time=pn_nxt)
         logger.info(f"job_portalnew: every {pn_mins}min | next_run={pn_nxt}")
@@ -5161,6 +5162,21 @@ async def sync_toc(user=Depends(verify_token)):
         msg += f" {not_in_tracker} portal student(s) not on the Tracker yet (will arrive in a normal run)."
     return {"ok": True, "message": msg, "updated": updated, "no_count": no_count}
 
+def _block_if_running():
+    """Manual runs must NEVER cancel a run that is already going. If one is active, refuse and
+    tell the operator to cancel it first. (Scheduled/auto runs are queued instead — they wait.)"""
+    from job_runner import run_is_active
+    if run_is_active():
+        conn = get_db()
+        r = conn.execute("SELECT group_type FROM run_logs WHERE status='running' "
+                         "ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+        what = (r["group_type"] if r else "A run")
+        raise HTTPException(status_code=409, detail=(
+            f"'{what}' is running right now. A running check is never cancelled automatically. "
+            f"To start a different run, cancel the current one first (Stop button), then try again."))
+
+
 @app.post("/api/run-now-notoc")
 def run_now_notoc(background_tasks: BackgroundTasks, user=Depends(verify_token)):
     """Run ONLY the no-TOC students (tocStatus='no') that are not yet confirmed. Confirmed ones
@@ -5173,6 +5189,7 @@ def run_now_notoc(background_tasks: BackgroundTasks, user=Depends(verify_token))
     conn.close()
     if not keys:
         return {"message": "No pending special-TOC students to run.", "count": 0}
+    _block_if_running()
     background_tasks.add_task(run_status_check, "all", None, "selected", keys)
     return {"message": f"Running {len(keys)} no-TOC student(s)…", "count": len(keys)}
 
@@ -5185,6 +5202,7 @@ def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token
     conn.close()
     if n == 0:
         return {"message": "No Unknown students to re-check.", "count": 0}
+    _block_if_running()
     background_tasks.add_task(run_status_check, "all", None, "unknown")
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
 
@@ -6072,6 +6090,13 @@ def force_push(body: dict, user=Depends(verify_token)):
             "message": f"Force re-pushed {pushed}/{len(rows)} student(s) to the Portal."}
 
 
+@app.get("/api/run-queue")
+def run_queue(user=Depends(verify_token)):
+    """Scheduled runs waiting for the current one to finish (they are never cancelled)."""
+    from job_runner import queued_runs, run_is_active
+    return {"active": run_is_active(), "queued": queued_runs()}
+
+
 @app.get("/api/check-summary")
 def check_summary(session_filter: str = "", source_filter: str = "", view: str = "normal",
                   user=Depends(verify_token)):
@@ -6108,6 +6133,7 @@ def run_now_notchecked(background_tasks: BackgroundTasks, body: dict = None,
     conn.close()
     if not keys:
         return {"message": "No not-checked students in this scope — everything is up to date.", "count": 0}
+    _block_if_running()
     background_tasks.add_task(run_status_check, "all", None, "selected", keys)
     scope = "all sessions" if not session_filter else session_filter
     return {"message": f"Re-checking {len(keys)} not-checked student(s) in {scope}…", "count": len(keys)}
@@ -6664,6 +6690,7 @@ def portal_to_tracker(body: dict, user=Depends(verify_token)):
 
 @app.post("/api/run-now")
 async def run_now(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    _block_if_running()
     background_tasks.add_task(run_status_check, "all")
     return {"message": "Run triggered for ALL students (Tracker + Portal)!"}
 
@@ -6691,6 +6718,7 @@ def run_now_required(background_tasks: BackgroundTasks, user=Depends(verify_toke
     keys = [r["row_key"] for r in rows if r["row_key"]]
     if not keys:
         return {"message": "No Document Required students to run.", "count": 0}
+    _block_if_running()
     background_tasks.add_task(run_status_check, "all", None, "required", keys)
     return {"message": f"Re-checking {len(keys)} Document Required student(s)!", "count": len(keys)}
 
@@ -6709,6 +6737,7 @@ async def run_now_portal_new(background_tasks: BackgroundTasks, user=Depends(ver
     """Manual run: MVS Portal — NEW data only. Checks just the students that have arrived
     on the portal since last time (not already in the tracker), skipping all already-active
     students to save CapSolver credits."""
+    _block_if_running()
     background_tasks.add_task(run_status_check, "all", "mvs_portal", "new")
     return {"message": "Run triggered for MVS Portal — NEW data only!"}
 
@@ -6731,6 +6760,7 @@ def run_now_failed(background_tasks: BackgroundTasks, user=Depends(verify_token)
     conn.close()
     if n == 0:
         return {"message": "No failed students to re-check.", "count": 0}
+    _block_if_running()
     background_tasks.add_task(run_status_check, "all", None, "failed")
     return {"message": f"Re-checking {n} failed student(s) with auto-fix…", "count": n}
 
@@ -6757,6 +6787,7 @@ def run_selected(body: dict, background_tasks: BackgroundTasks, user=Depends(ver
     conn.close()
     if not valid:
         raise HTTPException(status_code=404, detail="No valid students found for the selection")
+    _block_if_running()
     background_tasks.add_task(run_status_check, "all", None, "selected", valid)
     return {"message": f"Checking {len(valid)} selected student(s)…", "count": len(valid)}
 
@@ -7035,9 +7066,9 @@ async def intervals_resume(body: dict, user=Depends(verify_token)):
     if rem <= 0:
         rem = mins * 60
     if grp == "portalnew":
-        job_fn = lambda: run_status_check("all", "mvs_portal", "new")
+        job_fn = lambda: run_status_check("all", "mvs_portal", "new", is_auto=True)
     else:
-        job_fn = lambda g=grp: run_status_check(g, _group_source(g))
+        job_fn = lambda g=grp: run_status_check(g, _group_source(g), is_auto=True)
     scheduler.add_job(job_fn,
                       trigger=IntervalTrigger(minutes=mins),
                       id=jid, replace_existing=True,

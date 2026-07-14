@@ -2,6 +2,7 @@ import logging
 import os
 import json
 import time as _time
+import threading
 os.environ["TZ"] = "Asia/Kolkata"
 try:
     _time.tzset()
@@ -195,7 +196,62 @@ def _process_syc(conn, c, syc_list, run_id, stats=None):
             logger.warning(f"MVS SYC push error: {pe}")
 
 
-def run_status_check(group_type="all", source_only=None, scope=None, only_keys=None):
+def _run_label(group_type, source_only=None, scope=None):
+    """Same human label the run_logs row gets — used for queue messages."""
+    _GL = {"all": "All", "regular": "On Demand + Stream 2", "ondemand": "On Demand",
+           "stream2": "Stream 2", "public": "Public"}
+    if scope == "upload":
+        return "Uploaded sheet"
+    if scope == "selected":
+        return "Selected students"
+    if scope == "required":
+        return "Document Required (re-check)"
+    if scope == "new":
+        return "New data"
+    if source_only == "mvs_portal":
+        return "MVS Portal" + (f" — {_GL[group_type]}" if group_type in ("ondemand", "stream2", "public") else "")
+    if source_only == "mvs_tracker":
+        return "MVS Tracker"
+    return _GL.get(group_type, group_type)
+
+
+# Scheduled (auto) runs that arrived while another run was busy. They are started, in order,
+# as soon as the current run finishes — nothing is ever cancelled to make room.
+RUN_QUEUE = []
+_QUEUE_LOCK = threading.Lock()
+
+
+def run_is_active():
+    """True if a status run is currently running."""
+    try:
+        cc = get_db()
+        row = cc.execute("SELECT id FROM run_logs WHERE status='running'").fetchone()
+        cc.close()
+        return bool(row)
+    except Exception:
+        return False
+
+
+def queued_runs():
+    """Human-readable list of runs waiting their turn."""
+    with _QUEUE_LOCK:
+        return [q["label"] for q in RUN_QUEUE]
+
+
+def _drain_run_queue():
+    """After a run finishes, start the next queued auto-run (if any)."""
+    with _QUEUE_LOCK:
+        if not RUN_QUEUE:
+            return
+        nxt = RUN_QUEUE.pop(0)
+    logger.info(f"Queue: starting the next waiting run -> {nxt['label']} "
+                f"({len(RUN_QUEUE)} still waiting)")
+    t = threading.Thread(target=run_status_check,
+                         kwargs={**nxt["kwargs"], "is_auto": True}, daemon=True)
+    t.start()
+
+
+def run_status_check(group_type="all", source_only=None, scope=None, only_keys=None, is_auto=False):
     """
     group_type: 'all' | 'regular' | 'public'
     source_only: None (both) | 'mvs_portal' | 'mvs_tracker'.
@@ -227,13 +283,30 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
     # Transfers detected during any run are labelled 'auto'. A user-clicked Portal sync
     # logs its own 'manual' rows separately.
     _transfer_mode = "auto"
-    # Auto-cancel any previously 'running' run so two checks never overlap.
-    # The old run's worker polls its own status and stops cooperatively.
-    prev = c.execute("SELECT id FROM run_logs WHERE status='running'").fetchall()
+    # NEVER cancel a run that is already going. A run in progress always finishes.
+    #   • AUTO (scheduled) run arriving while busy  -> QUEUE it; it starts the moment the
+    #     current run ends. Nothing is lost, nothing is cancelled.
+    #   • MANUAL run arriving while busy            -> REFUSED (the caller shows the operator
+    #     "a run is active; cancel it first"). Only a human cancel can stop a run.
+    prev = c.execute("SELECT id, group_type FROM run_logs WHERE status='running'").fetchone()
     if prev:
-        c.execute("UPDATE run_logs SET status='cancelled' WHERE status='running'")
-        conn.commit()
-        logger.info(f"Auto-cancelled {len(prev)} previous running run(s)")
+        conn.close()
+        _label = _run_label(group_type, source_only, scope)
+        if is_auto:
+            with _QUEUE_LOCK:
+                # don't queue the same scheduled group twice
+                if any(q["label"] == _label for q in RUN_QUEUE):
+                    logger.info(f"Queue: '{_label}' is already waiting — not queued again")
+                    return {"queued": False, "already": True, "label": _label}
+                RUN_QUEUE.append({"label": _label,
+                                  "kwargs": {"group_type": group_type, "source_only": source_only,
+                                             "scope": scope, "only_keys": only_keys}})
+                pos = len(RUN_QUEUE)
+            logger.info(f"Queue: '{prev['group_type']}' is still running — "
+                        f"'{_label}' queued (position {pos}); it will start automatically")
+            return {"queued": True, "position": pos, "label": _label}
+        logger.info(f"Manual run refused — '{prev['group_type']}' is still running")
+        return {"refused": True, "running": prev["group_type"]}
     run_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     _GL = {"all": "All", "regular": "On Demand + Stream 2", "ondemand": "On Demand",
            "stream2": "Stream 2", "public": "Public"}
@@ -1083,6 +1156,11 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         _finish(conn, run_id, checked, changed, failed, f"error: {str(e)[:150]}")
     finally:
         conn.close()
+        # This run is over (completed, cancelled, or errored) — start the next queued auto-run.
+        try:
+            _drain_run_queue()
+        except Exception as _qe:
+            logger.warning(f"Queue drain error: {_qe}")
 
 def _live_report_counts():
     """Live portal totals using the EXACT same definitions as the Excel report Summary,
