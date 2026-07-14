@@ -373,6 +373,10 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
         src_by_key = {s["row_key"]: s.get("source", "mvs_tracker") for s in all_students}
         alt_by_key = {s["row_key"]: (s.get("alt_mobile") or "") for s in all_students}
         toc_by_key = {s["row_key"]: (s.get("toc_status") or "") for s in all_students}
+        # TOC actually READ from each student's NIOS page during THIS run. The admission-status
+        # page already carries 'Previous Subject Details', so the TOC comes free with the status
+        # fetch — no second page load, no extra captcha. The confirm flow below trusts this.
+        run_toc_read = {}
         # Manual override (set in the Upload section) wins over auto-detection — but ONLY
         # for the upload run it was set for. It used to apply to EVERY run and was never
         # cleared, so a stale 'mvs_tracker' override forced all students to Tracker and a
@@ -732,9 +736,10 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 c.execute("UPDATE student_status SET check_failed=0, data_error=0 WHERE row_key=?", (row_key,))
 
             # ── TOC verification (runs on EVERY successful check, any status) ──
-            # The status page also carries the real TOC (Previous Subject Details). If NIOS's TOC
-            # disagrees with the Portal's tocStatus, flag a mismatch so a counsellor verifies BEFORE
-            # the WhatsApp goes out. Once verified (toc_verified=1) we never re-flag it.
+            # The status page we just fetched ALSO carries the real TOC (Previous Subject Details),
+            # so the TOC is read from the SAME response as the status — one page, one captcha.
+            # If NIOS's TOC disagrees with the Portal's tocStatus it is auto-corrected here (and
+            # pushed), and the confirm flow below uses this value for the WhatsApp campaign.
             try:
                 _nt = (res.get("nios_toc") or "").lower()
                 if not _nt and res.get("nios_toc_absent"):
@@ -747,14 +752,18 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                         res["toc_src"] = ("No Previous-Subject-Details table on the NIOS page — "
                                           "for April/October sessions this means TOC = No")
                 if _nt in ("yes", "no"):
+                    run_toc_read[row_key] = _nt       # read from this run's own page fetch
                     _ptoc = (toc_by_key.get(row_key, "") or "").lower()
                     _subs = res.get("toc_subjects") or []
                     _subs_json = json.dumps(_subs) if _subs else ""
-                    _vrow = c.execute("SELECT COALESCE(toc_verified,0) FROM student_status WHERE row_key=?",
-                                      (row_key,)).fetchone()
-                    _verified = bool(_vrow and _vrow[0] == 1)
-                    _mismatch = (not _verified and _ptoc in ("yes", "no") and _ptoc != _nt)
                     _tsrc = (res.get("toc_src") or "")[:280]
+                    # NIOS always wins — a past 'verified' mark must not suppress a real
+                    # disagreement. Only guard: no evidence-less yes -> no downgrade.
+                    _mismatch = (_ptoc in ("yes", "no") and _ptoc != _nt)
+                    if _mismatch and _ptoc == "yes" and _nt == "no" and not _tsrc.strip():
+                        logger.warning(f"  TOC: refusing yes->no for {row_key} (no evidence)")
+                        _mismatch = False
+                        _nt = "yes"   # keep the Portal value; re-check will settle it
                     if not _mismatch:
                         # In sync — record the read + evidence, clear stale flags/remarks.
                         if _subs_json:
@@ -765,6 +774,7 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                                       (_nt, _tsrc, row_key))
                         c.execute("UPDATE student_status SET remark='' WHERE row_key=? "
                                   "AND remark LIKE 'mismatch toc status%'", (row_key,))
+                        toc_by_key[row_key] = _nt
                     else:
                         # AUTO-CORRECT: NIOS is the source of truth. Apply on the tracker, push the
                         # corrected TOC (+subjects) to the Portal, and log it for the audit list.
@@ -880,16 +890,25 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                         # ALSO hold if this student has an unverified TOC mismatch — sending the
                         # wrong (no-TOC) campaign is exactly what panics students. The counsellor
                         # verifies in 'TOC Status Error' first; then the sweep sends correctly.
-                        _toc_hold = False
-                        _tmr = c.execute("SELECT COALESCE(toc_mismatch,0), COALESCE(toc_verified,0) "
-                                         "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
-                        if _tmr and _tmr[0] == 1 and _tmr[1] == 0:
-                            _toc_hold = True
+                        # FINAL TOC CHECK — the student is confirming RIGHT NOW and the documents
+                        # are about to go out, so the campaign must use a TOC we actually read from
+                        # NIOS this run. The admission-status page we just fetched ALREADY contains
+                        # 'Previous Subject Details', so that read is right here — no second page
+                        # load, no extra captcha. Any disagreement was already auto-corrected and
+                        # pushed by the TOC block above.
+                        _final_toc = run_toc_read.get(row_key, "")
+                        if _final_toc not in ("yes", "no"):
+                            # The page didn't give a TOC (rare: partial page). Only THEN re-read once.
+                            _final_toc = final_toc_verify(row_key, new_ref, res.get("enrollment_no", ""),
+                                                          res.get("dob", ""), res.get("session", ""))
+                        if _final_toc in ("yes", "no"):
+                            toc_by_key[row_key] = _final_toc
+                        _toc_hold = (_final_toc not in ("yes", "no"))
                         if _toc_hold:
                             c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
-                                      ("Held — TOC mismatch needs counsellor verification", row_key))
+                                      ("Held — final TOC check could not be read from NIOS; will retry", row_key))
                             conn.commit()
-                            logger.info(f"WhatsApp held (TOC mismatch) {row_key}")
+                            logger.info(f"WhatsApp held (final TOC unreadable) {row_key}")
                             ok, info = None, None
                         elif not _complete:
                             c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
@@ -1483,6 +1502,59 @@ def toc_backfill_sweep(max_students=12):
         logger.info(f"TOC backfill done | checked {checked}, mismatches flagged {flagged}")
     except Exception as e:
         logger.warning(f"TOC backfill sweep error: {e}")
+
+
+def final_toc_verify(row_key, reference_no="", enrollment_no="", dob="", session=""):
+    """LAST-CHANCE TOC check, done the moment a student is confirmed and right before the
+    documents go out. It re-reads the student's OWN NIOS page fresh (one captcha) and, if the
+    TOC disagrees with what the tracker/Portal hold, applies the NIOS value + pushes it, so the
+    WhatsApp can only ever go with the correct campaign.
+    Returns the trustworthy TOC ('yes'/'no') or '' if NIOS could not be read (caller then keeps
+    whatever it had — it never invents a value)."""
+    try:
+        conn = get_db()
+        r = conn.execute("SELECT reference_no, enrollment_no, dob, session, COALESCE(toc_status,'') "
+                         "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+        conn.close()
+        ref = reference_no or (r["reference_no"] if r else "")
+        enr = enrollment_no or (r["enrollment_no"] if r else "")
+        d_o_b = dob or (r["dob"] if r else "")
+        sess = session or (r["session"] if r else "")
+        if not d_o_b or not (ref or enr):
+            return ""
+        from scraper import scrape_students
+        out = {}
+
+        def _cb(res):
+            out.update(res or {})
+
+        scrape_students([{"row_key": row_key, "reference_no": ref, "enrollment_no": enr,
+                          "dob": d_o_b, "session": sess}], on_result=_cb)
+        nt = (out.get("nios_toc") or "").lower()
+        if not nt and out.get("nios_toc_absent"):
+            import nios_login as _nl
+            if _nl.is_public_session(sess):
+                nt = "no"
+                out["toc_src"] = ("No Previous-Subject-Details table on the NIOS page — "
+                                  "for April/October sessions this means TOC = No")
+        if nt not in ("yes", "no"):
+            logger.warning(f"Final TOC verify {row_key}: NIOS could not be read — keeping current value")
+            return ""
+        try:
+            from main import _auto_fix_toc
+            _auto_fix_toc(row_key, nt, out.get("toc_subjects") or [], out.get("toc_src") or "")
+        except Exception as e:
+            logger.warning(f"Final TOC verify apply failed {row_key}: {e}")
+        conn = get_db()
+        cur = conn.execute("SELECT COALESCE(toc_status,'') FROM student_status WHERE row_key=?",
+                           (row_key,)).fetchone()
+        conn.close()
+        final = (cur[0] or "").lower() if cur else nt
+        logger.info(f"Final TOC verify {row_key}: NIOS={nt} -> using '{final}' for the campaign")
+        return final
+    except Exception as e:
+        logger.warning(f"Final TOC verify error {row_key}: {e}")
+        return ""
 
 
 def portal_resync_sweep(max_students=150, progress_cb=None):

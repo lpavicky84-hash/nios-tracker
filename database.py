@@ -68,9 +68,14 @@ def init_db():
             new_toc TEXT,
             subjects TEXT,
             fixed_at TEXT,
-            pushed INTEGER DEFAULT 0
+            pushed INTEGER DEFAULT 0,
+            wa_sent_before INTEGER DEFAULT 0
         )
     """)
+    try:
+        c.execute("ALTER TABLE toc_fix_log ADD COLUMN wa_sent_before INTEGER DEFAULT 0")
+    except Exception:
+        pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS run_logs (

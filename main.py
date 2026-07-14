@@ -751,6 +751,7 @@ function applySidebarPref(){
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
             <h3 style="margin:0">TOC Status Error</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-sm" style="background:#0F766E;color:#fff" onclick="forceRecheckAll(this)" title="Re-read the real NIOS TOC for EVERY confirmed student — even those already checked or marked verified. Catches students locked on a wrong TOC by an old bad read.">Re-check ALL confirmed (force)</button>
               <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA" onclick="recheckFlagged(this)" title="Fresh NIOS read for every still-flagged mismatch — genuine ones are auto-corrected and pushed to the Portal; wrong flags clear.">Re-check flagged</button>
               <button class="btn btn-outline btn-sm" onclick="runTocCheckConfirmed(this)" title="One-time: read the real NIOS TOC for every confirmed student that hasn't been checked yet. Confirmed students are never re-run, so this covers them. Safe to re-click — it only picks up whatever is left.">Check all confirmed students' TOC (one-time)</button>
               <button class="btn btn-primary btn-sm" onclick="runTocCheck(this)" title="Read NIOS TOC for unverified no-TOC students.">Check TOC from NIOS</button>
@@ -772,7 +773,7 @@ function applySidebarPref(){
           <div style="overflow-x:auto">
             <table class="tbl"><thead><tr>
               <th>Student</th><th>Reference</th><th>Session</th><th>Status</th>
-              <th>Portal &rarr; NIOS</th><th>TOC subjects (NIOS)</th><th>Fixed at</th><th>Portal push</th><th>Action</th>
+              <th>Portal &rarr; NIOS</th><th>TOC subjects (NIOS)</th><th>Fixed at</th><th>Portal push</th><th>WhatsApp</th><th>Action</th>
             </tr></thead><tbody id="te-body"></tbody></table>
           </div>
           <div id="te-pg" style="margin-top:12px"></div>
@@ -3317,7 +3318,7 @@ async function loadTocErrors(page){
   if(!tb)return;
   try{ pollTocProgress(); }catch(e){}
   var badge=document.getElementById("nav-tocerror-badge");
-  tb.innerHTML='<tr><td colspan="9" class="empty">Loading…</td></tr>';
+  tb.innerHTML='<tr><td colspan="10" class="empty">Loading…</td></tr>';
   try{
     const q=new URLSearchParams({search:(document.getElementById("te-search")?document.getElementById("te-search").value:""),
                                  page:TE_PAGE,per_page:20});
@@ -3326,7 +3327,7 @@ async function loadTocErrors(page){
     var cnt=document.getElementById("te-count");
     if(cnt)cnt.textContent=d.total+" auto-corrected student(s)";
     if(!d.fixes||!d.fixes.length){
-      tb.innerHTML='<tr><td colspan="9" class="empty">No auto-corrections yet. Mismatches found during any check or run are fixed automatically and listed here.</td></tr>';
+      tb.innerHTML='<tr><td colspan="10" class="empty">No auto-corrections yet. Mismatches found during any check or run are fixed automatically and listed here.</td></tr>';
       renderTePg(1,1);return;
     }
     tb.innerHTML=d.fixes.map(function(f){
@@ -3343,10 +3344,13 @@ async function loadTocErrors(page){
         '<td style="font-size:12px;color:var(--muted)">'+(f.fixed_at||"—")+'</td>'+
         '<td>'+(f.pushed==1?'<span style="font-size:11.5px;font-weight:700;color:#047857;background:#D1FAE5;padding:2px 8px;border-radius:6px">pushed</span>'
                            :'<span style="font-size:11.5px;font-weight:700;color:#B45309;background:#FEF3C7;padding:2px 8px;border-radius:6px" title="Push will be retried automatically">pending</span>')+'</td>'+
-        '<td><button class="btn btn-outline btn-sm" onclick="tocEdit(&quot;'+rk+'&quot;)">Edit</button></td></tr>';
+        '<td>'+(f.wa_sent_before==1?'<span style="font-size:11.5px;font-weight:700;color:#B91C1C;background:#FEE2E2;padding:2px 8px;border-radius:6px" title="Documents had ALREADY been sent using the OLD (wrong) TOC campaign — resend the correct ones.">wrong docs sent</span>':'<span style="font-size:11.5px;color:var(--muted)">not sent before</span>')+'</td>'+
+        '<td style="white-space:nowrap">'+
+          (f.wa_sent_before==1?('<button class="btn btn-sm" style="background:#16A34A;color:#fff" onclick="resendWa(&quot;'+rk+'&quot;,this)">Resend correct docs</button> '):'')+
+          '<button class="btn btn-outline btn-sm" onclick="tocEdit(&quot;'+rk+'&quot;)">Edit</button></td></tr>';
     }).join("");
     renderTePg(d.page,d.pages);
-  }catch(e){tb.innerHTML='<tr><td colspan="9" class="empty">'+e.message+'</td></tr>';}
+  }catch(e){tb.innerHTML='<tr><td colspan="10" class="empty">'+e.message+'</td></tr>';}
 }
 function renderTePg(page,total){
   var el=document.getElementById("te-pg");
@@ -3392,6 +3396,17 @@ async function runTocCheckConfirmed(btn){
   if(btn){btn.disabled=true;btn.textContent="Starting…";}
   try{
     const r=await api("/api/toc-check-confirmed","POST",{});
+    showToast(r.message||"Started");
+    if(r.count>0) pollTocProgress();
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function forceRecheckAll(btn){
+  if(!confirm("Re-read the NIOS TOC for EVERY confirmed student (even already-checked / verified ones)? Any wrong TOC is corrected automatically, pushed to the Portal, and listed below — including students whose documents already went out with the wrong campaign. Uses one CapSolver credit per student."))return;
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await api("/api/toc-check-confirmed","POST",{force:true});
     showToast(r.message||"Started");
     if(r.count>0) pollTocProgress();
   }catch(e){showToast(""+e.message);}
@@ -5188,10 +5203,17 @@ def _auto_fix_toc(rk, nt, subs, src_trace):
         cc.close()
         return "skip"
     ptoc = (row[0] or "").lower()
-    verified = bool(row[1] == 1)
     sid = row[2]
     subs_json = json.dumps(subs) if subs else ""
-    if verified or ptoc not in ("yes", "no") or ptoc == nt:
+    # NIOS is ALWAYS the source of truth. A previous 'verified' mark must NEVER suppress a fresh
+    # disagreement — that bug let one bad read lock a student on the wrong TOC forever (and the
+    # wrong WhatsApp campaign went out). The only guard kept: never downgrade yes -> no without
+    # concrete evidence of what was read, so a blank/partial page can't wipe a real TOC.
+    if ptoc == "yes" and nt == "no" and not (src_trace or "").strip():
+        cc.close()
+        logger.warning(f"TOC: refusing yes->no for {rk} — NIOS read had no evidence; will re-check")
+        return "skip"
+    if ptoc not in ("yes", "no") or ptoc == nt:
         # In sync (or manually settled) — record the read + evidence, clear stale flags.
         if subs_json:
             cc.execute("UPDATE student_status SET nios_toc=?, toc_subjects=?, toc_src=?, toc_mismatch=0 WHERE row_key=?",
@@ -5216,10 +5238,12 @@ def _auto_fix_toc(rk, nt, subs, src_trace):
             pushed = 1
     except Exception as _pe:
         logger.warning(f"TOC auto-fix push failed {rk}: {_pe}")
+    _wa = cc.execute("SELECT COALESCE(whatsapp_sent,0) FROM student_status WHERE row_key=?", (rk,)).fetchone()
+    _wa_before = 1 if (_wa and _wa[0] == 1) else 0
     cc.execute("INSERT INTO toc_fix_log (row_key, reference_no, student_name, session, current_status, "
-               "old_toc, new_toc, subjects, fixed_at, pushed) VALUES (?,?,?,?,?,?,?,?,?,?)",
+               "old_toc, new_toc, subjects, fixed_at, pushed, wa_sent_before) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                (rk, row[3], row[4], row[5], row[6], ptoc, nt, ", ".join(subs or []),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pushed))
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pushed, _wa_before))
     cc.commit()
     cc.close()
     logger.info(f"TOC auto-corrected {rk}: Portal {ptoc} -> NIOS {nt} (pushed={pushed})")
@@ -5254,6 +5278,13 @@ def toc_check_confirmed(background_tasks: BackgroundTasks, body: dict = None, us
         rows = conn.execute(
             "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 "
             "AND COALESCE(toc_mismatch,0)=1 AND COALESCE(toc_verified,0)=0 "
+            "AND COALESCE(dob,'')!='' "
+            "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
+    elif body.get("force"):
+        # FORCE: re-read EVERY confirmed student from NIOS, even if already checked/verified.
+        # This is how KHUSHI-type cases (locked on a wrong TOC by an old bad read) get caught.
+        rows = conn.execute(
+            "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 AND is_confirmed=1 "
             "AND COALESCE(dob,'')!='' "
             "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
     elif sel_keys:
@@ -8586,7 +8617,7 @@ def doc_request_image_remove(body: dict, user=Depends(verify_token)):
     conn.close()
     return {"ok": True}
 
-def _wa_send_one(row_key, verify=False):
+def _wa_send_one(row_key, verify=False, fresh_toc=False):
     """(Re)send the documents for ONE confirmed student. Opens its own DB connection so it
     is safe to run as a background task. Returns (ok, info, login_failed). Never raises.
 
@@ -8603,6 +8634,21 @@ def _wa_send_one(row_key, verify=False):
         if not row:
             conn.close()
             return False, "student not found", False
+        if fresh_toc:
+            # Re-read this student's TOC from NIOS right now and apply/push any correction, so a
+            # resend can never repeat the wrong campaign. If NIOS can't be read, don't guess.
+            conn.close()
+            from job_runner import final_toc_verify
+            _ft = final_toc_verify(row_key)
+            if _ft not in ("yes", "no"):
+                cx = get_db()
+                cx.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                           ("Not sent — TOC could not be read from NIOS just now; try again", row_key))
+                cx.commit(); cx.close()
+                return False, "TOC could not be read from NIOS — not sending (try again)", False
+            conn = get_db()
+            row = conn.execute("SELECT row_key, student_name, mobile, alt_mobile, session, reference_no, dob, enrollment_no, toc_status "
+                               "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
         if verify:
             from nios_login import verify_login
             ok_login, lmsg = verify_login(row["reference_no"], row["dob"], row["enrollment_no"] or "")
@@ -8947,7 +8993,9 @@ async def wa_resend(body: dict, user=Depends(verify_token)):
     if not row_key:
         raise HTTPException(status_code=400, detail="row_key required")
     from fastapi.concurrency import run_in_threadpool
-    ok, info, lf = await run_in_threadpool(_wa_send_one, row_key)
+    # A manual resend ALWAYS re-reads the TOC from NIOS first (one captcha) and applies/pushes any
+    # correction — so a resend can never repeat a wrong campaign, which is the whole point of it.
+    ok, info, lf = await run_in_threadpool(_wa_send_one, row_key, False, True)
     return {"ok": ok, "info": info, "login_failed": lf}
 
 @app.post("/api/wa-resend-bulk")
