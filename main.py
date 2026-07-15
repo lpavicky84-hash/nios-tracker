@@ -2125,7 +2125,7 @@ async function loadReconciliation(refresh){
           '<button onclick="auditConfirmed(this)" style="background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Find confirmed gap</button>'+
           '<button onclick="probeOrigin(this)" style="background:#EDE9FE;color:#6D28D9;border:1px solid #DDD6FE;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Detect origin field</button>'+
           '<button onclick="forceConfirmed(this)" style="background:#0F766E;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer" title="Re-push every confirmed student to the Portal and list any the Portal does not accept.">Re-push ALL confirmed</button>'+
-          '<button onclick="syncDetailsAll(this)" style="background:#B45309;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer" title="Push every linked student\'s details (reference/enrollment no, DOB, mobile, email, name…) from the tracker to the Portal — fixes stale Portal data after tracker-side edits.">Sync details &rarr; Portal</button>'+
+          '<button onclick="syncDetailsAll(this)" style="background:#B45309;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer" title="Push details of every linked student (reference/enrollment no, DOB, mobile, email, name…) from the tracker to the Portal — fixes stale Portal data after tracker-side edits.">Sync details &rarr; Portal</button>'+
           '<button onclick="syncPortalNow(this)" style="background:#4F46E5;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Sync Portal now</button>'+
           '<button onclick="document.getElementById(&quot;reconcile-panel&quot;).style.display=&quot;none&quot;" style="background:var(--soft);border:1px solid var(--border);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer">&times; Close</button>'+
         '</span></div>'+
@@ -2207,7 +2207,7 @@ async function forceConfirmed(btn){
   }catch(e){showToast(""+e.message);if(btn){btn.disabled=false;btn.textContent=old;}}
 }
 async function syncDetailsAll(btn){
-  if(!confirm("Push EVERY linked student's details (reference/enrollment no, DOB, mobile, alt no, email, name, class, session) from the TRACKER to the PORTAL?\n\nUse this to backfill students already corrected on the tracker (e.g. wrong references fixed after a run) whose Portal copy is still old. Empty tracker fields are skipped, so nothing on the Portal gets wiped."))return;
+  if(!confirm("Push details of EVERY linked student (reference/enrollment no, DOB, mobile, alt no, email, name, class, session) from the TRACKER to the PORTAL?\\n\\nUse this to backfill students already corrected on the tracker (e.g. wrong references fixed after a run) whose Portal copy is still old. Empty tracker fields are skipped, so nothing on the Portal gets wiped."))return;
   var box=document.getElementById("rp-details");
   var old=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="Starting…";}
