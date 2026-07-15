@@ -826,7 +826,7 @@ function applySidebarPref(){
             <select id="c-toc" onchange="loadConfirmed(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
-            <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether the documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">Documents saved</option><option value="notsaved">Not saved yet</option></select>
+            <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether ALL of the student's documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">All documents saved</option><option value="notsaved">Not fully saved (missing docs)</option></select>
             <select id="c-datepreset" onchange="onDatePreset('c',()=>loadConfirmed(1))">
               <option value="">All dates</option>
               <option value="today">Today</option>
@@ -4895,6 +4895,31 @@ _SPECIAL_TOC_CLAUSE = (
     "OR ( NOT " + _OD_S2_SQL + " AND NOT " + _IS_SYC_SQL + " AND LOWER(COALESCE(toc_status,''))='yes' ) )"
 )
 
+def _fully_saved_keys():
+    """Return the set of confirmed row_keys whose documents are FULLY saved in our DB — using the
+    exact same per-session/TOC expected-doc rule as the 'Fully saved' header count, so the
+    'Documents saved' / 'Not saved yet' filters always agree with that number. Returns None only
+    if it truly can't be computed (then the caller leaves the filter as a no-op)."""
+    try:
+        import whatsapp
+        conn = get_db()
+        confirmed = conn.execute("SELECT row_key, session, toc_status FROM student_status "
+                                 "WHERE is_confirmed=1 AND COALESCE(deleted,0)=0").fetchall()
+        have = {}
+        for x in conn.execute("SELECT row_key, kind FROM document_cache").fetchall():
+            have.setdefault(x["row_key"], set()).add(x["kind"])
+        conn.close()
+        full = set()
+        for s in confirmed:
+            allowed = whatsapp.allowed_docs(s["session"], (s["toc_status"] or ""))
+            if not allowed or allowed.issubset(have.get(s["row_key"], set())):
+                full.add(s["row_key"])
+        return full
+    except Exception as e:
+        logger.warning(f"_fully_saved_keys error: {e}")
+        return None
+
+
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to="", source_filter="",
                          wa_status="", saved_filter="", check_state="", check_boundary=None,
@@ -4971,11 +4996,23 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append(f"{_dt} >= ?"); params.append(df)
     if dtv:
         wc.append(f"{_dt} <= ?"); params.append(dtv)
-    # Documents-saved filter: whether we have this student's documents saved in our DB.
-    if saved_filter == "saved":
-        wc.append("EXISTS (SELECT 1 FROM document_cache dc WHERE dc.row_key = student_status.row_key)")
-    elif saved_filter == "notsaved":
-        wc.append("NOT EXISTS (SELECT 1 FROM document_cache dc WHERE dc.row_key = student_status.row_key)")
+    # Documents-saved filter. "Fully saved" = we have EVERY document this student's WhatsApp
+    # message needs (id card / app form / hall ticket, per session + TOC). A student with 2 of 3
+    # docs is NOT fully saved — they belong under "Not saved yet" so they're findable and fixable.
+    if saved_filter in ("saved", "notsaved"):
+        fully_keys = list(_fully_saved_keys() or [])
+        key_list = ",".join("?" for _ in fully_keys)
+        if saved_filter == "saved":
+            if fully_keys:
+                wc.append(f"student_status.row_key IN ({key_list})")
+                params.extend(fully_keys)
+            else:
+                wc.append("1=0")   # nothing fully saved yet
+        else:  # notsaved = NOT fully saved (missing at least one doc, or none)
+            if fully_keys:
+                wc.append(f"student_status.row_key NOT IN ({key_list})")
+                params.extend(fully_keys)
+            # else: no exclusions -> everyone is "not saved yet"
     # "New check / Not checked (this run)" — based on last_verified (only set when a run
     # actually READ a real NIOS status; a captcha/proxy fallback does NOT advance it). The
     # boundary is the most recent verify time WITHIN the current filter scope (session-aware),
