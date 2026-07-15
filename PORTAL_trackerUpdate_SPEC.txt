@@ -1,0 +1,105 @@
+MVS PORTAL — trackerUpdate API: FIELDS THE TRACKER NOW SENDS
+=============================================================
+Context: The NIOS Tracker (status.mvsfoundation.in) now mirrors every student edit
+to the Portal automatically via the existing "trackerUpdate" action. If the Portal's
+trackerUpdate handler ignores any of the parameters below, that field will NOT update
+on the Portal. Please make sure ALL of these are handled.
+
+Every request is a POST with:
+  action     = "trackerUpdate"
+  trackerKey = (the existing shared key — unchanged)
+  studentId  = the Portal's student ID (unchanged)
+
+1) TOC FIELDS  (MOST IMPORTANT — has a special "clear" rule)
+------------------------------------------------------------
+  tocStatus         = "yes" or "no"
+  tocSubject        = comma-separated subject names, e.g. "English, Physical Education"
+  tocSubjects       = same value (both spellings are sent — read whichever exists)
+  clearTocSubjects  = "1"  (sent ONLY when the subject field must be BLANKED)
+
+  RULES:
+  a) When tocStatus = "yes": write tocSubject/tocSubjects text into the student's
+     TOC-subject field and set TOC status to YES.
+  b) When tocStatus = "no": the tracker sends tocSubject = "" (EMPTY) together with
+     clearTocSubjects = "1". The handler MUST CLEAR (blank) the TOC-subject field —
+     do NOT skip the parameter just because it is empty. This matters because the
+     Portal auto-sets TOC status to YES whenever anything is written in the subject
+     field (even junk text like "WITHOUT TOC"). If the old text stays, the Portal
+     flips the status back to YES and undoes the NIOS correction.
+
+  Common bug to check: code like
+      if (e.parameter.tocSubject) { ... }
+  skips empty strings. Use instead:
+      if (e.parameter.tocSubject !== undefined || e.parameter.clearTocSubjects == "1") { ... }
+
+2) STUDENT DETAIL FIELDS  (mirror of tracker-side edits)
+--------------------------------------------------------
+  name             = student name
+  dob              = date of birth (as text, same format the Portal already stores)
+  mobile           = primary mobile number
+  alternateMobile  = alternate / WhatsApp number
+                     (also sent as alternateNumber, alternateContact and whatsappNumber —
+                      read whichever name matches your data model)
+  email            = email
+  class            = class level (e.g. "12")
+  examSession      = session (e.g. "Stream 2", "April", "October", "On Demand", "SYC")
+  referenceNo      = NIOS reference number   (already supported today)
+  enrollmentNo     = NIOS enrollment number  (already supported today)
+
+  RULES:
+  - Update a field ONLY if the parameter is present AND non-empty (the tracker never
+    sends empty detail values, so there is no risk of wiping Portal data).
+  - These arrive one student at a time (single studentId per request).
+
+3) RESPONSE FORMAT (unchanged)
+------------------------------
+  Success: JSON {"status":"success"} — please return success ONLY when the update was
+  actually applied. (Currently the Portal returns success even for params it silently
+  ignores, so the tracker wrongly shows "synced" while the field stays unchanged.)
+  Failure: JSON {"status":"error","message":"<reason>"}
+  The tracker records the "message" text and shows it to the admin, so please return
+  a meaningful reason on failure (e.g. "studentId not found").
+
+4) QUICK TEST AFTER THE CHANGE
+------------------------------
+  a) Pick a student whose TOC-subject field contains text but NIOS says TOC = No.
+     Run a tracker check → the Portal's TOC-subject field must become BLANK and
+     TOC status must show NO (and stay NO).
+  b) Pick a student with a blank TOC-subject field where NIOS says TOC = Yes.
+     Run a tracker check → the subjects must appear in the field and status = YES.
+  c) Edit a student's mobile number on the tracker (Edit → Save) → the Portal must
+     show the new number, and the tracker's Edit modal must show "Portal sync: synced ✓".
+
+--- SAMPLE HANDLER CODE (Google Apps Script style — adapt names to your sheet) ---
+
+function handleTrackerUpdate(e, sheetRow) {
+  var p = e.parameter;
+
+  // ---- TOC ----
+  if (p.tocStatus !== undefined && p.tocStatus !== "") {
+    setCell(sheetRow, "TOC Status", p.tocStatus.toLowerCase() === "yes" ? "yes" : "no");
+  }
+  var tocSubj = (p.tocSubject !== undefined) ? p.tocSubject : p.tocSubjects;
+  if (tocSubj !== undefined) {
+    if (tocSubj === "" || p.clearTocSubjects == "1") {
+      setCell(sheetRow, "TOC Subject", "");          // CLEAR — do not skip!
+    } else {
+      setCell(sheetRow, "TOC Subject", tocSubj);
+    }
+  }
+
+  // ---- Student details (update only when non-empty) ----
+  var map = { name:"Name", dob:"DOB", mobile:"Mobile", alternateMobile:"Alternate Mobile",
+              email:"Email", "class":"Class", examSession:"Exam Session",
+              referenceNo:"Reference No", enrollmentNo:"Enrollment No" };
+  for (var key in map) {
+    var v = p[key];
+    if (v !== undefined && String(v).trim() !== "") {
+      setCell(sheetRow, map[key], String(v).trim());
+    }
+  }
+}
+
+// NOTE: if the Portal has the rule "subject filled => status yes", keep it — the
+// tracker relies on it. The only requirement is that a BLANK subject write actually
+// blanks the field so the status can stay NO.

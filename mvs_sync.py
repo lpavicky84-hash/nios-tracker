@@ -295,6 +295,12 @@ def push_details(student_id, fields, timeout=40):
         if col in ("reference_no", "enrollment_no") and not _valid_ref(v):
             continue    # never push an email/placeholder into the reference field
         data[key] = v
+        if col == "alt_mobile":
+            # Portal UI labels this "ALTERNATE CONTACT" — the exact param name is unknown,
+            # so send the likely spellings too; the Portal reads whichever it recognises.
+            data["alternateNumber"]  = v
+            data["alternateContact"] = v
+            data["whatsappNumber"]   = v
     if len(data) <= 3:
         return False, "nothing to push (all fields empty)"
     try:
