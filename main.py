@@ -4898,13 +4898,17 @@ _SPECIAL_TOC_CLAUSE = (
 def _fully_saved_keys():
     """Return the set of confirmed row_keys whose documents are FULLY saved in our DB — using the
     exact same per-session/TOC expected-doc rule as the 'Fully saved' header count, so the
-    'Documents saved' / 'Not saved yet' filters always agree with that number. Returns None only
-    if it truly can't be computed (then the caller leaves the filter as a no-op)."""
+    'Documents saved' / 'Not fully saved' filters always agree with that number. Only counts
+    students that actually appear on the Confirmed page (i.e. NOT login-failed / check-failed —
+    those live under 'Failed to Run'), so the filter and the header never disagree. Returns None
+    only if it truly can't be computed (then the caller leaves the filter as a no-op)."""
     try:
         import whatsapp
         conn = get_db()
-        confirmed = conn.execute("SELECT row_key, session, toc_status FROM student_status "
-                                 "WHERE is_confirmed=1 AND COALESCE(deleted,0)=0").fetchall()
+        confirmed = conn.execute(
+            "SELECT row_key, session, toc_status FROM student_status "
+            "WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 "
+            "AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0").fetchall()
         have = {}
         for x in conn.execute("SELECT row_key, kind FROM document_cache").fetchall():
             have.setdefault(x["row_key"], set()).add(x["kind"])
@@ -9035,7 +9039,8 @@ def cache_docs_progress(user=Depends(verify_token)):
     # student with 2 of 3 docs counts as pending, not done.
     import whatsapp
     confirmed = conn.execute("SELECT row_key, session, toc_status FROM student_status "
-                             "WHERE is_confirmed=1 AND COALESCE(deleted,0)=0").fetchall()
+                             "WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 "
+                             "AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0").fetchall()
     have_map = {}
     for x in conn.execute("SELECT row_key, kind FROM document_cache").fetchall():
         have_map.setdefault(x["row_key"], set()).add(x["kind"])
