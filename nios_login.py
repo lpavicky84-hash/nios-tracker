@@ -228,7 +228,11 @@ def get_login_csrf(session):
     return inp.get("value", "") if inp else ""
 
 def login_student(reference_no, dob, page_action=None, enrollment_no=""):
-    """Login with reference_no OR enrollment_no (+ DOB). Returns (session, final_response)."""
+    """Log into the NIOS student portal. The login page now accepts ONLY the Reference No
+    (NIOS removed the Enrollment field from login — see the live form). So we always log in with
+    the reference number; the enrollment_no argument is accepted for signature compatibility but
+    IGNORED here. (Status-checking is separate and still supports enrollment — that page keeps it.)
+    Returns (session, final_response)."""
     session = requests.Session()
     csrf = get_login_csrf(session)   # also refreshes the live reCAPTCHA site key + action
     token = solve_recaptcha_v3(LOGIN_URL, page_action or current_login_action(),
@@ -238,8 +242,8 @@ def login_student(reference_no, dob, page_action=None, enrollment_no=""):
         return session, None
     payload = {
         "_csrf": csrf,
-        "LoginForm[reference_no]": "" if enrollment_no else reference_no,
-        "LoginForm[enrollment_no]": enrollment_no or "",
+        "LoginForm[reference_no]": reference_no or "",
+        "LoginForm[enrollment_no]": "",
         "LoginForm[application_no]": "",
         "LoginForm[date_of_birth]": format_dob(dob),
         # NIOS fixed a typo in this field name (recapcha -> recaptcha). Send BOTH spellings so
@@ -404,8 +408,8 @@ def fetch_nios_toc(reference_no, dob, enrollment_no=""):
             return out
         payload = {
             "_csrf": csrf,
-            "LoginForm[reference_no]": "" if enrollment_no else reference_no,
-            "LoginForm[enrollment_no]": enrollment_no or "",
+            "LoginForm[reference_no]": reference_no or "",
+            "LoginForm[enrollment_no]": "",
             "LoginForm[application_no]": "",
             "LoginForm[date_of_birth]": format_dob(dob),
             "LoginForm[google_recaptcha_response]": token,
@@ -491,21 +495,21 @@ _LAST_FAIL_REASON = ""   # set by get_logged_in_session: 'captcha' (service busy
 
 def get_logged_in_session(reference_no, dob, enrollment_no="", force=False):
     """Return a logged-in session (cached ~5 min) or None.
-    Uses enrollment_no for login when given (SYC students), else reference_no.
-    force=True ignores+clears the cache and logs in fresh (used for a retry).
+    The NIOS login page now accepts ONLY the Reference No, so login always uses the reference
+    (enrollment_no is ignored here). force=True ignores+clears the cache and logs in fresh.
     On failure, sets _LAST_FAIL_REASON to 'captcha' (no captcha token = service busy, NOT a
-    data problem) or 'bounce' (login page returned = wrong Reference/Enrollment/DOB)."""
+    data problem) or 'bounce' (login page returned = wrong Reference/DOB)."""
     global _LAST_FAIL_REASON
     _LAST_FAIL_REASON = ""
     now = time.time()
-    key = ("enr:" + enrollment_no) if enrollment_no else reference_no
+    key = reference_no
     if force:
         _session_cache.pop(key, None)
     else:
         cached = _session_cache.get(key)
         if cached and cached[1] > now:
             return cached[0]
-    session, resp = login_student(reference_no, dob, enrollment_no=enrollment_no)
+    session, resp = login_student(reference_no, dob, enrollment_no="")
     if resp is None:
         _LAST_FAIL_REASON = "captcha"   # no captcha token / gateway down — NOT a data problem
         return None
@@ -517,15 +521,16 @@ def get_logged_in_session(reference_no, dob, enrollment_no="", force=False):
 
 def verify_login(reference_no, dob, enrollment_no=""):
     """TRUE verification: log in AND fetch a protected page (ID card) — exactly the path
-    the student's WhatsApp link takes. If NIOS bounces back to the login page (wrong DOB
-    / Reference / Enrollment), the link would also fail, so we report failure and the
-    caller blocks WhatsApp + marks it Failed to Run. Two attempts (reCAPTCHA v3 can flake)
-    so a correct student is never falsely failed. Returns (ok: bool, message: str)."""
-    key = ("enr:" + enrollment_no) if enrollment_no else reference_no
+    the student's WhatsApp link takes. The NIOS login page now takes ONLY the Reference No,
+    so login always uses the reference (enrollment_no is ignored for login). If NIOS bounces
+    back to the login page (wrong Reference / DOB), the link would also fail, so we report
+    failure and the caller blocks WhatsApp + marks it Failed to Run. Two attempts (reCAPTCHA v3
+    can flake) so a correct student is never falsely failed. Returns (ok: bool, message: str)."""
+    key = reference_no
     try:
         target = urljoin(BASE, DOC_URLS["id_card"])
         for attempt in range(_LOGIN_TRIES):
-            session = get_logged_in_session(reference_no, dob, enrollment_no=enrollment_no,
+            session = get_logged_in_session(reference_no, dob, enrollment_no="",
                                             force=(attempt >= 1))
             if session is None:
                 continue                                   # login page bounce -> retry
@@ -543,12 +548,12 @@ def verify_login(reference_no, dob, enrollment_no=""):
                 continue
             if "html" in ct:
                 return True, ""                            # got the protected doc page
-        who = "Enrollment No" if enrollment_no else "Reference No"
+        who = "Reference No"
         if _LAST_FAIL_REASON == "captcha":
             return False, ("CAPTCHA_BUSY: could not verify — the captcha/login service is busy "
                            "(this is NOT a data problem). Try again shortly.")
-        return False, (f"NIOS login failed — data mismatch. Check {who} & Date of Birth "
-                       f"(DOB used: '{format_dob(dob)}').")
+        return False, (f"NIOS login failed — data mismatch. The NIOS login page now uses ONLY the "
+                       f"Reference No. Check the {who} & Date of Birth (DOB used: '{format_dob(dob)}').")
     except Exception as e:
         return False, f"NIOS login error: {str(e)[:120]}"
 
@@ -567,19 +572,18 @@ def flip_dob(dob):
     return f"{mo}-{d}-{y}"
 
 def verify_login_autofix(reference_no, dob, enrollment_no=""):
-    """verify_login, but if it fails AND a day/month flip of the DOB is plausible (both
-    <=12), retry once with them swapped — a common Excel date-formatting error. Returns
-    (ok, message, fixed_dob): fixed_dob is the corrected DD-MM-YYYY to PERSIST, set only
-    when the swap is what made the login succeed; otherwise ''."""
-    ok, msg = verify_login(reference_no, dob, enrollment_no)
+    """verify_login, but if it fails AND a day/month flip of the DOB is plausible (both <=12),
+    retry once with them swapped — a common Excel date-formatting error. (Login uses only the
+    Reference No now, so there is no enrollment fallback here.) Returns (ok, message, fixed_dob):
+    fixed_dob is the corrected DD-MM-YYYY to PERSIST, set only when the swap made login succeed."""
+    ok, msg = verify_login(reference_no, dob, "")
     if ok:
         return True, "", ""
     flipped = flip_dob(dob)
     if flipped and flipped != format_dob(dob):
-        ok2, _ = verify_login(reference_no, flipped, enrollment_no)
+        ok2, _ = verify_login(reference_no, flipped, "")
         if ok2:
-            logger.info(f"DOB autofix: {format_dob(dob)} -> {flipped} fixed login "
-                        f"for {reference_no or enrollment_no}")
+            logger.info(f"DOB autofix: {format_dob(dob)} -> {flipped} fixed login for {reference_no}")
             return True, "", flipped
     return False, msg, ""
 
@@ -663,6 +667,18 @@ def fetch_status_via_login(reference_no, dob, enrollment_no=""):
                 logger.info(f"status-via-login {reference_no or enrollment_no} -> {lab}")
                 return lab, ""
         return "", ""   # logged in, but no status text found on the page (not a failure)
+    # Enrollment-based login failed for all attempts. If we also have a reference number, the
+    # enrollment we hold may be wrong/partial while the reference is fine (or the columns were
+    # swapped). Try once more with the reference before giving up — this is exactly the case
+    # where the student logs in fine on the NIOS site but keeps landing in 'Failed to Run'.
+    if enrollment_no and reference_no and last_kind != "data":
+        logger.info(f"status-via-login: retrying with Reference {reference_no} "
+                    f"after Enrollment {enrollment_no} failed")
+        lab2, kind2 = fetch_status_via_login(reference_no, dob, "")
+        if lab2:
+            return lab2, ""
+        if kind2 == "data":
+            return "", "data"
     return "", last_kind
 
 def _fetch_bytes(url, session):
