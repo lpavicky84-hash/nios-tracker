@@ -1443,6 +1443,7 @@ function applySidebarPref(){
         <label style="font-size:12px;font-weight:600">Session<input id="edit-session" class="edit-inp"></label>
       </div>
       <div style="font-size:11.5px;color:var(--muted);margin-top:10px">Tip: if NIOS login failed, fix the <b>Date of Birth</b> or <b>Reference/Enrollment No</b>, then "Save &amp; Run again" to re-check and send.</div>
+      <div id="edit-syncline" style="font-size:12px;font-weight:600;margin-top:8px"></div>
       <div id="edit-status" style="font-size:12.5px;font-weight:600;margin-top:10px"></div>
     </div>
     <div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end">
@@ -2124,12 +2125,14 @@ async function loadReconciliation(refresh){
           '<button onclick="auditConfirmed(this)" style="background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Find confirmed gap</button>'+
           '<button onclick="probeOrigin(this)" style="background:#EDE9FE;color:#6D28D9;border:1px solid #DDD6FE;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Detect origin field</button>'+
           '<button onclick="forceConfirmed(this)" style="background:#0F766E;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer" title="Re-push every confirmed student to the Portal and list any the Portal does not accept.">Re-push ALL confirmed</button>'+
+          '<button onclick="syncDetailsAll(this)" style="background:#B45309;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer" title="Push every linked student\'s details (reference/enrollment no, DOB, mobile, email, name…) from the tracker to the Portal — fixes stale Portal data after tracker-side edits.">Sync details &rarr; Portal</button>'+
           '<button onclick="syncPortalNow(this)" style="background:#4F46E5;color:#fff;border:none;border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer">Sync Portal now</button>'+
           '<button onclick="document.getElementById(&quot;reconcile-panel&quot;).style.display=&quot;none&quot;" style="background:var(--soft);border:1px solid var(--border);border-radius:8px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer">&times; Close</button>'+
         '</span></div>'+
       '<div id="rp-syncline" style="display:none;margin:2px 0 10px;font-size:12.5px;font-weight:700;color:#4F46E5"></div>'+
       '<div id="rp-probe" style="display:none;margin:2px 0 10px;font-size:12px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 12px"></div>'+
       '<div id="rp-force" style="display:none;margin:2px 0 10px;font-size:12.5px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 12px"></div>'+
+      '<div id="rp-details" style="display:none;margin:2px 0 10px;font-size:12.5px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 12px"></div>'+
       '<div id="rp-audit" style="display:none;margin:2px 0 10px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 12px"></div>'+
       row("Total students in tracker", d.total_live)+
       row("Portal has, tracker skips", (d.deleted||0)+(d.no_reference||0), "#B45309",
@@ -2199,6 +2202,32 @@ async function forceConfirmed(btn){
         if(box)box.innerHTML=html;
         if(s.running){setTimeout(poll,1500);}
         else{showToast(s.message||"Done");if(btn){btn.disabled=false;btn.textContent=old;}loadReconciliation(true);}
+      }catch(e){setTimeout(poll,2500);}
+    })();
+  }catch(e){showToast(""+e.message);if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function syncDetailsAll(btn){
+  if(!confirm("Push EVERY linked student's details (reference/enrollment no, DOB, mobile, alt no, email, name, class, session) from the TRACKER to the PORTAL?\n\nUse this to backfill students already corrected on the tracker (e.g. wrong references fixed after a run) whose Portal copy is still old. Empty tracker fields are skipped, so nothing on the Portal gets wiped."))return;
+  var box=document.getElementById("rp-details");
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await api("/api/portal-sync-details","POST",{});
+    if(box){box.style.display="block";box.textContent=r.message||"";}
+    if(!r.started){showToast(r.message);if(btn){btn.disabled=false;btn.textContent=old;}return;}
+    (async function poll(){
+      try{
+        const s=await api("/api/portal-sync-details-status");
+        var html='<b>'+(s.running?("Syncing details… "+s.done+" / "+s.total+" ("+(s.percent||0)+"%) — synced "+s.ok+", failed "+s.failed):s.message)+'</b>';
+        if(!s.running && s.fail_list && s.fail_list.length){
+          html+='<div style="margin-top:8px;font-weight:700;color:#B91C1C">Portal did NOT accept these:</div>';
+          html+='<div style="max-height:220px;overflow:auto;margin-top:4px"><table class="tbl"><thead><tr><th>Name</th><th>Reference</th><th>Reason</th></tr></thead><tbody>'+
+            s.fail_list.map(function(f){return '<tr><td>'+(f.name||"—")+'</td><td>'+(f.reference||"—")+'</td><td style="font-size:12px;color:var(--muted)">'+(f.reason||"—")+'</td></tr>';}).join("")+
+            '</tbody></table></div>';
+        }
+        if(box)box.innerHTML=html;
+        if(s.running){setTimeout(poll,1500);}
+        else{showToast(s.message||"Done");if(btn){btn.disabled=false;btn.textContent=old;}}
       }catch(e){setTimeout(poll,2500);}
     })();
   }catch(e){showToast(""+e.message);if(btn){btn.disabled=false;btn.textContent=old;}}
@@ -3045,6 +3074,13 @@ async function editStudent(rowKey){
       w.style.display="block";
       w.innerHTML="&#9888; NIOS login failed — "+((s.login_remark||"check Reference/Enrollment No & DOB").replace(/</g,"&lt;"));
     }else{w.style.display="none";}
+    var sy=document.getElementById("edit-syncline");
+    if(sy){
+      if(!s.student_id){sy.innerHTML='<span style="color:var(--muted)">Not linked to a Portal student — edits stay tracker-only.</span>';}
+      else if(!s.edit_sync){sy.innerHTML='<span style="color:var(--muted)">Portal sync: details not pushed yet (will push on Save).</span>';}
+      else if(s.edit_sync.indexOf("synced")===0){sy.innerHTML='<span style="color:var(--success)">Portal sync: '+s.edit_sync.replace(/</g,"&lt;")+' \u2713</span>';}
+      else{sy.innerHTML='<span style="color:#B45309">\u26A0 Portal sync: '+s.edit_sync.replace(/</g,"&lt;")+'</span>';}
+    }
     document.getElementById("edit-status").textContent="";
     document.getElementById("edit-overlay").style.display="flex";
   }catch(e){showToast(""+e.message);}
@@ -3057,14 +3093,17 @@ async function saveEdit(thenRun){
   const st=document.getElementById("edit-status");
   try{
     st.style.color="var(--muted)";st.textContent="Saving…";
-    await api("/api/student-edit","POST",body);
+    const r=await api("/api/student-edit","POST",body);
+    var pLine=r.portal_synced?" · Portal updated \u2713":
+      " · \u26A0 Portal NOT updated ("+((r.portal_message||"").replace(/</g,"&lt;"))+")";
     if(thenRun){
-      st.textContent="Saved. Re-checking on NIOS (status + login)… this can take ~20–40 sec.";
+      st.innerHTML="Saved"+pLine+". Re-checking on NIOS (status + login)… this can take ~20–40 sec.";
       await api("/api/student-recheck?row_key="+encodeURIComponent(rk),"POST");
       pollAfterRecheck(rk,0);
     }else{
-      st.style.color="var(--success)";st.textContent="Saved!";
-      setTimeout(closeEdit,700);
+      st.style.color=r.portal_synced?"var(--success)":"#B45309";
+      st.innerHTML="Saved!"+pLine;
+      setTimeout(closeEdit,r.portal_synced?900:3200);
       try{loadStudents(1);}catch(e){}try{loadConfirmed(1);}catch(e){}try{loadRequired(1);}catch(e){}
     }
   }catch(e){st.style.color="var(--danger)";st.textContent=e.message;}
@@ -5983,6 +6022,91 @@ def portal_force_status(user=Depends(verify_token)):
     return s
 
 
+DETAIL_SYNC_STATE = {"running": False, "total": 0, "done": 0, "ok": 0, "failed": 0,
+                     "fail_list": [], "message": ""}
+
+
+@app.post("/api/portal-sync-details")
+def portal_sync_details(background_tasks: BackgroundTasks, body: dict = None,
+                        user=Depends(verify_token)):
+    """Push every linked student's IDENTITY DETAILS (reference/enrollment no, DOB, mobile,
+    alt mobile, email, name, class, session) from the TRACKER to the PORTAL. This is the
+    backfill for students already corrected on the tracker (e.g. wrong references fixed
+    after a run) whose Portal copy is still stale. Optional body {"row_keys":[...]} limits
+    it to specific students; without it, ALL non-deleted linked students are pushed."""
+    if DETAIL_SYNC_STATE["running"]:
+        return {"ok": False, "running": True, "message": "A detail sync is already running."}
+    import mvs_sync
+    if not mvs_sync.enabled():
+        return {"ok": False, "message": "Portal sync is OFF (MVS_MODE not enabled)."}
+    keys = [k for k in ((body or {}).get("row_keys") or []) if str(k).strip()]
+    conn = get_db()
+    q = ("SELECT row_key, student_name, mobile, alt_mobile, email, dob, reference_no, "
+         "enrollment_no, class_level, session, COALESCE(student_id,'') AS student_id "
+         "FROM student_status WHERE COALESCE(deleted,0)=0 AND COALESCE(student_id,'') != ''")
+    if keys:
+        q += " AND row_key IN (%s)" % ",".join("?" * len(keys))
+        rows = conn.execute(q, keys).fetchall()
+    else:
+        rows = conn.execute(q).fetchall()
+    students = [dict(r) for r in rows]
+    conn.close()
+    if not students:
+        return {"ok": True, "count": 0, "message": "No linked students to sync."}
+    DETAIL_SYNC_STATE.update({"running": True, "total": len(students), "done": 0, "ok": 0,
+                              "failed": 0, "fail_list": [],
+                              "message": f"Syncing details of {len(students)} student(s)…"})
+
+    def _run():
+        from datetime import datetime as _dt
+        try:
+            for s in students:
+                ok, msg = False, ""
+                try:
+                    ok, msg = mvs_sync.push_details(s["student_id"], s)
+                except Exception as e:
+                    msg = str(e)
+                _ts = _dt.now().strftime("%Y-%m-%d %H:%M")
+                _mark = (f"synced {_ts}" if ok else f"failed {_ts}: {msg}"[:300])
+                try:
+                    cx = get_db()
+                    cx.execute("UPDATE student_status SET edit_sync=? WHERE row_key=?",
+                               (_mark, s["row_key"]))
+                    cx.commit(); cx.close()
+                except Exception:
+                    pass
+                if ok:
+                    DETAIL_SYNC_STATE["ok"] += 1
+                else:
+                    DETAIL_SYNC_STATE["failed"] += 1
+                    if len(DETAIL_SYNC_STATE["fail_list"]) < 200:
+                        DETAIL_SYNC_STATE["fail_list"].append({
+                            "name": s["student_name"] or "",
+                            "reference": s["reference_no"] or s["enrollment_no"] or "",
+                            "reason": msg[:120]})
+                DETAIL_SYNC_STATE["done"] += 1
+            DETAIL_SYNC_STATE["message"] = (
+                f"Done — details of {DETAIL_SYNC_STATE['ok']} of {DETAIL_SYNC_STATE['total']} "
+                f"student(s) synced to the Portal."
+                + (f" {DETAIL_SYNC_STATE['failed']} FAILED (listed below)."
+                   if DETAIL_SYNC_STATE["failed"] else " All accepted."))
+        except Exception as e:
+            DETAIL_SYNC_STATE["message"] = f"Stopped: {e}"
+        finally:
+            DETAIL_SYNC_STATE["running"] = False
+
+    background_tasks.add_task(_run)
+    return {"ok": True, "started": True, "count": len(students),
+            "message": f"Syncing details of {len(students)} student(s) to the Portal…"}
+
+
+@app.get("/api/portal-sync-details-status")
+def portal_sync_details_status(user=Depends(verify_token)):
+    s = dict(DETAIL_SYNC_STATE)
+    s["percent"] = int(s["done"] * 100 / s["total"]) if s["total"] else 0
+    return s
+
+
 @app.get("/api/pending-students")
 def pending_students(user=Depends(verify_token)):
     """LIVE list of Portal students who have NO usable Reference/Enrollment yet — the Portal has
@@ -8180,7 +8304,8 @@ def student_get(row_key: str, user=Depends(verify_token)):
     r = conn.execute("SELECT row_key, student_name, mobile, alt_mobile, email, dob, reference_no, "
                      "enrollment_no, class_level, session, current_status, "
                      "COALESCE(login_failed,0) AS login_failed, "
-                     "COALESCE(check_failed,0) AS check_failed, login_remark "
+                     "COALESCE(check_failed,0) AS check_failed, login_remark, "
+                     "COALESCE(edit_sync,'') AS edit_sync, COALESCE(student_id,'') AS student_id "
                      "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
     conn.close()
     if not r:
@@ -8214,8 +8339,33 @@ def student_edit(body: dict, user=Depends(verify_token)):
     params.append(row_key)
     conn.execute(f"UPDATE student_status SET {', '.join(sets)} WHERE row_key=?", params)
     conn.commit()
+
+    # ── MIRROR THE EDIT ON THE MVS PORTAL ──
+    # Any detail changed on the tracker (DOB, reference/enrollment no, mobile, name…) is
+    # pushed to the Portal immediately, so the two systems NEVER hold different data for
+    # the same student. The result is stored in edit_sync so the UI can show whether the
+    # Portal actually took it.
+    full = conn.execute("SELECT student_name, mobile, alt_mobile, email, dob, reference_no, "
+                        "enrollment_no, class_level, session, COALESCE(student_id,'') AS student_id "
+                        "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+    portal_ok, portal_msg = False, ""
+    try:
+        import mvs_sync
+        if not mvs_sync.enabled():
+            portal_msg = "Portal sync is OFF"
+        elif not (full and full["student_id"]):
+            portal_msg = "not linked to a Portal student (no studentId)"
+        else:
+            portal_ok, portal_msg = mvs_sync.push_details(full["student_id"], dict(full))
+    except Exception as e:
+        portal_msg = str(e)
+    from datetime import datetime as _dt
+    _ts = _dt.now().strftime("%Y-%m-%d %H:%M")
+    _mark = (f"synced {_ts}" if portal_ok else f"failed {_ts}: {portal_msg}"[:300])
+    conn.execute("UPDATE student_status SET edit_sync=? WHERE row_key=?", (_mark, row_key))
+    conn.commit()
     conn.close()
-    return {"ok": True}
+    return {"ok": True, "portal_synced": portal_ok, "portal_message": portal_msg}
 
 @app.post("/api/student-recheck")
 def student_recheck(row_key: str, background_tasks: BackgroundTasks, user=Depends(verify_token)):

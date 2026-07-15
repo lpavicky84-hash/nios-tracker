@@ -210,7 +210,8 @@ def init_db():
                       ("toc_subjects", "TEXT"),
                       ("toc_mismatch", "INTEGER DEFAULT 0"),
                       ("toc_verified", "INTEGER DEFAULT 0"),
-                      ("toc_src", "TEXT")):
+                      ("toc_src", "TEXT"),
+                      ("edit_sync", "TEXT")):
         try:
             c.execute(f"ALTER TABLE student_status ADD COLUMN {col} {decl}")
         except Exception:

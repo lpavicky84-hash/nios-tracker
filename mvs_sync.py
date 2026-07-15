@@ -178,11 +178,22 @@ def push_toc(student_id, toc_status, toc_subjects=None):
     sid = str(student_id or "").strip()
     if not sid:
         return False
+    st = "yes" if str(toc_status).lower() == "yes" else "no"
     data = {"action": "trackerUpdate", "trackerKey": MVS_TRACKER_KEY, "studentId": sid,
-            "tocStatus": ("yes" if str(toc_status).lower() == "yes" else "no")}
-    if toc_subjects:
+            "tocStatus": st}
+    if st == "no":
+        # CRITICAL: the Portal auto-flips tocStatus back to YES if ANYTHING is written in
+        # the TOC-subject field (e.g. a stale "WITHOUT TOC" text). So a NO push must ALSO
+        # blank the subjects, otherwise the correction is undone by the Portal itself.
+        data["tocSubjects"] = ""
+        data["tocSubject"]  = ""          # Portal UI calls the field "TOC SUBJECT" (singular)
+        data["clearTocSubjects"] = "1"    # explicit hint in case the Portal skips empty params
+    elif toc_subjects:
         try:
-            data["tocSubjects"] = ",".join([str(s) for s in toc_subjects])
+            joined = ", ".join([str(s).strip() for s in toc_subjects if str(s).strip()])
+            if joined:
+                data["tocSubjects"] = joined
+                data["tocSubject"]  = joined
         except Exception:
             pass
     try:
@@ -245,3 +256,55 @@ def push_student(student, status_label, conn=None, timeout=40):
     except Exception as e:
         logger.warning(f"MVS push error {sid}: {e}")
         return False
+
+
+# Tracker DB column  ->  Portal trackerUpdate param name.
+# Any student detail edited on the TRACKER is pushed with these keys so the Portal copy
+# never lags behind. (If the Portal's trackerUpdate script ignores an unknown key, that
+# field simply stays as-is on the Portal — nothing breaks.)
+DETAIL_FIELD_MAP = {
+    "student_name":  "name",
+    "reference_no":  "referenceNo",
+    "enrollment_no": "enrollmentNo",
+    "dob":           "dob",
+    "mobile":        "mobile",
+    "alt_mobile":    "alternateMobile",
+    "email":         "email",
+    "class_level":   "class",
+    "session":       "examSession",
+}
+
+
+def push_details(student_id, fields, timeout=40):
+    """Push a student's IDENTITY DETAILS (name / reference / enrollment / DOB / mobile /
+    alt mobile / email / class / session) to the Portal, so any edit made on the tracker
+    is mirrored on the Portal automatically — no double data-entry, no gap.
+
+    fields: dict of tracker column -> value (only non-empty values are sent, so a blank
+    tracker field never wipes Portal data). Returns (ok: bool, message: str)."""
+    if not enabled():
+        return False, "Portal sync is OFF (MVS_MODE not enabled)"
+    sid = str(student_id or "").strip()
+    if not sid:
+        return False, "no Portal studentId linked to this student"
+    data = {"action": "trackerUpdate", "trackerKey": MVS_TRACKER_KEY, "studentId": sid}
+    for col, key in DETAIL_FIELD_MAP.items():
+        v = str((fields or {}).get(col) or "").strip()
+        if not v:
+            continue
+        if col in ("reference_no", "enrollment_no") and not _valid_ref(v):
+            continue    # never push an email/placeholder into the reference field
+        data[key] = v
+    if len(data) <= 3:
+        return False, "nothing to push (all fields empty)"
+    try:
+        r = requests.post(MVS_API_URL, data=data, timeout=timeout)
+        out = r.json()
+        if out.get("status") != "success":
+            msg = str(out.get("message") or "Portal rejected the update")
+            logger.warning(f"MVS push_details {sid}: {msg}")
+            return False, msg
+        return True, "ok"
+    except Exception as e:
+        logger.warning(f"MVS push_details error {sid}: {e}")
+        return False, str(e)
