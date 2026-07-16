@@ -664,6 +664,7 @@ function applySidebarPref(){
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
             <select id="s-toc" onchange="loadStudents(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
+            <select id="s-link" onchange="loadStudents(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">&#9888; Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="s-datepreset" onchange="onDatePreset('s',()=>loadStudents(1))">
@@ -827,6 +828,7 @@ function applySidebarPref(){
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-toc" onchange="loadConfirmed(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
+            <select id="c-link" onchange="loadConfirmed(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">&#9888; Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether ALL of the student's documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">All documents saved</option><option value="notsaved">Not fully saved (missing docs)</option></select>
@@ -2659,6 +2661,7 @@ async function loadStudents(page){
     session_filter:document.getElementById("s-session").value,
     class_filter:fval("s-class"),source_filter:fval("s-source"),date_from:dr.from,date_to:dr.to,
     toc_filter:fval("s-toc"),
+    link_filter:fval("s-link"),
     check_state:(document.getElementById("s-checkstate")?document.getElementById("s-checkstate").value:"")});
   try{
     const d=await api("/api/students?"+q.toString());
@@ -2791,6 +2794,7 @@ async function loadConfirmed(page){
     session_filter:document.getElementById("c-session").value,
     class_filter:fval("c-class"),source_filter:fval("c-source"),
     toc_filter:fval("c-toc"),
+    link_filter:fval("c-link"),
     saved_filter:(document.getElementById("c-saved")?document.getElementById("c-saved").value:""),
     date_from:dr.from,date_to:dr.to});
   try{
@@ -4150,12 +4154,12 @@ function onDatePreset(prefix,reload){
   if(!custom&&reload)reload();
 }
 async function exportStudents(view){
-  let search="",status="",session="",cls="",from="",to="",source="",toc="";
-  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");source=fval("c-source");toc=fval("c-toc");const dr=dateRange("c");from=dr.from;to=dr.to;}
+  let search="",status="",session="",cls="",from="",to="",source="",toc="",lnk="";
+  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");source=fval("c-source");toc=fval("c-toc");lnk=fval("c-link");const dr=dateRange("c");from=dr.from;to=dr.to;}
   else if(view==="required"){search=fval("r-search");status=fval("r-status");session=fval("r-session");source=fval("r-source");}
-  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");source=fval("s-source");toc=fval("s-toc");const dr=dateRange("s");from=dr.from;to=dr.to;}
+  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");source=fval("s-source");toc=fval("s-toc");lnk=fval("s-link");const dr=dateRange("s");from=dr.from;to=dr.to;}
   const q=new URLSearchParams({view:view,search:search,status_filter:status,session_filter:session,
-    class_filter:cls,source_filter:source,toc_filter:toc,date_from:from,date_to:to});
+    class_filter:cls,source_filter:source,toc_filter:toc,link_filter:lnk,date_from:from,date_to:to});
   try{
     showToast("Preparing Excel...");
     const r=await fetch(API+"/api/export-students?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
@@ -5004,13 +5008,21 @@ def _fully_saved_keys():
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to="", source_filter="",
                          wa_status="", saved_filter="", check_state="", check_boundary=None,
-                         toc_filter=""):
+                         toc_filter="", link_filter=""):
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
     wc.append("COALESCE(deleted,0) = 0")          # never show soft-deleted (in Trash)
     wc.append("COALESCE(login_failed,0) = 0")     # login-failed -> only in 'Failed to Run'
     wc.append("COALESCE(check_failed,0) = 0")     # status-check-failed -> only in 'Failed to Run'
+    # Portal link filter: unlinked = no MVS studentId yet (pushes can't reach the Portal
+    # until linked — either automatically by a run / details-sync sweep, or manually via
+    # the Portal Student ID field in Edit).
+    lf = (link_filter or "").strip().lower()
+    if lf == "unlinked":
+        wc.append("COALESCE(student_id,'') = ''")
+    elif lf == "linked":
+        wc.append("COALESCE(student_id,'') != ''")
     # tocStatus filter: yes / no / blank (not set) / mismatch (unverified TOC error)
     tf = (toc_filter or "").strip().lower()
     if tf == "yes":
@@ -5153,6 +5165,7 @@ def get_students(page: int=1, per_page: int=50, search: str="",
                        class_filter: str="", date_from: str="", date_to: str="",
                        source_filter: str="", view: str="normal", wa_status: str="",
                        saved_filter: str="", check_state: str="", toc_filter: str="",
+                       link_filter: str="",
                        user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
@@ -5160,7 +5173,7 @@ def get_students(page: int=1, per_page: int=50, search: str="",
     where, params = _build_student_where(view, search, status_filter, session_filter,
                                          class_filter, date_from, date_to, source_filter,
                                          wa_status, saved_filter, check_state, boundary,
-                                         toc_filter)
+                                         toc_filter, link_filter)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
@@ -6487,7 +6500,7 @@ def failed_count(user=Depends(verify_token)):
 def export_students(view: str="normal", search: str="", status_filter: str="",
                          session_filter: str="", class_filter: str="",
                          date_from: str="", date_to: str="", source_filter: str="",
-                         toc_filter: str="",
+                         toc_filter: str="", link_filter: str="",
                          user=Depends(verify_token)):
     """Export the CURRENTLY FILTERED list (active / confirmed / required) to .xlsx.
     Honours the exact same filters as the on-screen table (search, status, session,
@@ -6499,7 +6512,7 @@ def export_students(view: str="normal", search: str="", status_filter: str="",
     conn = get_db()
     where, params = _build_student_where(view, search, status_filter, session_filter,
                                          class_filter, date_from, date_to, source_filter,
-                                         toc_filter=toc_filter)
+                                         toc_filter=toc_filter, link_filter=link_filter)
     rows = conn.execute(f"SELECT * FROM student_status {where} ORDER BY student_name", params).fetchall()
     conn.close()
 
