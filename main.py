@@ -60,7 +60,7 @@ PORTAL_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>NIOS Status Tracker — MVS Foundation</title>
 <style>
   :root{
@@ -409,6 +409,50 @@ PORTAL_HTML = """<!DOCTYPE html>
     #toast{left:12px;right:12px;bottom:18px;max-width:none;text-align:center}
     .iv-row .iv-lbl{width:auto;flex:1 1 100%}
     .topbar{max-width:100vw}
+
+    /* Run menu: fixed sheet under the topbar, never taller than the screen, scrolls inside */
+    #run-menu{position:fixed!important;left:12px!important;right:12px!important;top:66px!important;
+      width:auto!important;max-width:none!important;min-width:0!important;
+      max-height:calc(100vh - 84px)!important;max-height:calc(100dvh - 84px)!important;
+      overflow-y:auto!important;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+
+    /* Modals: use the whole phone screen, header/buttons always reachable */
+    #edit-overlay{padding:0!important;align-items:stretch!important}
+    #edit-overlay > div{max-width:100%!important;width:100%!important;
+      max-height:100vh!important;max-height:100dvh!important;height:100%;
+      border-radius:0!important;display:flex;flex-direction:column}
+    #edit-overlay > div > div:nth-child(2){flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+    #edit-overlay .btn{min-height:44px}
+
+    /* Every data table scrolls sideways inside its card — layout never breaks */
+    .card > div[style*="overflow-x"]{margin-left:-16px;margin-right:-16px;
+      padding-left:16px;padding-right:16px;-webkit-overflow-scrolling:touch}
+    table.tbl{min-width:640px}
+
+    /* iOS: 16px inputs stop Safari from auto-zooming into fields */
+    input,select,textarea,.edit-inp{font-size:16px!important}
+
+    /* Comfortable touch targets everywhere */
+    .btn,.btn-sm,.nav-item,.run-menu-item{min-height:42px}
+    .filter-bar select{flex:1 1 46%;min-width:0}
+
+    /* Notch / home-bar safe areas (iPhone) */
+    .topbar{padding-left:max(12px,env(safe-area-inset-left));
+      padding-right:max(12px,env(safe-area-inset-right))}
+    .content{padding-bottom:max(14px,env(safe-area-inset-bottom))}
+    .sidebar{padding-top:env(safe-area-inset-top)}
+
+    /* Wide progress/tool boxes and pagination wrap instead of overflowing */
+    #toc-progress,#rp-force,#rp-details,#te-pg .pg-controls{max-width:100%;overflow-x:auto}
+    .pg-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  }
+
+  /* Small phones (iPhone SE/mini class): single-column stats, tighter paddings */
+  @media(max-width:389px){
+    .stat-grid{grid-template-columns:1fr}
+    .content{padding:10px}
+    .card{padding:14px}
+    .topbar h1{max-width:34vw}
   }
 
   /* ===== Big screens / TV: cap content width so it never stretches awkwardly ===== */
@@ -9519,7 +9563,7 @@ def _allowed_kinds(session):
     return [("id_card", "ID Card"), ("app_form", "Application Form"), ("hall_ticket", "Hall Ticket")]
 
 DOC_PAGE_TPL = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Your NIOS Documents — MVS Foundation</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
