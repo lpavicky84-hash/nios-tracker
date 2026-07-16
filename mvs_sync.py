@@ -314,3 +314,55 @@ def push_details(student_id, fields, timeout=40):
     except Exception as e:
         logger.warning(f"MVS push_details error {sid}: {e}")
         return False, str(e)
+
+
+def find_portal_student(fields, timeout=60):
+    """Find the Portal studentId for a tracker row that has none — matched by (in order)
+    email, mobile / alternate number, or name + DOB against the FULL Portal list. This is
+    how wrong-reference students get linked: their reference differs between the two
+    systems (that's the very thing being fixed), so matching must use the other details.
+    Returns (student_id or "", message)."""
+    if not enabled():
+        return "", "Portal sync is OFF"
+
+    def _digits(x):
+        return "".join(ch for ch in str(x or "") if ch.isdigit())
+
+    em   = str((fields or {}).get("email") or "").strip().lower()
+    if "@" not in em:
+        em = ""
+    mob  = _digits((fields or {}).get("mobile"))[-10:]
+    alt  = _digits((fields or {}).get("alt_mobile"))[-10:]
+    name = " ".join(str((fields or {}).get("student_name") or "").split()).lower()
+    dobd = _digits((fields or {}).get("dob"))
+    try:
+        students = _trackerlist(include_done=True, timeout=timeout)
+    except Exception as e:
+        return "", f"could not read the Portal list: {e}"
+    matches = []
+    for s in students:
+        sid = str(s.get("studentId") or "").strip()
+        if not sid:
+            continue
+        s_em  = str(s.get("email") or "").strip().lower()
+        s_mob = _digits(s.get("mobile"))[-10:]
+        s_alt = _digits(s.get("alternateMobile") or s.get("alternateNumber")
+                        or s.get("altMobile") or s.get("whatsappNumber") or "")[-10:]
+        s_nm  = " ".join(str(s.get("name") or "").split()).lower()
+        s_dob = _digits(s.get("dob"))
+        hit = False
+        if em and s_em == em:
+            hit = True
+        elif mob and len(mob) == 10 and mob in (s_mob, s_alt):
+            hit = True
+        elif alt and len(alt) == 10 and alt in (s_mob, s_alt):
+            hit = True
+        elif name and dobd and s_nm == name and s_dob == dobd:
+            hit = True
+        if hit and sid not in matches:
+            matches.append(sid)
+    if len(matches) == 1:
+        return matches[0], "matched"
+    if not matches:
+        return "", "no Portal student matched by email / mobile / name+DOB — paste the Portal Student ID (MVS…) in the edit form to link manually"
+    return "", f"{len(matches)} Portal students matched — paste the exact Portal Student ID (MVS…) in the edit form to link manually"

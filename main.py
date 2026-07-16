@@ -1444,6 +1444,7 @@ function applySidebarPref(){
         <label style="font-size:12px;font-weight:600;grid-column:1/3">Email<input id="edit-email" class="edit-inp"></label>
         <label style="font-size:12px;font-weight:600">Class<input id="edit-class_level" class="edit-inp"></label>
         <label style="font-size:12px;font-weight:600">Session<input id="edit-session" class="edit-inp"></label>
+        <label style="font-size:12px;font-weight:600;grid-column:1/3">Portal Student ID <span style="color:var(--muted);font-weight:400">(link to the MVS Portal — auto-filled when matched; paste the MVS&hellip; ID from the Portal profile if empty)</span><input id="edit-student_id" class="edit-inp" placeholder="e.g. MVS20262173816"></label>
       </div>
       <div style="font-size:11.5px;color:var(--muted);margin-top:10px">Tip: if NIOS login failed, fix the <b>Date of Birth</b> or <b>Reference/Enrollment No</b>, then "Save &amp; Run again" to re-check and send.</div>
       <div id="edit-syncline" style="font-size:12px;font-weight:600;margin-top:8px"></div>
@@ -3066,7 +3067,7 @@ function refreshAllTables(){
   try{updateFailedBadge();}catch(e){}
   try{loadDashboard();}catch(e){}
 }
-const EDIT_FIELDS=["student_name","reference_no","enrollment_no","dob","mobile","alt_mobile","email","class_level","session"];
+const EDIT_FIELDS=["student_name","reference_no","enrollment_no","dob","mobile","alt_mobile","email","class_level","session","student_id"];
 async function editStudent(rowKey){
   try{
     const s=await api("/api/student-get?row_key="+encodeURIComponent(rowKey));
@@ -8386,7 +8387,7 @@ def student_edit(body: dict, user=Depends(verify_token)):
         conn.close()
         raise HTTPException(status_code=404, detail="Student not found")
     allowed = ["student_name", "mobile", "alt_mobile", "email", "dob", "reference_no",
-               "enrollment_no", "class_level", "session"]
+               "enrollment_no", "class_level", "session", "student_id"]
     sets, params = [], []
     for f in allowed:
         if f in body:
@@ -8413,10 +8414,30 @@ def student_edit(body: dict, user=Depends(verify_token)):
         import mvs_sync
         if not mvs_sync.enabled():
             portal_msg = "Portal sync is OFF"
-        elif not (full and full["student_id"]):
-            portal_msg = "not linked to a Portal student (no studentId)"
         else:
-            portal_ok, portal_msg = mvs_sync.push_details(full["student_id"], dict(full))
+            _linked_note = ""
+            if full and not full["student_id"]:
+                # Unlinked (typical for wrong-reference students — the ref differs between the
+                # two systems, so ref-based linking never happened). Try to find the Portal
+                # student by email / mobile / name+DOB and link automatically.
+                _sid, _lmsg = mvs_sync.find_portal_student(dict(full))
+                if _sid:
+                    conn.execute("UPDATE student_status SET student_id=? WHERE row_key=?",
+                                 (_sid, row_key))
+                    conn.commit()
+                    full = conn.execute(
+                        "SELECT student_name, mobile, alt_mobile, email, dob, reference_no, "
+                        "enrollment_no, class_level, session, COALESCE(student_id,'') AS student_id "
+                        "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+                    _linked_note = f"auto-linked to Portal student {_sid} · "
+                else:
+                    portal_msg = _lmsg
+            if full and full["student_id"]:
+                portal_ok, portal_msg = mvs_sync.push_details(full["student_id"], dict(full))
+                if portal_ok and _linked_note:
+                    portal_msg = _linked_note + "details pushed"
+            elif not portal_msg:
+                portal_msg = "not linked to a Portal student (no studentId)"
     except Exception as e:
         portal_msg = str(e)
     from datetime import datetime as _dt
