@@ -752,6 +752,8 @@ function applySidebarPref(){
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
             <h3 style="margin:0">TOC Status Error</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-sm" style="background:#16A34A;color:#fff" onclick="teRunSelected(this)" title="Fresh NIOS TOC read for the students TICKED below — auto-corrects and pushes to the Portal. Perfect for testing one or two students without leaving this page.">Run TOC check (selected)</button>
+              <button class="btn btn-sm" style="background:#4F46E5;color:#fff" onclick="teRunAll(this)" title="Fresh NIOS TOC read for EVERY student in this audit list (all pages) — auto-corrects and pushes to the Portal.">Run TOC check (ALL listed)</button>
               <button class="btn btn-sm" style="background:#0F766E;color:#fff" onclick="forceRecheckAll(this)" title="Re-read the real NIOS TOC for EVERY confirmed student — even those already checked or marked verified. Catches students locked on a wrong TOC by an old bad read.">Re-check ALL confirmed (force)</button>
               <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA" onclick="recheckFlagged(this)" title="Fresh NIOS read for every still-flagged mismatch — genuine ones are auto-corrected and pushed to the Portal; wrong flags clear.">Re-check flagged</button>
               <button class="btn btn-outline btn-sm" onclick="runTocCheckConfirmed(this)" title="One-time: read the real NIOS TOC for every confirmed student that hasn't been checked yet. Confirmed students are never re-run, so this covers them. Safe to re-click — it only picks up whatever is left.">Check all confirmed students' TOC (one-time)</button>
@@ -773,6 +775,7 @@ function applySidebarPref(){
           <div id="te-count" style="font-size:12.5px;color:var(--muted);margin-bottom:8px"></div>
           <div style="overflow-x:auto">
             <table class="tbl"><thead><tr>
+              <th style="width:34px"><input type="checkbox" id="te-all" onclick="teToggleAll(this)" title="Select all on this page"></th>
               <th>Student</th><th>Reference</th><th>Session</th><th>Status</th>
               <th>Portal &rarr; NIOS</th><th>TOC subjects (NIOS)</th><th>Fixed at</th><th>Portal push</th><th>WhatsApp</th><th>Action</th>
             </tr></thead><tbody id="te-body"></tbody></table>
@@ -3350,7 +3353,37 @@ async function loadPending(force){
     }).join("");
   }catch(e){tb.innerHTML='<tr><td colspan="8" class="empty">'+e.message+'</td></tr>';}
 }
-let TE_PAGE=1, TE_TIMER=null;
+let TE_PAGE=1, TE_TIMER=null, TE_SEL=new Set(), TE_KEYS=[];
+function teToggle(rk,cb){ if(cb.checked)TE_SEL.add(rk); else TE_SEL.delete(rk); }
+function teToggleAll(cb){
+  TE_KEYS.forEach(function(k){ if(cb.checked)TE_SEL.add(k); else TE_SEL.delete(k); });
+  var tb=document.getElementById("te-body");
+  if(tb)tb.querySelectorAll("input[type=checkbox]").forEach(function(x){x.checked=cb.checked;});
+}
+async function teRunSelected(btn){
+  var keys=Array.from(TE_SEL);
+  if(!keys.length){showToast("Tick at least one student in the list below first");return;}
+  if(!confirm("Fresh NIOS TOC read for the "+keys.length+" selected student(s)? Uses one captcha per student. The NIOS value is applied and pushed to the Portal (yes = subjects written, no = subject field blanked). Check the Portal after it finishes."))return;
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await api("/api/toc-check-confirmed","POST",{row_keys:keys});
+    showToast(r.message||"Started");
+    if(r.count>0){TE_SEL.clear();pollTocProgress();}
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
+async function teRunAll(btn){
+  if(!confirm("Fresh NIOS TOC read for EVERY student in this audit list (all pages)? Uses one captcha per student. Each one is auto-corrected and pushed to the Portal."))return;
+  var old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await api("/api/toc-check-confirmed","POST",{audit:true});
+    showToast(r.message||"Started");
+    if(r.count>0){TE_SEL.clear();pollTocProgress();}
+  }catch(e){showToast(""+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
+}
 function teSearch(){ clearTimeout(TE_TIMER); TE_TIMER=setTimeout(function(){loadTocErrors(1);},400); }
 async function loadTocErrors(page){
   if(page)TE_PAGE=page;
@@ -3358,7 +3391,7 @@ async function loadTocErrors(page){
   if(!tb)return;
   try{ pollTocProgress(); }catch(e){}
   var badge=document.getElementById("nav-tocerror-badge");
-  tb.innerHTML='<tr><td colspan="10" class="empty">Loading…</td></tr>';
+  tb.innerHTML='<tr><td colspan="11" class="empty">Loading…</td></tr>';
   try{
     const q=new URLSearchParams({search:(document.getElementById("te-search")?document.getElementById("te-search").value:""),
                                  page:TE_PAGE,per_page:20});
@@ -3366,13 +3399,17 @@ async function loadTocErrors(page){
     if(badge){badge.style.display=(d.total>0)?"inline-block":"none";badge.textContent=d.total;}
     var cnt=document.getElementById("te-count");
     if(cnt)cnt.textContent=d.total+" auto-corrected student(s)";
+    var teAll=document.getElementById("te-all"); if(teAll)teAll.checked=false;
+    TE_KEYS=[];
     if(!d.fixes||!d.fixes.length){
-      tb.innerHTML='<tr><td colspan="10" class="empty">No auto-corrections yet. Mismatches found during any check or run are fixed automatically and listed here.</td></tr>';
+      tb.innerHTML='<tr><td colspan="11" class="empty">No auto-corrections yet. Mismatches found during any check or run are fixed automatically and listed here.</td></tr>';
       renderTePg(1,1);return;
     }
     tb.innerHTML=d.fixes.map(function(f){
       var rk=(f.row_key||"").replace(/'/g,"\\'");
+      if(f.row_key&&TE_KEYS.indexOf(f.row_key)<0)TE_KEYS.push(f.row_key);
       return '<tr>'+
+        '<td><input type="checkbox" '+(TE_SEL.has(f.row_key)?'checked ':'')+'onclick="teToggle(&quot;'+rk+'&quot;,this)"></td>'+
         '<td><b>'+(f.student_name||"—")+'</b></td>'+
         '<td>'+(f.reference_no||"—")+'</td>'+
         '<td>'+(f.session||"—")+'</td>'+
@@ -3390,7 +3427,7 @@ async function loadTocErrors(page){
           '<button class="btn btn-outline btn-sm" onclick="tocEdit(&quot;'+rk+'&quot;)">Edit</button></td></tr>';
     }).join("");
     renderTePg(d.page,d.pages);
-  }catch(e){tb.innerHTML='<tr><td colspan="10" class="empty">'+e.message+'</td></tr>';}
+  }catch(e){tb.innerHTML='<tr><td colspan="11" class="empty">'+e.message+'</td></tr>';}
 }
 function renderTePg(page,total){
   var el=document.getElementById("te-pg");
@@ -5369,6 +5406,7 @@ def toc_check_confirmed(background_tasks: BackgroundTasks, body: dict = None, us
     body = body or {}
     sel_keys = [str(k) for k in (body.get("row_keys") or []) if k]
     flagged_only = bool(body.get("flagged"))
+    audit_all = bool(body.get("audit"))
     conn = get_db()
     if flagged_only:
         # Re-check exactly the currently-flagged (unverified) mismatches — a fresh NIOS read.
@@ -5385,6 +5423,15 @@ def toc_check_confirmed(background_tasks: BackgroundTasks, body: dict = None, us
             "SELECT row_key FROM student_status WHERE COALESCE(deleted,0)=0 AND is_confirmed=1 "
             "AND COALESCE(dob,'')!='' "
             "AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')").fetchall()
+    elif audit_all:
+        # Re-read NIOS TOC for EVERY student in the auto-corrected audit list (toc_fix_log),
+        # regardless of pagination — used by the "Run TOC check (ALL listed)" button on the
+        # TOC Status Error tab, e.g. to verify the yes→no blank-push against the Portal.
+        rows = conn.execute(
+            "SELECT DISTINCT s.row_key FROM student_status s "
+            "JOIN toc_fix_log t ON t.row_key = s.row_key "
+            "WHERE COALESCE(s.deleted,0)=0 AND COALESCE(s.dob,'')!='' "
+            "AND (COALESCE(s.reference_no,'')!='' OR COALESCE(s.enrollment_no,'')!='')").fetchall()
     elif sel_keys:
         qm = ",".join("?" * len(sel_keys))
         rows = conn.execute(
@@ -8334,6 +8381,11 @@ def student_edit(body: dict, user=Depends(verify_token)):
     if not sets:
         conn.close()
         raise HTTPException(status_code=400, detail="No fields to update")
+    # Snapshot BEFORE the update so we can tell which fields the operator deliberately
+    # blanked (had a value, empty now) — those clears are mirrored to the Portal too.
+    _before = conn.execute("SELECT student_name, mobile, alt_mobile, email, dob, reference_no, "
+                           "enrollment_no, class_level, session "
+                           "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
     # Editing the data invalidates any previous login result / sent flag.
     sets += ["login_failed=0", "login_remark=''", "check_failed=0", "whatsapp_sent=0"]
     params.append(row_key)
@@ -8348,6 +8400,13 @@ def student_edit(body: dict, user=Depends(verify_token)):
     full = conn.execute("SELECT student_name, mobile, alt_mobile, email, dob, reference_no, "
                         "enrollment_no, class_level, session, COALESCE(student_id,'') AS student_id "
                         "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+    # Deliberate clears: value existed before this edit, empty after it.
+    cleared = []
+    if _before and full:
+        for c in ("student_name", "mobile", "alt_mobile", "email", "dob",
+                  "reference_no", "enrollment_no", "class_level", "session"):
+            if str(_before[c] or "").strip() and not str(full[c] or "").strip():
+                cleared.append(c)
     portal_ok, portal_msg = False, ""
     try:
         import mvs_sync
@@ -8356,7 +8415,8 @@ def student_edit(body: dict, user=Depends(verify_token)):
         elif not (full and full["student_id"]):
             portal_msg = "not linked to a Portal student (no studentId)"
         else:
-            portal_ok, portal_msg = mvs_sync.push_details(full["student_id"], dict(full))
+            portal_ok, portal_msg = mvs_sync.push_details(full["student_id"], dict(full),
+                                                          clear_cols=cleared)
     except Exception as e:
         portal_msg = str(e)
     from datetime import datetime as _dt
