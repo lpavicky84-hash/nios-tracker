@@ -8381,11 +8381,6 @@ def student_edit(body: dict, user=Depends(verify_token)):
     if not sets:
         conn.close()
         raise HTTPException(status_code=400, detail="No fields to update")
-    # Snapshot BEFORE the update so we can tell which fields the operator deliberately
-    # blanked (had a value, empty now) — those clears are mirrored to the Portal too.
-    _before = conn.execute("SELECT student_name, mobile, alt_mobile, email, dob, reference_no, "
-                           "enrollment_no, class_level, session "
-                           "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
     # Editing the data invalidates any previous login result / sent flag.
     sets += ["login_failed=0", "login_remark=''", "check_failed=0", "whatsapp_sent=0"]
     params.append(row_key)
@@ -8400,13 +8395,6 @@ def student_edit(body: dict, user=Depends(verify_token)):
     full = conn.execute("SELECT student_name, mobile, alt_mobile, email, dob, reference_no, "
                         "enrollment_no, class_level, session, COALESCE(student_id,'') AS student_id "
                         "FROM student_status WHERE row_key=?", (row_key,)).fetchone()
-    # Deliberate clears: value existed before this edit, empty after it.
-    cleared = []
-    if _before and full:
-        for c in ("student_name", "mobile", "alt_mobile", "email", "dob",
-                  "reference_no", "enrollment_no", "class_level", "session"):
-            if str(_before[c] or "").strip() and not str(full[c] or "").strip():
-                cleared.append(c)
     portal_ok, portal_msg = False, ""
     try:
         import mvs_sync
@@ -8415,8 +8403,7 @@ def student_edit(body: dict, user=Depends(verify_token)):
         elif not (full and full["student_id"]):
             portal_msg = "not linked to a Portal student (no studentId)"
         else:
-            portal_ok, portal_msg = mvs_sync.push_details(full["student_id"], dict(full),
-                                                          clear_cols=cleared)
+            portal_ok, portal_msg = mvs_sync.push_details(full["student_id"], dict(full))
     except Exception as e:
         portal_msg = str(e)
     from datetime import datetime as _dt
