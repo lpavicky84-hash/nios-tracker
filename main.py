@@ -664,7 +664,7 @@ function applySidebarPref(){
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
             <select id="s-toc" onchange="loadStudents(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
-            <select id="s-link" onchange="loadStudents(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">&#9888; Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
+            <select id="s-link" onchange="loadStudents(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="s-datepreset" onchange="onDatePreset('s',()=>loadStudents(1))">
@@ -828,7 +828,7 @@ function applySidebarPref(){
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-toc" onchange="loadConfirmed(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
-            <select id="c-link" onchange="loadConfirmed(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">&#9888; Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
+            <select id="c-link" onchange="loadConfirmed(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether ALL of the student's documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">All documents saved</option><option value="notsaved">Not fully saved (missing docs)</option></select>
@@ -3001,7 +3001,7 @@ function loginWarn(s){
   if(!(s.login_failed==1||s.login_failed===true))return "";
   var rm=(s.login_remark||"NIOS login failed — check Reference/Enrollment No & DOB").replace(/</g,"&lt;");
   return '<div style="margin-top:5px;font-size:11.5px;font-weight:600;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:7px;padding:4px 8px;white-space:normal;max-width:260px">'+
-    '&#9888; Not sent — '+rm+'</div>';
+    'Not sent — '+rm+'</div>';
 }
 function delBtn(s){
   var nm=(s.student_name||"this student").replace(/[\\"']/g," ");
@@ -3080,14 +3080,14 @@ async function editStudent(rowKey){
     const w=document.getElementById("edit-warn");
     if(s.login_failed==1||s.login_failed===true){
       w.style.display="block";
-      w.innerHTML="&#9888; NIOS login failed — "+((s.login_remark||"check Reference/Enrollment No & DOB").replace(/</g,"&lt;"));
+      w.innerHTML="NIOS login failed — "+((s.login_remark||"check Reference/Enrollment No & DOB").replace(/</g,"&lt;"));
     }else{w.style.display="none";}
     var sy=document.getElementById("edit-syncline");
     if(sy){
       if(!s.student_id){sy.innerHTML='<span style="color:var(--muted)">Not linked to a Portal student — edits stay tracker-only.</span>';}
       else if(!s.edit_sync){sy.innerHTML='<span style="color:var(--muted)">Portal sync: details not pushed yet (will push on Save).</span>';}
-      else if(s.edit_sync.indexOf("synced")===0){sy.innerHTML='<span style="color:var(--success)">Portal sync: '+s.edit_sync.replace(/</g,"&lt;")+' \u2713</span>';}
-      else{sy.innerHTML='<span style="color:#B45309">\u26A0 Portal sync: '+s.edit_sync.replace(/</g,"&lt;")+'</span>';}
+      else if(s.edit_sync.indexOf("synced")===0){sy.innerHTML='<span style="color:var(--success)">Portal sync: '+s.edit_sync.replace(/</g,"&lt;")+'</span>';}
+      else{sy.innerHTML='<span style="color:#B45309">Portal sync: '+s.edit_sync.replace(/</g,"&lt;")+'</span>';}
     }
     document.getElementById("edit-status").textContent="";
     document.getElementById("edit-overlay").style.display="flex";
@@ -3102,8 +3102,8 @@ async function saveEdit(thenRun){
   try{
     st.style.color="var(--muted)";st.textContent="Saving…";
     const r=await api("/api/student-edit","POST",body);
-    var pLine=r.portal_synced?" · Portal updated \u2713":
-      " · \u26A0 Portal NOT updated ("+((r.portal_message||"").replace(/</g,"&lt;"))+")";
+    var pLine=r.portal_synced?" · Portal updated":
+      " · Portal NOT updated ("+((r.portal_message||"").replace(/</g,"&lt;"))+")";
     if(thenRun){
       st.innerHTML="Saved"+pLine+". Re-checking on NIOS (status + login)… this can take ~20–40 sec.";
       await api("/api/student-recheck?row_key="+encodeURIComponent(rk),"POST");
@@ -3124,7 +3124,7 @@ async function pollAfterRecheck(rk,n){
     const failed=(s.login_failed==1||s.login_failed===true||s.check_failed==1||s.check_failed===true);
     if(failed){
       st.style.color="var(--danger)";
-      st.innerHTML="&#9888; Still failing — "+((s.login_remark||"").replace(/</g,"&lt;"))+" Fix the field and run again.";
+      st.innerHTML="Still failing — "+((s.login_remark||"").replace(/</g,"&lt;"))+" Fix the field and run again.";
       const w=document.getElementById("edit-warn");w.style.display="block";w.innerHTML=st.innerHTML;
       try{loadStudents(1);}catch(e){}try{loadConfirmed(1);}catch(e){}try{loadDashboard();}catch(e){}
       try{loadFailed(1);}catch(e){}updateFailedBadge();
