@@ -475,6 +475,66 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
                 conn.commit()
         except Exception as _se:
             logger.warning(f"student_id persist skipped: {_se}")
+        # ── MVS-ID LINK SWEEP ──
+        # The MVS studentId is the student's PERMANENT identity on the Portal — unlike the
+        # reference number, it can never be wrong. A wrong-reference student produces two
+        # different row_keys (tracker has the corrected ref, Portal the wrong one), so the
+        # direct row_key persist above misses them and they stay unlinked (no pushes work).
+        # Here every still-unlinked tracker row is matched against Portal students by
+        # email / mobile / alternate / name+DOB and the studentId is attached automatically —
+        # so after any run, everything is linked without checking anything by hand.
+        try:
+            def _digits(x):
+                return "".join(ch for ch in str(x or "") if ch.isdigit())
+            _taken = {r[0] for r in c.execute(
+                "SELECT DISTINCT student_id FROM student_status "
+                "WHERE COALESCE(student_id,'') != ''").fetchall()}
+            _by_email, _by_phone, _by_namedob = {}, {}, {}
+            for s in all_students:
+                _sid = str(s.get("student_id") or "").strip()
+                if not _sid or _sid in _taken:
+                    continue     # no id, or this id is already linked to a tracker row
+                _em = str(s.get("email") or "").strip().lower()
+                if "@" in _em:
+                    _by_email.setdefault(_em, set()).add(_sid)
+                for _ph in (_digits(s.get("mobile"))[-10:], _digits(s.get("alt_mobile"))[-10:]):
+                    if len(_ph) == 10:
+                        _by_phone.setdefault(_ph, set()).add(_sid)
+                _nm = " ".join(str(s.get("student_name") or "").split()).lower()
+                _dd = _digits(s.get("dob"))
+                if _nm and _dd:
+                    _by_namedob.setdefault(_nm + "|" + _dd, set()).add(_sid)
+            if _by_email or _by_phone or _by_namedob:
+                _linked = 0
+                for r in c.execute(
+                        "SELECT row_key, email, mobile, alt_mobile, student_name, dob "
+                        "FROM student_status WHERE COALESCE(deleted,0)=0 "
+                        "AND COALESCE(student_id,'')=''").fetchall():
+                    _cands = set()
+                    _em = str(r["email"] or "").strip().lower()
+                    if "@" in _em and _em in _by_email:
+                        _cands |= _by_email[_em]
+                    if not _cands:
+                        for _ph in (_digits(r["mobile"])[-10:], _digits(r["alt_mobile"])[-10:]):
+                            if len(_ph) == 10 and _ph in _by_phone:
+                                _cands |= _by_phone[_ph]
+                    if not _cands:
+                        _nm = " ".join(str(r["student_name"] or "").split()).lower()
+                        _dd = _digits(r["dob"])
+                        if _nm and _dd:
+                            _cands |= _by_namedob.get(_nm + "|" + _dd, set())
+                    _cands -= _taken
+                    if len(_cands) == 1:
+                        _sid = _cands.pop()
+                        c.execute("UPDATE student_status SET student_id=? WHERE row_key=?",
+                                  (_sid, r["row_key"]))
+                        _taken.add(_sid)
+                        _linked += 1
+                if _linked:
+                    conn.commit()
+                    logger.info(f"MVS-ID link sweep: auto-linked {_linked} tracker row(s) to Portal students")
+        except Exception as _le:
+            logger.warning(f"MVS-ID link sweep skipped: {_le}")
         # Persist how each PORTAL student was added (enrol form vs sheet) so the dashboard can
         # split "Enrol. MVS Portal" vs "MVS Portal" accurately.
         try:

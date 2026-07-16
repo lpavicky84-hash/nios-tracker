@@ -6087,6 +6087,70 @@ DETAIL_SYNC_STATE = {"running": False, "total": 0, "done": 0, "ok": 0, "failed":
                      "fail_list": [], "message": ""}
 
 
+def _mvs_link_sweep(conn):
+    """Attach Portal studentIds to still-unlinked tracker rows by matching email / mobile /
+    alternate / name+DOB against the full Portal list. The MVS studentId is the student's
+    permanent identity — a wrong reference can't break it — so after this sweep every
+    matchable student is linked without any manual checking. Returns how many were linked."""
+    import mvs_sync
+    if not mvs_sync.enabled():
+        return 0
+    try:
+        portal = mvs_sync.fetch_students_for_tracker(include_done=True)
+    except Exception as e:
+        logger.warning(f"link sweep: portal fetch failed: {e}")
+        return 0
+
+    def _digits(x):
+        return "".join(ch for ch in str(x or "") if ch.isdigit())
+    taken = {r[0] for r in conn.execute(
+        "SELECT DISTINCT student_id FROM student_status "
+        "WHERE COALESCE(student_id,'') != ''").fetchall()}
+    by_email, by_phone, by_namedob = {}, {}, {}
+    for s in portal:
+        sid = str(s.get("student_id") or "").strip()
+        if not sid or sid in taken:
+            continue
+        em = str(s.get("email") or "").strip().lower()
+        if "@" in em:
+            by_email.setdefault(em, set()).add(sid)
+        for ph in (_digits(s.get("mobile"))[-10:], _digits(s.get("alt_mobile"))[-10:]):
+            if len(ph) == 10:
+                by_phone.setdefault(ph, set()).add(sid)
+        nm = " ".join(str(s.get("student_name") or "").split()).lower()
+        dd = _digits(s.get("dob"))
+        if nm and dd:
+            by_namedob.setdefault(nm + "|" + dd, set()).add(sid)
+    linked = 0
+    for r in conn.execute("SELECT row_key, email, mobile, alt_mobile, student_name, dob "
+                          "FROM student_status WHERE COALESCE(deleted,0)=0 "
+                          "AND COALESCE(student_id,'')=''").fetchall():
+        cands = set()
+        em = str(r["email"] or "").strip().lower()
+        if "@" in em and em in by_email:
+            cands |= by_email[em]
+        if not cands:
+            for ph in (_digits(r["mobile"])[-10:], _digits(r["alt_mobile"])[-10:]):
+                if len(ph) == 10 and ph in by_phone:
+                    cands |= by_phone[ph]
+        if not cands:
+            nm = " ".join(str(r["student_name"] or "").split()).lower()
+            dd = _digits(r["dob"])
+            if nm and dd:
+                cands |= by_namedob.get(nm + "|" + dd, set())
+        cands -= taken
+        if len(cands) == 1:
+            sid = cands.pop()
+            conn.execute("UPDATE student_status SET student_id=? WHERE row_key=?",
+                         (sid, r["row_key"]))
+            taken.add(sid)
+            linked += 1
+    if linked:
+        conn.commit()
+        logger.info(f"link sweep: auto-linked {linked} tracker row(s) to Portal students")
+    return linked
+
+
 @app.post("/api/portal-sync-details")
 def portal_sync_details(background_tasks: BackgroundTasks, body: dict = None,
                         user=Depends(verify_token)):
@@ -6102,6 +6166,14 @@ def portal_sync_details(background_tasks: BackgroundTasks, body: dict = None,
         return {"ok": False, "message": "Portal sync is OFF (MVS_MODE not enabled)."}
     keys = [k for k in ((body or {}).get("row_keys") or []) if str(k).strip()]
     conn = get_db()
+    # First LINK, then push: attach Portal studentIds to any still-unlinked rows (matched by
+    # email / mobile / name+DOB — the MVS ID itself can never be wrong), so wrong-reference
+    # students are included in this sweep instead of being skipped as "not linked".
+    linked = 0
+    try:
+        linked = _mvs_link_sweep(conn)
+    except Exception as _le:
+        logger.warning(f"detail-sync link sweep failed: {_le}")
     q = ("SELECT row_key, student_name, mobile, alt_mobile, email, dob, reference_no, "
          "enrollment_no, class_level, session, COALESCE(student_id,'') AS student_id "
          "FROM student_status WHERE COALESCE(deleted,0)=0 AND COALESCE(student_id,'') != ''")
@@ -6157,8 +6229,9 @@ def portal_sync_details(background_tasks: BackgroundTasks, body: dict = None,
             DETAIL_SYNC_STATE["running"] = False
 
     background_tasks.add_task(_run)
-    return {"ok": True, "started": True, "count": len(students),
-            "message": f"Syncing details of {len(students)} student(s) to the Portal…"}
+    return {"ok": True, "started": True, "count": len(students), "linked": linked,
+            "message": ((f"Auto-linked {linked} student(s) by MVS ID. " if linked else "")
+                        + f"Syncing details of {len(students)} student(s) to the Portal…")}
 
 
 @app.get("/api/portal-sync-details-status")
