@@ -69,6 +69,9 @@ PORTAL_HTML = """<!DOCTYPE html>
     --bg:#F1F5F9; --card:#FFFFFF; --border:#E2E8F0; --text:#0F172A;
     --muted:#64748B; --success:#16A34A; --danger:#DC2626; --warn:#EA580C;
     --th-bg:#F8FAFC; --row-hover:#FAFBFF; --chip:#F1F5F9; --soft:#F8FAFC; --dup-bg:#FFF7ED;
+    --ok-bg:#ECFDF5; --ok-border:#BBF7D0; --ok-text:#065F46; --dr-sent:#F6FEF9;
+    --warnbox-bg:#FFF7ED; --warnbox-border:#FED7AA; --warnbox-text:#9A3412;
+    --dangerbox-bg:#FEF2F2; --dangerbox-border:#FECACA;
     --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
     --shadow-lg:0 10px 25px rgba(0,0,0,.08);
   }
@@ -78,16 +81,22 @@ PORTAL_HTML = """<!DOCTYPE html>
     --bg:#0F172A; --card:#1E293B; --border:#334155; --text:#E2E8F0;
     --muted:#94A3B8; --success:#22C55E; --danger:#F87171; --warn:#FB923C;
     --th-bg:#172033; --row-hover:#243043; --chip:#334155; --soft:#172033; --dup-bg:#3a2a18;
+    --ok-bg:#0E2A1F; --ok-border:#14532D; --ok-text:#86EFAC; --dr-sent:#14261C;
+    --warnbox-bg:#2A1F12; --warnbox-border:#7C4A1D; --warnbox-text:#FDBA74;
+    --dangerbox-bg:#2A1518; --dangerbox-border:#7F1D1D;
     --shadow:0 1px 3px rgba(0,0,0,.4); --shadow-lg:0 10px 25px rgba(0,0,0,.5);
   }
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{overflow-x:hidden;max-width:100%}
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+  input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=color]),
+  select,textarea{background:var(--card);color:var(--text);caret-color:var(--text)}
+  input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
   img{max-width:100%}
   a{text-decoration:none}
   ::-webkit-scrollbar{width:8px;height:8px}
-  ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
 
   #login-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);z-index:1000;padding:16px}
@@ -271,7 +280,7 @@ PORTAL_HTML = """<!DOCTYPE html>
   .tc-btn{flex-shrink:0;display:inline-flex;align-items:center;gap:5px;border-radius:9px;padding:7px 12px;
     font-size:12.5px;font-weight:700;cursor:pointer;border:1px solid var(--border);transition:all .15s;white-space:nowrap}
   .tc-btn.pause{background:var(--soft);color:var(--text)}
-  .tc-btn.pause:hover{background:#fff7ed;border-color:var(--warn);color:var(--warn)}
+  .tc-btn.pause:hover{background:var(--soft);border-color:var(--warn);color:var(--warn)}
   .tc-btn.resume{background:#dcfce7;color:#166534;border-color:#bbf7d0}
   .tc-btn.resume:hover{background:#bbf7d0}
   .tc-lbl{font-size:12px;color:var(--muted);font-weight:600}
@@ -742,7 +751,7 @@ function applySidebarPref(){
             <button class="btn btn-success btn-sm" id="sel-run-btn" onclick="runSelected()">
               <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Selected</button>
             <button class="btn btn-sm" style="background:#7C3AED;color:#fff" onclick="tocCheckSelected('active',this)" title="Read the real NIOS TOC (Previous Subject Details) for the selected students and flag any mismatch with the Portal into 'TOC Status Error'.">Check TOC (selected)</button>
-            <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="deleteSelectedStudents()">&#128465; Delete selected</button>
+            <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="deleteSelectedStudents()">Delete selected</button>
             <select onchange="changeSelectedSource(this)" style="max-width:170px" title="Move selected students to a data type">
               <option value="">Change source&hellip;</option>
               <option value="mvs_tracker">&rarr; MVS Tracker</option>
@@ -898,7 +907,7 @@ function applySidebarPref(){
             <button class="btn btn-primary btn-sm" onclick="resendSelected(this)">Resend WhatsApp to selected</button>
             <button class="btn btn-sm" style="background:#7C3AED;color:#fff" onclick="tocCheckSelected('confirmed',this)" title="Read the real NIOS TOC (Previous Subject Details) for the selected students and flag any mismatch with the Portal into 'TOC Status Error'.">Check TOC (selected)</button>
             <button class="btn btn-sm" style="background:#F97316;color:#fff" onclick="refreshSelectedDocs(this)" title="Re-fetch and overwrite the saved documents for the selected students (use if their documents changed on NIOS).">Refresh docs for selected</button>
-            <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDeleteConf()">&#128465; Delete selected</button>
+            <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDeleteConf()">Delete selected</button>
             <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="clearConfSel()">Clear</button>
           </div>
           <div id="wa-progress" style="display:none;background:linear-gradient(135deg,#ECFDF5,#F0FDF4);border:1px solid #BBF7D0;border-radius:12px;padding:14px 16px;margin-bottom:14px">
@@ -994,7 +1003,7 @@ function applySidebarPref(){
               Export Excel</button>
           </div>
           <div id="r-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
-          <div id="r-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="r-selcount">0</span> selected</span><button class="btn btn-sm btn-success" onclick="runSelectedFrom('r')"><svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run selected</button><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('r')">&#128465; Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('r')">Clear</button></div>
+          <div id="r-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--dangerbox-bg);border:1px solid var(--dangerbox-border);border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="r-selcount">0</span> selected</span><button class="btn btn-sm btn-success" onclick="runSelectedFrom('r')"><svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run selected</button><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('r')">Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('r')">Clear</button></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th style="width:34px"><input type="checkbox" id="r-selall" onclick="selAll('r',this)" title="Select all on this page"></th><th>#</th><th>Reference No</th><th>Student Name</th><th>Session</th><th>RC Comment / Remark</th><th>Action</th>
@@ -1006,7 +1015,7 @@ function applySidebarPref(){
 
       <section id="sec-docreq" class="page-section">
         <div class="card">
-          <h3>&#128172; Document Requests &mdash; Review &amp; Send on WhatsApp</h3>
+          <h3>Document Requests &mdash; Review &amp; Send on WhatsApp</h3>
           <p style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6">
             For every <b>Document Required</b> student, we read the NIOS remark and prepare a <b>simple, friendly message</b>
             (in your words, not NIOS's technical language). <b>Review each one, edit if needed, attach a demo screenshot if helpful, then send.</b> Nothing goes
@@ -1018,7 +1027,7 @@ function applySidebarPref(){
             <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;margin-left:4px"><input type="checkbox" id="dr-selall" onclick="toggleDrAll(this)"> Select all</label>
             <span id="dr-count" style="font-size:13px;color:var(--muted);margin-left:auto"></span>
           </div>
-          <div id="dr-warn" style="display:none;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px 13px;font-size:12.5px;color:#9a3412;margin-bottom:12px"></div>
+          <div id="dr-warn" style="display:none;background:var(--warnbox-bg);border:1px solid var(--warnbox-border);border-radius:10px;padding:10px 13px;font-size:12.5px;color:var(--warnbox-text);margin-bottom:12px"></div>
           <div id="dr-body"></div>
           <div class="pg-bar" id="dr-pg"></div>
         </div>
@@ -1039,10 +1048,10 @@ function applySidebarPref(){
             <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <button class="btn btn-outline btn-sm" onclick="loadFailed(1)">Refresh</button>
             <button class="btn btn-success btn-sm" id="f-runall-btn" onclick="runAllFailed(this)" title="Re-run every failed student with auto-retry + DOB date/month auto-swap">Re-check all (auto-fix)</button>
-            <button class="btn btn-outline btn-sm" onclick="diagnoseLogin()" title="Check why NIOS login is failing (site-key / bounce / captcha)">&#128295; Diagnose NIOS login</button>
+            <button class="btn btn-outline btn-sm" onclick="diagnoseLogin()" title="Check why NIOS login is failing (site-key / bounce / captcha)">Diagnose NIOS login</button>
           </div>
           <div id="f-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
-          <div id="f-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="f-selcount">0</span> selected</span><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('f')">&#128465; Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('f')">Clear</button></div>
+          <div id="f-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--dangerbox-bg);border:1px solid var(--dangerbox-border);border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="f-selcount">0</span> selected</span><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('f')">Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('f')">Clear</button></div>
           <div style="overflow-x:auto">
             <table><thead><tr>
               <th style="width:34px"><input type="checkbox" id="f-selall" onclick="selAll('f',this)" title="Select all on this page"></th><th>Student</th><th>Reference / Enroll</th><th>Session</th><th>Problem</th><th>Action</th>
@@ -1103,7 +1112,7 @@ function applySidebarPref(){
             <button class="btn btn-outline btn-sm" onclick="exportHistory()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Export Excel</button>
-            <button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca" onclick="clearHistory()">&#128465; Clear All</button>
+            <button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca" onclick="clearHistory()">Clear All</button>
           </div>
           <div class="filter-bar" id="h-custom" style="display:none">
             <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px">From
@@ -1142,9 +1151,9 @@ function applySidebarPref(){
       </section>
 
       <section id="sec-transfers" class="page-section">
-        <div class="card" style="border:1px solid #fde68a;background:#fffdf5">
+        <div class="card" style="border:1px solid var(--warnbox-border);background:var(--warnbox-bg)">
           <div class="card-head">
-            <h3>&#128465; Old / Removed Portal Students</h3>
+            <h3>Old / Removed Portal Students</h3>
             <button class="btn btn-outline btn-sm" id="stale-find-btn" onclick="findStalePortal(this)">Find old portal data</button>
           </div>
           <p style="color:var(--muted);font-size:13px;margin-bottom:6px">
@@ -1176,7 +1185,7 @@ function applySidebarPref(){
             </select>
             <button class="btn btn-outline btn-sm" onclick="loadTransfers(1)">Refresh</button>
             <button class="btn btn-outline btn-sm" onclick="downloadTransfers()" title="Download the Transfer Data sheet (.xlsx)">&#11015; Download sheet</button>
-            <button class="btn btn-outline btn-sm" onclick="clearTransferLog()" title="Reset this transfer history list. Students already transferred to the Portal stay transferred — only the log is cleared.">&#128465; Clear log</button>
+            <button class="btn btn-outline btn-sm" onclick="clearTransferLog()" title="Reset this transfer history list. Students already transferred to the Portal stay transferred — only the log is cleared.">Clear log</button>
           </div>
           <div id="tr-count" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
           <div style="overflow-x:auto">
@@ -1194,7 +1203,7 @@ function applySidebarPref(){
           <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
             Upload an Excel file (.xlsx). Columns: Student Name, Mobile No, Class, Reference Number, Enrol No, Email, Date of Birth, Admission Session.</p>
           <div style="background:var(--soft);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:18px">
-            <div style="font-size:13px;font-weight:600;margin-bottom:4px">&#128196; Not sure about the format? Download a sample sheet:</div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">Not sure about the format? Download a sample sheet:</div>
             <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Fill your data in the same column order, then upload.</div>
             <div style="display:flex;gap:10px;flex-wrap:wrap">
               <button class="btn btn-outline btn-sm" onclick="downloadSample('regular')">
@@ -1236,7 +1245,7 @@ function applySidebarPref(){
             matched by reference number. For anyone already <b>confirmed</b>, the documents are sent to the new
             alternate number automatically (the primary number is not messaged again).</p>
           <div style="background:var(--soft);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:18px">
-            <div style="font-size:13px;font-weight:600;margin-bottom:4px">&#128196; Need the format? Download a sample:</div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">Need the format? Download a sample:</div>
             <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Two columns: Reference No, Alternate Number. Fill and upload.</div>
             <button class="btn btn-outline btn-sm" onclick="downloadAltSample()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -1348,10 +1357,10 @@ function applySidebarPref(){
             <div class="set-sub">Removed students land here. <b>Restore</b> brings them back; <b>Delete permanently</b> cannot be undone.</div></div>
             <div class="set-act"><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="loadTrash()">Refresh</button></div>
           </div>
-          <div id="trash-bulkbar" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px">
+          <div id="trash-bulkbar" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;background:var(--dangerbox-bg);border:1px solid var(--dangerbox-border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <span style="font-weight:700;font-size:13px"><span id="trash-selcount">0</span> selected</span>
             <button class="btn btn-sm" style="background:#16A34A;color:#fff" onclick="restoreSelected()">&#8617; Restore selected</button>
-            <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="purgeSelected()">&#128465; Permanently delete selected</button>
+            <button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="purgeSelected()">Permanently delete selected</button>
             <button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('trash')">Clear</button>
           </div>
           <div style="overflow-x:auto"><table>
@@ -1474,7 +1483,7 @@ function applySidebarPref(){
 <div id="edit-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;padding:16px">
   <div style="background:var(--card,#fff);border-radius:16px;max-width:480px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">
     <div style="padding:18px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-      <h3 style="margin:0">&#9998; Edit Student</h3>
+      <h3 style="margin:0">Edit Student</h3>
       <button onclick="closeEdit()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted)">&times;</button>
     </div>
     <div style="padding:20px 22px">
@@ -1499,7 +1508,7 @@ function applySidebarPref(){
     <div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end">
       <button class="btn" style="background:var(--soft);color:var(--text)" onclick="closeEdit()">Cancel</button>
       <button class="btn" style="background:#64748b;color:#fff" onclick="saveEdit(false)">Save</button>
-      <button class="btn btn-primary" onclick="saveEdit(true)">&#10227; Save &amp; Run again</button>
+      <button class="btn btn-primary" onclick="saveEdit(true)">Save &amp; Run again</button>
     </div>
   </div>
 </div>
@@ -1539,8 +1548,8 @@ function applySidebarPref(){
 .run-menu-item.por .rmi-dot{background:#7C3AED}
 .run-menu-item.trk .rmi-tag{background:#0EA5E9}
 .run-menu-item.por .rmi-tag{background:#7C3AED}
-.run-menu-item.trk:hover{background:#fff;box-shadow:0 3px 10px rgba(14,165,233,.16);transform:translateX(2px)}
-.run-menu-item.por:hover{background:#fff;box-shadow:0 3px 10px rgba(124,58,237,.16);transform:translateX(2px)}
+.run-menu-item.trk:hover{background:var(--soft);box-shadow:0 3px 10px rgba(14,165,233,.16);transform:translateX(2px)}
+.run-menu-item.por:hover{background:var(--soft);box-shadow:0 3px 10px rgba(124,58,237,.16);transform:translateX(2px)}
 .run-menu-item.trk:hover .rmi-dot,.run-menu-item.por:hover .rmi-dot{transform:scale(1.45)}
 #run-now-btn.open #run-caret{transform:rotate(180deg)}</style>
 
@@ -1908,7 +1917,7 @@ function renderDocReq(){
     const i=drData.indexOf(s);
     const sentBadge=s.sent?'<span style="background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">Sent'+(s.sent_at?' &middot; '+s.sent_at:'')+'</span>':'<span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">Pending</span>';
     const blank=!s.message;
-    return '<div class="dr-card" style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;background:'+(s.sent?'#f6fef9':'#fff')+'">'+
+    return '<div class="dr-card" style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;background:'+(s.sent?'var(--dr-sent)':'var(--card)')+'">'+
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;flex-wrap:wrap">'+
         '<input type="checkbox" class="dr-cb" value="'+s.row_key+'" '+(s._checked?'checked':'')+' onchange="drToggle(&quot;'+s.row_key+'&quot;,this.checked)" style="width:16px;height:16px">'+
         '<b style="font-size:14px">'+(i+1)+'. '+drEsc(s.student_name)+'</b>'+
@@ -1922,10 +1931,10 @@ function renderDocReq(){
         '<button class="btn btn-outline btn-sm" onclick="saveDocReqMsg(this,&quot;'+s.row_key+'&quot;)">Save</button>'+
         '<button class="btn btn-sm" style="background:#16a34a;color:#fff" onclick="sendDocReqOne(this,&quot;'+s.row_key+'&quot;)">Send now</button>'+
         '<span class="dr-saved" data-key="'+s.row_key+'" style="font-size:12px;color:var(--success)"></span>'+
-        '<button type="button" onclick="toggleDrPrev(this)" style="margin-left:auto;background:none;border:none;color:#2563eb;font-size:12px;cursor:pointer;text-decoration:underline">Preview full message</button>'+
+        '<button type="button" onclick="toggleDrPrev(this)" style="margin-left:auto;background:none;border:none;color:var(--primary);font-size:12px;cursor:pointer;text-decoration:underline">Preview full message</button>'+
       '</div>'+
       '<div class="dr-img" data-key="'+s.row_key+'" style="margin-top:9px">'+drImgHtml(s)+'</div>'+
-      '<div class="dr-prev" style="display:none;white-space:pre-wrap;background:#ecfdf5;border:1px solid #bbf7d0;border-radius:9px;padding:11px;margin-top:9px;font-size:13px;color:#065f46"></div>'+
+      '<div class="dr-prev" style="display:none;white-space:pre-wrap;background:var(--ok-bg);border:1px solid var(--ok-border);border-radius:9px;padding:11px;margin-top:9px;font-size:13px;color:var(--ok-text)"></div>'+
     '</div>';
   }).join("");
   renderDrPg(pages);
@@ -1937,16 +1946,16 @@ function drImgHtml(s){
   if(s.image){
     return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
       '<img src="'+s.image+'" style="height:52px;border-radius:8px;border:1px solid var(--border);object-fit:cover">'+
-      '<span style="font-size:12px;color:var(--success);font-weight:600">&#128247; Screenshot attached</span>'+
+      '<span style="font-size:12px;color:var(--success);font-weight:600">Screenshot attached</span>'+
       '<button class="btn btn-outline btn-sm" onclick="pickDocImg(&quot;'+s.row_key+'&quot;)">Replace</button>'+
-      '<button class="btn btn-outline btn-sm" onclick="pasteDocImg(&quot;'+s.row_key+'&quot;)" title="Paste an image copied to clipboard (e.g. after Win+Shift+S)">&#128203; Paste</button>'+
+      '<button class="btn btn-outline btn-sm" onclick="pasteDocImg(&quot;'+s.row_key+'&quot;)" title="Paste an image copied to clipboard (e.g. after Win+Shift+S)">Paste</button>'+
       '<button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c" onclick="removeDocImg(&quot;'+s.row_key+'&quot;)">Remove</button>'+
       '<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" id="drf-'+s.row_key+'" onchange="uploadDocImg(this,&quot;'+s.row_key+'&quot;)">'+
     '</div>';
   }
   return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
-    '<button class="btn btn-outline btn-sm" onclick="pickDocImg(&quot;'+s.row_key+'&quot;)" title="Attach a demo screenshot to send with this WhatsApp message">&#128206; Attach screenshot (optional)</button>'+
-    '<button class="btn btn-outline btn-sm" onclick="pasteDocImg(&quot;'+s.row_key+'&quot;)" title="Paste an image copied to clipboard (e.g. after taking a screenshot with Win+Shift+S)">&#128203; Paste from clipboard</button>'+
+    '<button class="btn btn-outline btn-sm" onclick="pickDocImg(&quot;'+s.row_key+'&quot;)" title="Attach a demo screenshot to send with this WhatsApp message">Attach screenshot (optional)</button>'+
+    '<button class="btn btn-outline btn-sm" onclick="pasteDocImg(&quot;'+s.row_key+'&quot;)" title="Paste an image copied to clipboard (e.g. after taking a screenshot with Win+Shift+S)">Paste from clipboard</button>'+
     '<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" id="drf-'+s.row_key+'" onchange="uploadDocImg(this,&quot;'+s.row_key+'&quot;)">'+
   '</div>';
 }
@@ -1960,7 +1969,7 @@ async function uploadDocImgFile(file,key){
     if(!r.ok){const e=await r.json().catch(()=>({}));showToast("Upload failed: "+(e.detail||r.status));return;}
     const d=await r.json();
     const it=drData.find(x=>x.row_key===key);if(it){it.image=d.url;const box=drImgBox(key);if(box)box.innerHTML=drImgHtml(it);}
-    showToast("Screenshot attached \u2713");
+    showToast("Screenshot attached");
   }catch(e){showToast("Error: "+e.message);}
 }
 async function uploadDocImg(input,key){const file=input.files&&input.files[0];await uploadDocImgFile(file,key);}
@@ -2002,7 +2011,7 @@ function toggleDrAll(cb){drData.forEach(s=>{if(!s.sent)s._checked=cb.checked;});
 async function saveDocReqMsg(btn,key){
   const ta=document.querySelector('.dr-msg[data-key="'+key+'"]');if(!ta)return;
   try{await api("/api/doc-request-save","POST",{row_key:key,message:ta.value});
-    const tag=document.querySelector('.dr-saved[data-key="'+key+'"]');if(tag){tag.textContent="\u2713 saved";tag.style.color="var(--success)";}
+    const tag=document.querySelector('.dr-saved[data-key="'+key+'"]');if(tag){tag.textContent="Saved";tag.style.color="var(--success)";}
     const it=drData.find(x=>x.row_key===key);if(it)it.message=ta.value;
   }catch(e){showToast("Error: "+e.message);}
 }
@@ -2013,7 +2022,7 @@ async function sendDocReqOne(btn,key){
   if(ta){try{await api("/api/doc-request-save","POST",{row_key:key,message:ta.value});}catch(e){}}
   if(btn){btn.disabled=true;btn.textContent="Sending…";}
   try{const r=await api("/api/doc-request-send","POST",{row_keys:[key]});
-    showToast(r.sent?"Sent \u2713":("Failed: "+((r.results&&r.results[0]&&r.results[0].info)||"")));
+    showToast(r.sent?"Sent":("Failed: "+((r.results&&r.results[0]&&r.results[0].info)||"")));
     loadDocReq();
   }catch(e){showToast("Error: "+e.message);if(btn){btn.disabled=false;btn.textContent="Send now";}}
 }
@@ -2445,15 +2454,15 @@ function renderRuns(runs,id){
       st='<span class="run-live">● running</span>'+
          ' <button class="btn-cancel" onclick="cancelRun('+r.id+')">Cancel</button>';
     }else if(r.status==="cancelled"){
-      st='<span class="run-cancel">✕ cancelled</span>';
+      st='<span class="run-cancel">Cancelled</span>';
     }else if(r.status==="completed"){
-      st='<span class="run-done">✓ completed</span>';
+      st='<span class="run-done">Completed</span>';
     }else{
       st='<span class="run-err">'+r.status+'</span>';
     }
     var act=(r.status==="running")?'<span style="color:var(--muted);font-size:12px">—</span>':
       '<button title="Delete this run log" onclick="deleteRunLog('+r.id+')" '+
-      'style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:600;cursor:pointer">&#128465;</button>';
+      'style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:600;cursor:pointer"></button>';
     return '<tr><td>'+r.run_at+'</td><td><span class="ref-tag">'+(r.group_type||"all")+
       '</span></td><td>'+r.total_checked+'</td><td style="color:var(--primary);font-weight:700">'+r.total_changed+
       '</td><td style="color:'+(r.total_failed?'var(--danger)':'inherit')+'">'+r.total_failed+
@@ -2483,7 +2492,7 @@ async function cancelRun(rid){
     const res=await fetch("/api/cancel-run",{method:"POST",headers:{Authorization:"Bearer "+TOKEN},body:fd});
     const d=await res.json();
     if(!res.ok) throw new Error(d.detail||"failed");
-    showToast("✓ "+(d.message||"Cancelled"));
+    showToast(d.message||"Cancelled");
     const dash=document.getElementById("sec-dashboard");
     const rlog=document.getElementById("sec-runlogs");
     if(dash&&dash.classList.contains("active")) loadDashboard();
@@ -2616,7 +2625,7 @@ function waBtn(s){
     }
   }
   if((s.whatsapp_info||"").indexOf("2 numbers")>=0){
-    badge+='<div style="margin-top:3px;font-size:11px;font-weight:700;color:#7C3AED">&#128241; Sent to 2 numbers (own + alternate)</div>';
+    badge+='<div style="margin-top:3px;font-size:11px;font-weight:700;color:#7C3AED">Sent to 2 numbers (own + alternate)</div>';
   }
   const bc=(dv==="failed")?'#DC2626':'#16A34A';
   return badge+'<button class="btn-dl" style="background:'+bc+';color:#fff;border-color:'+bc+';margin-top:4px" '+
@@ -2634,7 +2643,7 @@ async function resendWa(rowKey,btn){
     const r=await api("/api/wa-resend","POST",{row_key:rowKey});
     if(fake){clearInterval(fake);fake=null;}
     if(btn)btn.innerHTML='100%';
-    if(r.ok){ showToast("Sent \u2713 "+(r.info||"")); }
+    if(r.ok){ showToast("Sent. "+(r.info||"")); }
     else{ showToast("Not sent \u2014 "+(r.info||"failed")); }
     setTimeout(()=>{try{loadConfirmed(1);}catch(e){}try{loadStudents(1);}catch(e){}},1200);
   }catch(e){showToast("Error: "+e.message);}
@@ -2944,7 +2953,7 @@ function startCachePoll(){
     const p=(d&&d.progress)||{}; const active=!!(d&&d.auto_resume);
     const pct=p.total?Math.round((p.done/p.total)*100):0;
     // small persistent summary line
-    if(el){ el.textContent="Saved in database: "+((d&&d.students_cached)||0)+" students \u00b7 "+((d&&d.total_cached)||0)+" documents \u00b7 Fully saved: "+((d&&d.fully_saved)||0)+" / "+((d&&d.confirmed_total)||0)+((d&&d.pending_docs)?(" \u00b7 "+d.pending_docs+" pending"):"")+(((d&&d.genuine_failed)||0)?(" \u00b7 \u26a0 "+d.genuine_failed+" need data fix"):""); }
+    if(el){ el.textContent="Saved in database: "+((d&&d.students_cached)||0)+" students \u00b7 "+((d&&d.total_cached)||0)+" documents \u00b7 Fully saved: "+((d&&d.fully_saved)||0)+" / "+((d&&d.confirmed_total)||0)+((d&&d.pending_docs)?(" \u00b7 "+d.pending_docs+" pending"):"")+(((d&&d.genuine_failed)||0)?(" \u00b7 "+d.genuine_failed+" need data fix"):""); }
     // the progress bar box
     if(box){
       if(p.running||active){
@@ -3051,10 +3060,10 @@ function delBtn(s){
   var nm=(s.student_name||"this student").replace(/[\\"']/g," ");
   var edit='<button title="Edit details (DOB / Reference No etc.) and re-run" '+
     'style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;margin-right:6px" '+
-    'onclick="editStudent(&quot;'+s.row_key+'&quot;)">&#9998; Edit</button>';
+    'onclick="editStudent(&quot;'+s.row_key+'&quot;)">Edit</button>';
   var rem='<button title="Remove this student (moves to Trash — restore from Settings)" '+
     'style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap" '+
-    'onclick="deleteStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)">&#128465; Remove</button>';
+    'onclick="deleteStudent(&quot;'+s.row_key+'&quot;,&quot;'+nm+'&quot;)">Remove</button>';
   return '<div style="display:flex;flex-wrap:wrap;gap:4px">'+edit+rem+'</div>';
 }
 async function deleteStudent(rowKey,name){
@@ -3084,9 +3093,9 @@ function selAll(k,cb){ const s=selSet(k); document.querySelectorAll(".selbox-"+k
 function selClear(k){ selSet(k).clear(); document.querySelectorAll(".selbox-"+k).forEach(b=>b.checked=false); const a=document.getElementById(k+"-selall"); if(a)a.checked=false; selBar(k); }
 function selBar(k){ const bar=document.getElementById(k+"-bulkbar"); const n=selSet(k).size; if(bar)bar.style.display=n?"flex":"none"; const c=document.getElementById(k+"-selcount"); if(c)c.textContent=n; }
 function bulkBarHtml(k){
-  return '<div id="'+k+'-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:12px">'+
+  return '<div id="'+k+'-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--dangerbox-bg);border:1px solid var(--dangerbox-border);border-radius:10px;padding:10px 14px;margin-bottom:12px">'+
     '<span style="font-weight:700;font-size:13px"><span id="'+k+'-selcount">0</span> selected</span>'+
-    '<button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete(&quot;'+k+'&quot;)">&#128465; Delete selected</button>'+
+    '<button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete(&quot;'+k+'&quot;)">Delete selected</button>'+
     '<button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear(&quot;'+k+'&quot;)">Clear</button></div>';
 }
 async function runSelectedFrom(k){
@@ -3176,7 +3185,7 @@ async function pollAfterRecheck(rk,n){
     }
     if((s.current_status||"")&&n>=1){
       st.style.color="var(--success)";
-      st.textContent="✓ Done — status: "+s.current_status+(s.current_status==="Admission Confirmed"?" · login OK, documents sent.":".");
+      st.textContent="Done — status: "+s.current_status+(s.current_status==="Admission Confirmed"?" · login OK, documents sent.":".");
       try{loadStudents(1);}catch(e){}try{loadConfirmed(1);}catch(e){}try{loadRequired(1);}catch(e){}try{loadDashboard();}catch(e){}
       try{loadFailed(1);}catch(e){}updateFailedBadge();
       return;
@@ -3221,7 +3230,7 @@ async function loadRequired(page){
       '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
       '<td>'+(s.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(s)+'</div></td><td style="font-size:13px">'+(s.session||"—")+'</td>'+
       '<td style="font-size:13px;color:var(--warn);max-width:420px">'+(s.remark||"(no comment captured)")+'</td>'+
-      '<td><button onclick="editStudent(&quot;'+s.row_key+'&quot;)" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">&#9998; Edit</button></td></tr>').join("")
+      '<td><button onclick="editStudent(&quot;'+s.row_key+'&quot;)" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Edit</button></td></tr>').join("")
       :'<tr><td colspan="7" class="empty">No pending documents</td></tr>';
     renderPg("r-pg",page,d.pages,"loadRequired");
     const sa=document.getElementById("r-selall");if(sa)sa.checked=false;
@@ -3388,7 +3397,7 @@ async function loadPending(force){
         '— they cannot appear here until the Portal includes them.</div>';
     }
     if(!d.ok){tb.innerHTML='<tr><td colspan="8" class="empty">'+(d.message||"Could not load")+'</td></tr>';return;}
-    if(!d.students.length){tb.innerHTML='<tr><td colspan="8" class="empty">No pending students — every Portal student has a valid reference. 🎉</td></tr>';return;}
+    if(!d.students.length){tb.innerHTML='<tr><td colspan="8" class="empty">No pending students — every Portal student has a valid reference.</td></tr>';return;}
     tb.innerHTML=d.students.map(function(s,i){
       var bad=(s.reason||"").indexOf("No reference")!==0;
       return '<tr><td>'+(i+1)+'</td>'+
@@ -3708,7 +3717,7 @@ async function loadHistory(page){
       '<td>'+(x.student_name||"—")+'<div style="margin-top:4px">'+srcBadge(x)+'</div></td>'+
       '<td>'+badge(x.old_status)+'</td><td>'+badge(x.new_status)+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+x.changed_at+'</td>'+
-      '<td><button title="Delete this history entry" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:600;cursor:pointer" onclick="deleteHistory('+x.id+')">&#128465;</button></td></tr>').join("")
+      '<td><button title="Delete this history entry" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:600;cursor:pointer" onclick="deleteHistory('+x.id+')"></button></td></tr>').join("")
       :'<tr><td colspan="6" class="empty">No changes in this range</td></tr>';
     renderHistPg(d.page,d.pages,d.total);
   }catch(e){showToast(""+e.message);}
@@ -3828,7 +3837,7 @@ async function findStalePortal(btn){
       '<td style="font-size:12.5px">'+(s.status||"\u2014")+'</td>'+
       '<td style="font-size:12px;color:var(--muted)">'+(s.last_checked||"\u2014")+'</td>'+
       '</tr>').join("");
-    box.innerHTML='<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;padding:10px 13px;margin-bottom:10px;font-size:13.5px;color:#9a3412">'+
+    box.innerHTML='<div style="background:var(--warnbox-bg);border:1px solid var(--warnbox-border);border-radius:9px;padding:10px 13px;margin-bottom:10px;font-size:13.5px;color:var(--warnbox-text)">'+
         'Found <b>'+r.stale.length+'</b> old portal student(s) no longer on the live portal (compared against '+r.fetched+' live records). '+
         '<b>Tick the ones you want</b>, then either move them to the Tracker (keeps the data) or to Trash.</div>'+
       '<div style="overflow-x:auto"><table><thead><tr>'+
@@ -3837,10 +3846,10 @@ async function findStalePortal(btn){
         '</tr></thead><tbody>'+rows+'</tbody></table></div>'+
       '<div style="margin-top:13px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
         '<button class="btn btn-sm" style="background:#2563eb;color:#fff" onclick="transferStaleToTracker(this)">&#8594; Transfer selected to Tracker</button>'+
-        '<button class="btn btn-sm" style="background:#dc2626;color:#fff" onclick="removeStalePortal(this)">&#128465; Move selected to Trash</button>'+
+        '<button class="btn btn-sm" style="background:#dc2626;color:#fff" onclick="removeStalePortal(this)">Move selected to Trash</button>'+
         '<span id="stale-count" style="font-size:12.5px;color:var(--muted)"></span>'+
       '</div>'+
-      '<div style="font-size:12px;color:var(--muted);margin-top:7px">&#8594; <b>Transfer to Tracker</b> keeps the record (re-checked as Tracker data, no longer linked to the portal). &#128465; <b>Trash</b> is recoverable from Settings.</div>';
+      '<div style="font-size:12px;color:var(--muted);margin-top:7px">&#8594; <b>Transfer to Tracker</b> keeps the record (re-checked as Tracker data, no longer linked to the portal). <b>Trash</b> is recoverable from Settings.</div>';
     updateStaleCount();
   }catch(e){box.innerHTML='<div style="color:var(--danger);font-size:13px">'+e.message+'</div>';}
   finally{if(btn){btn.disabled=false;btn.textContent="Find old portal data";}}
@@ -3897,7 +3906,7 @@ function renderMatchResult(r){
   const esc=(v)=>(""+(v==null?"":v)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const scanned=(r.transferred||0)+(r.new_fetch||0);
   let html='<div style="background:var(--primary-light);border:1px solid var(--primary);border-radius:10px;padding:12px 14px">'+
-    '<div style="font-weight:700;color:var(--primary-dark)">\u2713 '+(r.transferred||0)+' matched & transferred to Portal (no CapSolver used)'+(r.at?' \u00b7 <span style="font-weight:500;color:var(--muted);font-size:12px">'+esc(r.at)+'</span>':'')+'</div>'+
+    '<div style="font-weight:700;color:var(--primary-dark)">'+(r.transferred||0)+' matched & transferred to Portal (no CapSolver used)'+(r.at?' \u00b7 <span style="font-weight:500;color:var(--muted);font-size:12px">'+esc(r.at)+'</span>':'')+'</div>'+
     '<div style="font-size:13px;color:var(--muted);margin-top:2px">Scanned '+scanned+' portal students \u00b7 '+(r.new_fetch||0)+' not matched (left for New Fetch).</div></div>';
   const nm=r.not_matched||[];
   if(nm.length){
@@ -4500,7 +4509,7 @@ async function saveCampaigns(btn){
   const body={};
   document.querySelectorAll(".wa-camp").forEach(i=>{body[i.dataset.g]=i.value.trim();});
   if(btn)btn.disabled=true;
-  try{await api("/api/wa-campaigns","POST",body);showToast("Campaigns saved \u2713");loadWa();}
+  try{await api("/api/wa-campaigns","POST",body);showToast("Campaigns saved");loadWa();}
   catch(e){showToast("Error: "+e.message);}
   finally{if(btn)btn.disabled=false;}
 }
@@ -9589,7 +9598,7 @@ h1{font-size:19px;text-align:center;color:#0F172A}
   <div class="name">__NAME__</div>
   <div class="sub" style="margin-top:0">Ref: __REF__</div>
   <div class="btns">__BUTTONS__</div>
-  <div class="note">&#128161; It may take a few seconds to open each document (securely fetched from NIOS). Once it opens, tap <b>"Save as PDF / Print"</b> at the top to save it.</div>
+  <div class="note">It may take a few seconds to open each document (securely fetched from NIOS). Once it opens, tap <b>"Save as PDF / Print"</b> at the top to save it.</div>
   <div class="foot">MVS Foundation &middot; NIOS Open Schooling</div>
 </div>
 <script>
@@ -9616,7 +9625,7 @@ def public_doc_page(token: str):
     for kind, label in _allowed_kinds(row["session"]):
         url = f"/d/{token}/{kind}"
         btns += (f'<a class="docbtn" onclick="openDoc(this,\'{url}\')">'
-                 f'<span class="ico">&#128196;</span><span class="lbl">{label}</span></a>')
+                 f'<span class="ico"></span><span class="lbl">{label}</span></a>')
     html = (DOC_PAGE_TPL
             .replace("__NAME__", (row["student_name"] or "Student"))
             .replace("__REF__", (row["reference_no"] or "—"))
