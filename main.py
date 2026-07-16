@@ -5323,10 +5323,14 @@ def run_now_unknown(background_tasks: BackgroundTasks, user=Depends(verify_token
     background_tasks.add_task(run_status_check, "all", None, "unknown")
     return {"message": f"Re-checking {n} Unknown student(s)…", "count": n}
 
-def _auto_fix_toc(rk, nt, subs, src_trace):
+def _auto_fix_toc(rk, nt, subs, src_trace, mirror_on_match=False):
     """Apply one NIOS TOC read for a student.
     If it MATCHES the Portal (or nothing to compare / already verified): just record the read
     (nios_toc + evidence), clear any stale mismatch flag/remark. Returns 'match'.
+    With mirror_on_match=True (explicit operator-requested checks), a match is ALSO re-pushed
+    to the Portal — this repairs stale Portal-side TOC data (e.g. an old 'WITHOUT TOC' text in
+    the subject field from before blank-pushing existed) even when the tracker itself already
+    holds the right value.
     If it DISAGREES with the Portal's tocStatus: AUTO-CORRECT — the NIOS value is applied on the
     tracker, pushed to the Portal, and the correction is logged in toc_fix_log for the audit
     list. No manual Verify needed. Returns 'fixed'."""
@@ -5359,6 +5363,14 @@ def _auto_fix_toc(rk, nt, subs, src_trace):
         cc.execute("UPDATE student_status SET remark='' WHERE row_key=? AND remark LIKE 'mismatch toc status%'", (rk,))
         cc.commit()
         cc.close()
+        if mirror_on_match and sid and nt in ("yes", "no"):
+            # Explicit check: re-mirror the (matching) TOC to the Portal anyway, so stale
+            # Portal-side data gets repaired — yes = subjects written, no = subject field blanked.
+            try:
+                import mvs_sync
+                mvs_sync.push_toc(sid, nt, subs or [])
+            except Exception as _pe:
+                logger.warning(f"TOC mirror-on-match push failed {rk}: {_pe}")
         return "match"
     # MISMATCH -> auto-correct to the NIOS value (NIOS is the source of truth).
     cc.execute("UPDATE student_status SET toc_status=?, nios_toc=?, toc_subjects=?, toc_src=?, "
@@ -5507,7 +5519,7 @@ def _run_toc_check_confirmed(keys):
                 cc.close()
                 if nt in ("yes", "no"):
                     outcome = _auto_fix_toc(rk, nt, res.get("toc_subjects") or [],
-                                            res.get("toc_src") or "")
+                                            res.get("toc_src") or "", mirror_on_match=True)
                     if outcome == "fixed":
                         TOC_CHECK_STATE["errors"] += 1   # shown as "auto-fixed" on the panel
                     if nt == "yes":
@@ -5658,7 +5670,8 @@ def _run_toc_check(keys):
                 continue
             checked += 1
             outcome = _auto_fix_toc(rk, nios_toc, subs or [],
-                                    "Read via NIOS student login (Previous Subject Details)")
+                                    "Read via NIOS student login (Previous Subject Details)",
+                                    mirror_on_match=True)
             if outcome == "fixed":
                 flagged += 1
         conn.close()
