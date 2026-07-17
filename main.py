@@ -2204,13 +2204,42 @@ async function loadReconciliation(refresh){
           (at.confirmed_no_link>0?"#B45309":"#047857"),
           "tracker-only students — transfer to Portal to push")+
       row("Enrol vs Sheet split from Portal",
-          "enrol "+(org.enrol||0)+" · legacy/sheet "+(org.sheet||0)+" · not sent "+(org.blank||0),
+          "enrol "+(org.enrol||0)+" \u00b7 legacy/sheet "+(org.sheet||0)+" \u00b7 "+
+          (org.blank>0
+            ?'<a href="javascript:void(0)" onclick="showOriginBlank()" style="color:var(--primary);text-decoration:underline;font-weight:700">not sent '+org.blank+'</a>'
+            :"not sent 0"),
           "var(--text)",
-          (org.blank>0?"Portal is not sending origin for "+org.blank+" students — they default to Enrol. ":""))+
+          (org.blank>0?"Portal is not sending origin for "+org.blank+" students — they default to Enrol. Click the figure to see who they are. ":""))+
+      '<div id="rp-origin-blank" style="display:none;margin-top:8px"></div>'+
 
       '<div style="margin-top:10px;font-size:12px;color:var(--muted)">'+
       'Simple rule: <b>tracker total + deleted + pending = Portal total</b>, and confirmed matches once "not updated yet" reaches 0.</div>';
   }catch(e){p.innerHTML='<div style="color:#B91C1C;font-size:13px">Could not load: '+e.message+'</div>';}
+}
+async function showOriginBlank(){
+  var box=document.getElementById("rp-origin-blank");
+  if(!box)return;
+  if(box.style.display==="block"){box.style.display="none";return;}
+  box.style.display="block";
+  box.innerHTML='<div style="font-size:12.5px;color:var(--muted)">Loading…</div>';
+  try{
+    const d=await api("/api/origin-blank-students");
+    if(!d.students||!d.students.length){box.innerHTML='<div style="font-size:12.5px;color:var(--success)">None — the Portal is sending origin for every student now.</div>';return;}
+    box.innerHTML='<div style="background:var(--soft);border:1px solid var(--border);border-radius:9px;padding:10px 12px">'+
+      '<div style="font-size:12.5px;font-weight:700;margin-bottom:6px">Portal did not send origin for these '+d.total+' student(s) — tracker shows them under Enrol by default. To fix permanently, set the origin on the MVS Portal for these profiles (or ask the Portal developer why trackerList omits it for them).</div>'+
+      '<div style="overflow-x:auto"><table class="tbl" style="min-width:520px"><thead><tr><th>Name</th><th>Reference</th><th>Mobile</th><th>Session</th><th>Status</th><th>Portal ID</th><th></th></tr></thead><tbody>'+
+      d.students.map(function(s){
+        var rk=(s.row_key||"").replace(/"/g,"&quot;");
+        return '<tr><td><b>'+(s.student_name||"—")+'</b></td>'+
+          '<td>'+(s.reference_no||s.enrollment_no||"—")+'</td>'+
+          '<td>'+(s.mobile||"—")+'</td>'+
+          '<td>'+(s.session||"—")+'</td>'+
+          '<td style="font-size:12px">'+(s.current_status||"—")+'</td>'+
+          '<td style="font-size:12px">'+(s.student_id||"—")+'</td>'+
+          '<td><button class="btn btn-outline btn-sm" onclick="editStudent(&quot;'+rk+'&quot;)">Edit</button></td></tr>';
+      }).join("")+
+      '</tbody></table></div></div>';
+  }catch(e){box.innerHTML='<div style="color:#B91C1C;font-size:12.5px">Could not load: '+e.message+'</div>';}
 }
 async function auditConfirmed(btn){
   var out=document.getElementById("rp-audit");
@@ -5938,6 +5967,25 @@ def portal_sync_status(user=Depends(verify_token)):
     s = dict(PORTAL_SYNC_STATE)
     s["percent"] = int(s["done"] * 100 / s["total"]) if s["total"] else 0
     return s
+
+
+@app.get("/api/origin-blank-students")
+def origin_blank_students(user=Depends(verify_token)):
+    """List the Portal students for whom the Portal did NOT send an origin value
+    (real_enrolment / bulk_imported) — the tracker defaults them to Enrol. Shown when
+    the operator clicks the "not sent N" figure in the Tracker vs Portal panel, so it is
+    clear exactly WHO these students are and that the gap is on the Portal side."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT row_key, student_name, COALESCE(reference_no,'') AS reference_no, "
+        "COALESCE(enrollment_no,'') AS enrollment_no, COALESCE(mobile,'') AS mobile, "
+        "COALESCE(session,'') AS session, COALESCE(current_status,'') AS current_status, "
+        "COALESCE(student_id,'') AS student_id "
+        "FROM student_status WHERE COALESCE(deleted,0)=0 "
+        "AND COALESCE(source,'')='mvs_portal' AND COALESCE(portal_origin,'')='' "
+        "ORDER BY student_name").fetchall()
+    conn.close()
+    return {"students": [dict(r) for r in rows], "total": len(rows)}
 
 
 @app.get("/api/portal-origin-probe")
