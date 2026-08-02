@@ -144,7 +144,8 @@ def _capsolver_once(task):
                 return "", f"result: {rr.get('errorDescription') or rr.get('errorCode') or 'error'}"
             if rr.get("status") == "ready":
                 sol = rr.get("solution", {})
-                _LAST_SOLVE = {"score": sol.get("score"), "err": ""}
+                _LAST_SOLVE = {"score": sol.get("score"), "err": "",
+                               "ca_t": sol.get("recaptcha-ca-t", "")}
                 return sol.get("gRecaptchaResponse", ""), ""
         _LAST_SOLVE = {"score": None, "err": "timeout"}
         return "", "timeout"
@@ -168,10 +169,8 @@ def solve_recaptcha_v3():
 
     def _mk(proxyless):
         t = {"type": ("ReCaptchaV3TaskProxyLess" if proxyless else "ReCaptchaV3Task"),
-             "websiteURL": NIOS_URL, "websiteKey": key, "minScore": min_score}
-        # act == '__NONE__' means NIOS called grecaptcha.execute() with NO action -> send an
-        # explicit EMPTY action so CapSolver's token matches (its default action would mismatch
-        # and NIOS would reject the score). A real action string is sent as-is.
+             "websiteURL": NIOS_URL, "websiteKey": key, "minScore": min_score,
+             "isSession": True}   # NIOS uses session-mode v3 -> we need the recaptcha-ca-t cookie
         if act == "__NONE__":
             t["pageAction"] = ""
         elif act:
@@ -328,6 +327,14 @@ def fetch_status(session, ref_no, email, csrf, token):
             "CheckStatus[google_recaptcha_response]": token, "CheckStatus[google_recapcha_response]": token,
         }
         headers = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
+        # Session-mode reCAPTCHA v3 (which NIOS uses) also checks a recaptcha-ca-t cookie that
+        # CapSolver returns alongside the token. Without it NIOS silently bounces to the form.
+        _cat = (_LAST_SOLVE or {}).get("ca_t") or ""
+        if _cat:
+            try:
+                session.cookies.set("recaptcha-ca-t", _cat, domain="sdmis.nios.ac.in")
+            except Exception:
+                pass
         resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25)
         soup = BeautifulSoup(resp.text, "html.parser")
         for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
@@ -603,35 +610,43 @@ def diagnose_status_deep(reference_no):
         try:
             r = requests.post(CAPSOLVER_CREATE, json={"clientKey": capkey, "task": task}, timeout=30).json()
             if r.get("errorId") != 0:
-                return "", f"create-err:{r.get('errorCode')}"
+                return "", "", f"create-err:{r.get('errorCode')}"
             tid = r.get("taskId")
             for _ in range(25):
                 _t.sleep(2)
                 rr = requests.post(CAPSOLVER_RESULT, json={"clientKey": capkey, "taskId": tid}, timeout=30).json()
                 if rr.get("errorId") != 0:
-                    return "", f"res-err:{rr.get('errorCode')}"
+                    return "", "", f"res-err:{rr.get('errorCode')}"
                 if rr.get("status") == "ready":
-                    return rr.get("solution", {}).get("gRecaptchaResponse", ""), ""
-            return "", "timeout"
+                    sol = rr.get("solution", {})
+                    return sol.get("gRecaptchaResponse", ""), sol.get("recaptcha-ca-t", ""), ""
+            return "", "", "timeout"
         except Exception as e:
-            return "", str(e)[:50]
+            return "", "", str(e)[:50]
 
-    def _try(label, proxyless, use_minscore, action):
+    def _try(label, proxyless, use_minscore, action, session_mode):
         task = {"type": ("ReCaptchaV3TaskProxyLess" if proxyless else "ReCaptchaV3Task"),
                 "websiteURL": NIOS_URL, "websiteKey": key}
         if use_minscore:
             task["minScore"] = 0.3
+        if session_mode:
+            task["isSession"] = True
         if action is not None:
             task["pageAction"] = action
         if not proxyless and pf:
             task.update(pf)
-        token, err = _solve(task)
+        token, ca_t, err = _solve(task)
         if not token:
             results.append(f"{label}: NO TOKEN ({err})")
             return False
         try:
             s = requests.Session()
             csrf = get_csrf(s)
+            if ca_t:
+                try:
+                    s.cookies.set("recaptcha-ca-t", ca_t, domain="sdmis.nios.ac.in")
+                except Exception:
+                    pass
             payload = {"_csrf": csrf, "CheckStatus[email]": "", "CheckStatus[reference_no]": reference_no,
                        "CheckStatus[enrollment_no]": "",
                        "CheckStatus[google_recaptcha_response]": token,
@@ -639,17 +654,18 @@ def diagnose_status_deep(reference_no):
             resp = s.post(NIOS_URL, data=payload,
                           headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}, timeout=25)
             got = "admission details" in resp.text.lower() or "is__review-section" in resp.text.lower()
-            results.append(f"{label}: {'RESULT! (this works)' if got else 'bounced'}")
+            results.append(f"{label}: {'RESULT! (this works)' if got else 'bounced'}"
+                           + (" [got ca-t cookie]" if ca_t else ""))
             return got
         except Exception as e:
             results.append(f"{label}: post-err {str(e)[:40]}")
             return False
 
-    # 6 combinations
-    _try("proxy + minScore + emptyAction", proxyless=False, use_minscore=True, action="")
-    _try("proxy + NO minScore + emptyAction", proxyless=False, use_minscore=False, action="")
-    _try("proxy + NO minScore + NO action", proxyless=False, use_minscore=False, action=None)
-    _try("proxyless + NO minScore + emptyAction", proxyless=True, use_minscore=False, action="")
-    _try("proxy + minScore + action=submit", proxyless=False, use_minscore=True, action="submit")
-    _try("proxyless + minScore + emptyAction", proxyless=True, use_minscore=True, action="")
+    # Focus on session mode (the docs say NIOS-type sites need it)
+    _try("SESSION + proxy + emptyAction", proxyless=False, use_minscore=False, action="", session_mode=True)
+    _try("SESSION + proxy + minScore + emptyAction", proxyless=False, use_minscore=True, action="", session_mode=True)
+    _try("SESSION + proxyless + emptyAction", proxyless=True, use_minscore=False, action="", session_mode=True)
+    _try("SESSION + proxy + NO action", proxyless=False, use_minscore=False, action=None, session_mode=True)
+    _try("NO session + proxy + emptyAction", proxyless=False, use_minscore=False, action="", session_mode=False)
+    _try("SESSION + proxy + action=submit", proxyless=False, use_minscore=False, action="submit", session_mode=True)
     return {"reference_no": reference_no, "proxy_configured": bool(pf), "trials": results}
