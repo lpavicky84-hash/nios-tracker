@@ -1272,6 +1272,7 @@ function applySidebarPref(){
             <input id="dg-ref" placeholder="Reference No" style="padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:13px">
             <input id="dg-dob" placeholder="DOB (DD-MM-YYYY)" style="padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:13px">
             <button class="btn-primary" onclick="diagnoseLogin()" style="padding:9px 16px">Run diagnostic</button>
+            <button class="btn-primary" onclick="diagnoseStatus()" style="padding:9px 16px;background:#0F766E" title="Test the STATUS CHECK path (what a run uses) — needs only the Reference No">Test status check</button>
           </div>
           <pre id="dg-out" style="display:none;margin-top:10px;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto"></pre>
         </div>
@@ -2837,6 +2838,31 @@ async function syncToc(btn){
     loadNoToc(1);
   }catch(e){showToast("Error: "+e.message);}
   finally{if(btn){btn.disabled=false;btn.style.opacity="";btn.innerHTML=o;}}
+}
+async function diagnoseStatus(){
+  var NL=String.fromCharCode(10);
+  var ref=(fval("dg-ref")||"").trim();
+  var out=document.getElementById("dg-out");
+  if(!ref){showToast("Enter the Reference No (top-left box)");return;}
+  out.style.display="block";
+  out.textContent="Testing the STATUS CHECK path live\u2026 (proxy + captcha + NIOS POST, ~15-40s)";
+  try{
+    var q=new URLSearchParams({ref:ref});
+    var resp=await fetch(API+"/api/status-diagnose?"+q.toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
+    var txt=await resp.text(); var r={}; try{r=JSON.parse(txt);}catch(e){}
+    if(!resp.ok){out.textContent="HTTP "+resp.status+NL+txt.slice(0,500);return;}
+    out.textContent=
+      "STATUS CHECK DIAGNOSTIC  (reference "+(r.reference_no||ref)+")"+NL+NL+
+      "Site key (status pg): "+(r.site_key||"?")+NL+
+      "reCAPTCHA action    : "+(r.action||"?")+NL+
+      "CSRF found          : "+(r.csrf_found?"yes":"NO")+NL+
+      "Captcha token       : "+(r.captcha_token||"?")+NL+NL+
+      "NIOS returned result: "+(r.page_has_result?"YES":"no")+NL+
+      "NIOS returned form  : "+(r.page_is_form?"YES (bounced)":"no")+NL+
+      "Status read         : "+(r.status_label||"?")+NL+
+      "Raw status text     : "+(r.raw_status||"(none)")+NL+NL+
+      "VERDICT: "+(r.note||"");
+  }catch(e){out.textContent="Failed: "+e.message;}
 }
 async function diagnoseLogin(){
   var NL=String.fromCharCode(10);
@@ -8233,6 +8259,17 @@ def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=Depends(
         return diagnose_login((ref or "").strip(), (dob or "").strip(), (enr or "").strip())
     except Exception as e:
         return {"error": str(e)[:200]}
+
+@app.get("/api/status-diagnose")
+def status_diagnose(ref: str, user=Depends(verify_token)):
+    """Run the STATUS-CHECK path live for one reference and report exactly what NIOS returned.
+    Separate from the login diagnostic — this is the one that explains 'Unknown' in a run."""
+    try:
+        import scraper
+        return scraper.diagnose_status_check(ref.strip())
+    except Exception as e:
+        return {"note": f"error: {type(e).__name__}: {str(e)[:150]}"}
+
 
 @app.get("/api/nios-reach")
 def nios_reach_ep(ref: str = "", dob: str = "", user=Depends(verify_token)):

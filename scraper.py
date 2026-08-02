@@ -480,3 +480,59 @@ def debug_full_response(reference_no):
         tag.decompose()
     lines = [l.strip() for l in soup.get_text(separator="\n", strip=True).split("\n") if l.strip()]
     return f"STATUS: {resp.status_code}\n\n" + "\n".join(lines[:60])
+
+
+def diagnose_status_check(reference_no):
+    """Live diagnostic for the STATUS CHECK path (separate from the login diagnostic).
+    Runs exactly what a real run does — get_csrf + solve_recaptcha_v3 + POST to the
+    check-admission-status page — and reports what NIOS returned. This is the tool that
+    tells us WHY students go to Unknown even when the login diagnostic looks fine."""
+    out = {"reference_no": reference_no, "site_key": "", "action": "", "csrf_found": False,
+           "captcha_token": "", "status_label": "Unknown", "raw_status": "",
+           "page_has_result": False, "page_is_form": False, "note": ""}
+    try:
+        session = requests.Session()
+        # get_csrf also refreshes the live site key + action for the status page
+        csrf = get_csrf(session)
+        out["csrf_found"] = bool(csrf)
+        out["site_key"] = _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY
+        out["action"] = _SITEKEY_CACHE.get("action") or "(none on page)"
+        token = solve_recaptcha_v3()
+        out["captcha_token"] = ("obtained (%d chars)" % len(token)) if token else "NOT obtained"
+        if not token:
+            out["note"] = "No captcha token — CapSolver/proxy problem (check the login diagnostic)."
+            return out
+        # Exactly the real POST
+        payload = {
+            "_csrf": csrf,
+            "CheckStatus[email]": "",
+            "CheckStatus[reference_no]": reference_no,
+            "CheckStatus[enrollment_no]": "",
+            "CheckStatus[google_recaptcha_response]": token,
+            "CheckStatus[google_recapcha_response]": token,
+        }
+        headers = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
+        resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25)
+        body = resp.text or ""
+        low = body.lower()
+        out["page_is_form"] = ("checkstatus[reference_no]" in low or "check-admission-status" in low
+                               and "admission details" not in low)
+        out["page_has_result"] = ("admission details" in low or "is__review-section" in low)
+        soup = BeautifulSoup(body, "html.parser")
+        for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
+            tag.decompose()
+        data, lines, remark = _extract_fields(soup)
+        st = data.get("admission status", "")
+        out["raw_status"] = st[:80]
+        out["status_label"] = get_status_label(st)
+        if out["status_label"] != "Unknown":
+            out["note"] = "SUCCESS — NIOS returned the result page and status was read correctly."
+        elif out["page_has_result"]:
+            out["note"] = "Result page came back but status text wasn't matched — send this page's HTML."
+        else:
+            out["note"] = ("NIOS did NOT return the result — it bounced back to the form. This means "
+                           "the captcha was REJECTED (score too low for THIS page's site key), even "
+                           "though the token was created. The status-page site key / score is the issue.")
+    except Exception as e:
+        out["note"] = f"error: {type(e).__name__}: {str(e)[:120]}"
+    return out
