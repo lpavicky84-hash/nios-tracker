@@ -2857,10 +2857,13 @@ async function diagnoseStatus(){
       "reCAPTCHA action    : "+(r.action||"?")+NL+
       "CSRF found          : "+(r.csrf_found?"yes":"NO")+NL+
       "Captcha token       : "+(r.captcha_token||"?")+NL+NL+
+      "HTTP status         : "+(r.http_status||"?")+NL+
       "NIOS returned result: "+(r.page_has_result?"YES":"no")+NL+
       "NIOS returned form  : "+(r.page_is_form?"YES (bounced)":"no")+NL+
-      "Status read         : "+(r.status_label||"?")+NL+
-      "Raw status text     : "+(r.raw_status||"(none)")+NL+NL+
+      "Status read         : "+(r.status_label||"?")+NL+NL+
+      "NIOS messages       : "+(r.nios_messages||"(none)")+NL+
+      "Live form fields    : "+(r.form_fields||"(none)")+NL+NL+
+      "Page text snippet   : "+(r.body_snippet||"(none)")+NL+NL+
       "VERDICT: "+(r.note||"");
   }catch(e){out.textContent="Failed: "+e.message;}
 }

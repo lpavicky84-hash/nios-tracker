@@ -528,27 +528,49 @@ def diagnose_status_check(reference_no):
             "CheckStatus[google_recapcha_response]": token,
         }
         headers = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
-        resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25)
+        resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25,
+                            allow_redirects=True)
         body = resp.text or ""
         low = body.lower()
-        out["page_is_form"] = ("checkstatus[reference_no]" in low or "check-admission-status" in low
-                               and "admission details" not in low)
+        out["http_status"] = resp.status_code
+        out["final_url"] = str(resp.url)
+        out["page_is_form"] = ("checkstatus[reference_no]" in low or
+                               ("check-admission-status" in low and "admission details" not in low))
         out["page_has_result"] = ("admission details" in low or "is__review-section" in low)
         soup = BeautifulSoup(body, "html.parser")
+        # Capture any validation / error message NIOS shows on a bounce (this is the key clue).
+        errs = []
+        for sel in [".help-block", ".invalid-feedback", ".alert", ".error", ".text-danger",
+                    "[class*=error]", ".field-checkstatus-google_recapcha_response .help-block"]:
+            for e in soup.select(sel):
+                t = e.get_text(" ", strip=True)
+                if t and 3 < len(t) < 200 and t.lower() not in [x.lower() for x in errs]:
+                    errs.append(t)
+        out["nios_messages"] = " | ".join(errs[:6]) if errs else "(no visible error/validation text)"
+        # What fields does the live form actually expect? (in case a required field changed)
+        form_fields = []
+        for inp in soup.find_all(["input", "textarea", "select"]):
+            n = inp.get("name")
+            if n and n not in form_fields:
+                form_fields.append(n)
+        out["form_fields"] = ", ".join(form_fields[:20])
         for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
             tag.decompose()
         data, lines, remark = _extract_fields(soup)
         st = data.get("admission status", "")
         out["raw_status"] = st[:80]
         out["status_label"] = get_status_label(st)
+        # a small readable slice of the body so we can see what NIOS actually returned
+        visible = soup.get_text(" ", strip=True)
+        out["body_snippet"] = visible[:280]
         if out["status_label"] != "Unknown":
             out["note"] = "SUCCESS — NIOS returned the result page and status was read correctly."
         elif out["page_has_result"]:
             out["note"] = "Result page came back but status text wasn't matched — send this page's HTML."
         else:
-            out["note"] = ("NIOS did NOT return the result — it bounced back to the form. This means "
-                           "the captcha was REJECTED (score too low for THIS page's site key), even "
-                           "though the token was created. The status-page site key / score is the issue.")
+            out["note"] = ("Bounced back to the form. See 'nios_messages' for NIOS's own reason and "
+                           "'form_fields' for what the live form expects — this pinpoints whether it's "
+                           "captcha, CSRF, a missing field, or the reference itself.")
     except Exception as e:
         out["note"] = f"error: {type(e).__name__}: {str(e)[:120]}"
     return out
