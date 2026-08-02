@@ -180,15 +180,67 @@ def get_csrf(session):
     return inp.get("value", "") if inp else ""
 
 def _extract_fields(soup):
-    """Parse the NIOS result page into a dict of label->value."""
+    """Parse the NIOS result page into a dict of label->value.
+    PRIMARY: NIOS renders each field as a list item with two spans:
+        <li><span class="is__review-section__list--field">Admission Status</span>
+            <span class="is__review-section__list--detail">Admission Confirmed</span></li>
+    We read those field/detail pairs directly, which is exact and layout-proof.
+    FALLBACK: if that structure isn't found (older/changed layout), fall back to reading
+    label/value from the page text (same line 'Label : Value' or value on the next line),
+    plus a whole-page status scan. This is what fixes 'Unknown' for students whose real status
+    is clearly on the page (e.g. Admission Confirmed) but sat in markup the old parser missed."""
+    labels = ("admission status", "reference no", "reference number",
+              "enrollment no", "name of candidate", "academic year")
+    data = {}
+
+    # ---- PRIMARY: structured field/detail span pairs ----
+    for li in soup.select("li"):
+        fld = li.find("span", class_="is__review-section__list--field")
+        det = li.find("span", class_="is__review-section__list--detail")
+        if fld and det:
+            k = fld.get_text(strip=True).lower().rstrip(":").strip()
+            v = det.get_text(strip=True)
+            if k and v:
+                data.setdefault(k, v)
+    # Also handle the generic label/detail class names NIOS uses on some pages.
+    if "admission status" not in data:
+        for fld in soup.find_all("span", class_=lambda c: c and "field" in c):
+            k = fld.get_text(strip=True).lower().rstrip(":").strip()
+            if k in labels:
+                det = fld.find_next("span", class_=lambda c: c and "detail" in c)
+                if det:
+                    v = det.get_text(strip=True)
+                    if v:
+                        data.setdefault(k, v)
+
     full = soup.get_text(separator="\n", strip=True)
     lines = [l.strip() for l in full.split("\n") if l.strip()]
-    data = {}
+
+    # ---- FALLBACK: text-based (only for labels still missing) ----
+    def _clean(v):
+        return v.strip().strip(":").strip()
+
     for i, line in enumerate(lines):
-        low = line.lower()
-        if low in ("admission status", "reference no", "reference number",
-                   "enrollment no", "name of candidate", "academic year") and i + 1 < len(lines):
-            data[low] = lines[i + 1].strip()
+        low = line.lower().strip().rstrip(":").strip()
+        if ":" in line:
+            left, right = line.split(":", 1)
+            ll = left.lower().strip()
+            if ll in labels and ll not in data and _clean(right):
+                data[ll] = _clean(right)
+                continue
+        if low in labels and low not in data and i + 1 < len(lines):
+            nxt = _clean(lines[i + 1])
+            if nxt and nxt.lower().rstrip(":").strip() not in labels:
+                data[low] = nxt
+
+    # ---- SAFETY NET: scan whole page for a known status phrase ----
+    if "admission status" not in data:
+        low_full = full.lower()
+        for kw, _lab in STATUS_KEYWORDS:
+            if kw in low_full:
+                data["admission status"] = kw
+                break
+
     remark = _extract_remark(lines)
     return data, lines, remark
 
