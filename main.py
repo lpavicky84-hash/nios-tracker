@@ -2856,7 +2856,8 @@ async function diagnoseStatus(){
       "Site key (status pg): "+(r.site_key||"?")+NL+
       "reCAPTCHA action    : "+(r.action||"?")+NL+
       "CSRF found          : "+(r.csrf_found?"yes":"NO")+NL+
-      "Captcha token       : "+(r.captcha_token||"?")+NL+NL+
+      "Captcha token       : "+(r.captcha_token||"?")+NL+
+      "Captcha SCORE       : "+(r.captcha_score||"?")+NL+NL+
       "HTTP status         : "+(r.http_status||"?")+NL+
       "NIOS returned result: "+(r.page_has_result?"YES":"no")+NL+
       "NIOS returned form  : "+(r.page_is_form?"YES (bounced)":"no")+NL+

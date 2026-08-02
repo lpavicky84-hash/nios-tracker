@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 NIOS_URL = "https://sdmis.nios.ac.in/registration/check-admission-status"
 RECAPTCHA_SITE_KEY = "6Lc07T4iAAAAADsnW1ZXbEz0GUissRcasTnSS4Nj"
 _SITEKEY_CACHE = {"key": RECAPTCHA_SITE_KEY, "action": None}   # refreshed from the live check-status page
+_LAST_SOLVE = {"score": None, "err": ""}   # last CapSolver solve's reCAPTCHA score (for diagnostics)
 
 def _extract_sitekey(html):
     """Pull the live reCAPTCHA site key out of the page. NIOS can rotate it; solving for a
@@ -123,11 +124,14 @@ def _parse_proxy_fields(proxy):
         return None
 
 def _capsolver_once(task):
-    """Submit ONE CapSolver task and poll for its token. Returns (token, error_text)."""
+    """Submit ONE CapSolver task and poll for its token. Returns (token, error_text).
+    Also records the last solve's reCAPTCHA score into _LAST_SOLVE for diagnostics."""
+    global _LAST_SOLVE
     try:
         r = requests.post(CAPSOLVER_CREATE,
                           json={"clientKey": CAPSOLVER_API_KEY, "task": task}, timeout=30).json()
         if r.get("errorId") != 0:
+            _LAST_SOLVE = {"score": None, "err": r.get('errorDescription') or r.get('errorCode')}
             return "", f"create: {r.get('errorDescription') or r.get('errorCode') or 'error'}"
         task_id = r.get("taskId")
         for _ in range(30):
@@ -136,11 +140,16 @@ def _capsolver_once(task):
                               json={"clientKey": CAPSOLVER_API_KEY, "taskId": task_id},
                               timeout=30).json()
             if rr.get("errorId") != 0:
+                _LAST_SOLVE = {"score": None, "err": rr.get('errorDescription') or rr.get('errorCode')}
                 return "", f"result: {rr.get('errorDescription') or rr.get('errorCode') or 'error'}"
             if rr.get("status") == "ready":
-                return rr.get("solution", {}).get("gRecaptchaResponse", ""), ""
+                sol = rr.get("solution", {})
+                _LAST_SOLVE = {"score": sol.get("score"), "err": ""}
+                return sol.get("gRecaptchaResponse", ""), ""
+        _LAST_SOLVE = {"score": None, "err": "timeout"}
         return "", "timeout"
     except Exception as e:
+        _LAST_SOLVE = {"score": None, "err": str(e)[:80]}
         return "", f"{type(e).__name__}: {str(e)[:80]}"
 
 
@@ -515,6 +524,9 @@ def diagnose_status_check(reference_no):
                          if _a == "__NONE__" else (_a or "(none on page)"))
         token = solve_recaptcha_v3()
         out["captcha_token"] = ("obtained (%d chars)" % len(token)) if token else "NOT obtained"
+        _sc = _LAST_SOLVE.get("score")
+        out["captcha_score"] = (str(_sc) if _sc is not None
+                                else ("(not returned) " + str(_LAST_SOLVE.get("err") or "")))
         if not token:
             out["note"] = "No captcha token — CapSolver/proxy problem (check the login diagnostic)."
             return out
