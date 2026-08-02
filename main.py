@@ -1048,7 +1048,7 @@ function applySidebarPref(){
             <select id="f-source" onchange="loadFailed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <button class="btn btn-outline btn-sm" onclick="loadFailed(1)">Refresh</button>
             <button class="btn btn-success btn-sm" id="f-runall-btn" onclick="runAllFailed(this)" title="Re-run every failed student with auto-retry + DOB date/month auto-swap">Re-check all (auto-fix)</button>
-            <button class="btn btn-outline btn-sm" onclick="diagnoseLogin()" title="Check why NIOS login is failing (site-key / bounce / captcha)">Diagnose NIOS login</button>
+            <button class="btn btn-outline btn-sm" onclick="diagnoseReach()" title="Check why NIOS login is failing (site-key / bounce / captcha)">Diagnose NIOS login</button>
           </div>
           <div id="f-count" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
           <div id="f-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--dangerbox-bg);border:1px solid var(--dangerbox-border);border-radius:10px;padding:10px 14px;margin-bottom:12px"><span style="font-weight:700;font-size:13px"><span id="f-selcount">0</span> selected</span><button class="btn btn-sm" style="background:#DC2626;color:#fff" onclick="bulkDelete('f')">Delete selected</button><button class="btn btn-sm" style="background:var(--soft);color:var(--text)" onclick="selClear('f')">Clear</button></div>
@@ -2839,15 +2839,45 @@ async function syncToc(btn){
   finally{if(btn){btn.disabled=false;btn.style.opacity="";btn.innerHTML=o;}}
 }
 async function diagnoseLogin(){
+  var NL=String.fromCharCode(10);
   var ref=(fval("dg-ref")||"").trim(), dob=(fval("dg-dob")||"").trim();
   var out=document.getElementById("dg-out");
   if(!ref||!dob){showToast("Enter Reference No and DOB");return;}
-  out.style.display="block"; out.textContent="Running live NIOS login test\u2026 (this can take ~20-40s)";
+  out.style.display="block";
+  out.textContent="Running live NIOS + proxy + CapSolver test\u2026 (this can take ~20-40s)";
   try{
-    const q=new URLSearchParams({ref:ref,dob:dob});
-    const r=await api("/api/diagnose-login?"+q.toString(),"GET");
-    out.textContent=JSON.stringify(r,null,2);
-  }catch(e){out.textContent="Error: "+e.message;}
+    var q=new URLSearchParams({ref:ref,dob:dob});
+    var resp=await fetch(API+"/api/nios-reach?"+q.toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
+    var txt=await resp.text();
+    var r={}; try{r=JSON.parse(txt);}catch(e){}
+    if(!resp.ok){ out.textContent="Diagnose returned HTTP "+resp.status+NL+NL+txt.slice(0,600); return; }
+    var verdict="";
+    var pdt=(r.proxy_direct_test||"");
+    var csc=(r.capsolver_create||"");
+    if(pdt.indexOf("FAILED")===0) verdict="PROBLEM: the proxy set in CAPSOLVER_PROXY is not reachable. Either clear that variable to use CapSolver ProxyLess mode, or paste the current proxy credentials. This is why status checks are failing.";
+    else if(csc.indexOf("errId=0")!==0 && csc) verdict="PROBLEM is on the CapSolver side (see CapSolver create line) - check the API key and that the CapSolver balance is not empty.";
+    else if((r.login_result||"").toLowerCase().indexOf("success")>=0 || (r.captcha_token&&r.captcha_token!=="(skipped)")) verdict="Captcha solved and login path is working. If a specific student still fails, the reference/DOB for that student is likely wrong.";
+    var msg=(verdict?("VERDICT: "+verdict+NL+NL):"")+
+      "NIOS DIAGNOSIS  (code version: "+(r.endpoint_version||"OLD")+")"+NL+NL+
+      "Page HTTP status : "+(r.page_status)+NL+
+      "Looks blocked    : "+(r.looks_blocked?"YES":"no")+NL+
+      "CSRF found       : "+(r.csrf_found?"yes":"NO")+NL+
+      "Site key OK      : "+((r.live_sitekey&&r.live_sitekey===r.built_in_sitekey)?"yes (same)":(r.live_sitekey?"CHANGED":"(none)"))+NL+
+      "reCAPTCHA action : "+(r.recaptcha_action||"(none)")+NL+
+      "reCAPTCHA TYPE   : "+(r.recaptcha_type||"?")+NL+NL+
+      "--- PROXY / CAPSOLVER ---"+NL+
+      "Proxy set        : "+(r.proxy_set||"?")+NL+
+      "Proxy DIRECT test: "+(r.proxy_direct_test||"?")+NL+
+      "CapSolver create : "+(r.capsolver_create||"?")+NL+
+      "CapSolver result : "+(r.capsolver_result||"?")+NL+
+      "Captcha token    : "+(r.captcha_token||"(skipped)")+NL+NL+
+      "--- LOGIN TEST ---"+NL+
+      "verify_login     : "+(r.verify_login_test||"(skipped)")+NL+
+      "Login result     : "+(r.login_result||"")+NL+
+      (r.final_url?("Final URL: "+r.final_url+NL):"")+
+      (r.snippet?(NL+"After login page says: "+r.snippet):"");
+    out.textContent=msg;
+  }catch(e){out.textContent="Diagnose failed: "+e.message;}
 }
 async function runNotoc(btn){
   if(btn){btn.disabled=true;btn.style.opacity="0.6";}
@@ -3269,7 +3299,7 @@ async function loadRequired(page){
 
 let fTimer=null;
 function debounceFailed(){clearTimeout(fTimer);fTimer=setTimeout(()=>loadFailed(1),400);}
-async function diagnoseLogin(){
+async function diagnoseReach(){
   var NL=String.fromCharCode(10);
   var ref=prompt("To test a REAL login, enter a confirmed student REFERENCE NO (or leave blank to only check reachability):","");
   if(ref===null) return;

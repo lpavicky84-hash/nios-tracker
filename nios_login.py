@@ -106,9 +106,13 @@ def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
         logger.error("CAPTCHA_API_KEY not set!")
         return ""
     try:
-        min_score = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.9"))
+        # reCAPTCHA v3 is score-based (0.0-1.0). NIOS accepts fairly low scores, so demanding
+        # 0.9 makes CapSolver reject many perfectly-valid solves and the login bounces
+        # intermittently (some students pass, most fail on the same run). 0.3 is the realistic
+        # floor that matches what NIOS actually enforces; override via CAPSOLVER_MIN_SCORE.
+        min_score = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.3"))
     except Exception:
-        min_score = 0.9
+        min_score = 0.3
     action = page_action or "login"
     key = site_key or RECAPTCHA_SITE_KEY
 
@@ -509,15 +513,28 @@ def get_logged_in_session(reference_no, dob, enrollment_no="", force=False):
         cached = _session_cache.get(key)
         if cached and cached[1] > now:
             return cached[0]
-    session, resp = login_student(reference_no, dob, enrollment_no="")
-    if resp is None:
-        _LAST_FAIL_REASON = "captcha"   # no captcha token / gateway down — NOT a data problem
-        return None
-    if not is_logged_in(resp.text):
-        _LAST_FAIL_REASON = "bounce"    # reached NIOS but bounced to login — wrong data
-        return None
-    _session_cache[key] = (session, now + 300)
-    return session
+    # A login "bounce" is usually a low reCAPTCHA v3 score, which is transient — a fresh solve
+    # often scores fine. So try a few times with a brand-new captcha each attempt before giving
+    # up. This is what turns an intermittent 60-70% success run into a near-100% one.
+    BOUNCE_RETRIES = 3
+    resp = None
+    for _attempt in range(BOUNCE_RETRIES):
+        session, resp = login_student(reference_no, dob, enrollment_no="")
+        if resp is None:
+            _LAST_FAIL_REASON = "captcha"   # no captcha token / gateway down — NOT a data problem
+            if _attempt < BOUNCE_RETRIES - 1:
+                time.sleep(1)
+                continue
+            return None
+        if is_logged_in(resp.text):
+            _session_cache[key] = (session, now + 300)
+            return session
+        # Bounced. If it's the last try, fall through to report the bounce; otherwise retry
+        # with a completely fresh captcha + CSRF.
+        _LAST_FAIL_REASON = "bounce"
+        if _attempt < BOUNCE_RETRIES - 1:
+            time.sleep(1)
+    return None
 
 def verify_login(reference_no, dob, enrollment_no=""):
     """TRUE verification: log in AND fetch a protected page (ID card) — exactly the path

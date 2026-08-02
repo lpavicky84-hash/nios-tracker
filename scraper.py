@@ -128,10 +128,18 @@ def solve_recaptcha_v3():
             task = {"type": "ReCaptchaV3TaskProxyLess", "websiteURL": NIOS_URL,
                     "websiteKey": _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY}
         try:
-            task["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.9"))
+            # reCAPTCHA v3 is score-based (0.0-1.0). The check-admission-status page does NOT
+            # declare a pageAction (its grecaptcha.execute() is called with no action), so
+            # forcing action "login" here MISMATCHED the page and made Google return a near-zero
+            # score -> NIOS rejected every solve -> every student went to Unknown. Demanding 0.9
+            # made it worse. Use a realistic floor and only send pageAction when the live page
+            # truly has one.
+            task["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.3"))
         except Exception:
-            task["minScore"] = 0.9
-        task["pageAction"] = _SITEKEY_CACHE.get("action") or "login"
+            task["minScore"] = 0.3
+        _act = _SITEKEY_CACHE.get("action")
+        if _act:
+            task["pageAction"] = _act          # only when the page actually declares one
         payload = {"clientKey": CAPSOLVER_API_KEY, "task": task}
         r = requests.post(CAPSOLVER_CREATE, json=payload, timeout=30).json()
         if r.get("errorId") != 0:
