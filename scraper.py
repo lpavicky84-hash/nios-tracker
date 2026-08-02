@@ -669,3 +669,68 @@ def diagnose_status_deep(reference_no):
     _try("NO session + proxy + emptyAction", proxyless=False, use_minscore=False, action="", session_mode=False)
     _try("SESSION + proxy + action=submit", proxyless=False, use_minscore=False, action="submit", session_mode=True)
     return {"reference_no": reference_no, "proxy_configured": bool(pf), "trials": results}
+
+
+def diagnose_status_raw(reference_no):
+    """Raw browser-like diagnostic: GET the form (capturing cookies + csrf), solve captcha,
+    POST in the SAME session, and dump everything NIOS returns — status code, redirect chain,
+    Set-Cookie, response length, and whether a result or the form came back. This exposes
+    non-captcha causes (CSRF/session cookie mismatch, a new required field/header)."""
+    out = {"reference_no": reference_no, "steps": []}
+    def log(m): out["steps"].append(m)
+    try:
+        s = requests.Session()
+        # 1) GET the form exactly like a browser
+        g = s.get(NIOS_URL, headers=HEADERS, timeout=25)
+        log(f"GET form: HTTP {g.status_code}, {len(g.text)} bytes")
+        log(f"cookies after GET: {list(s.cookies.keys())}")
+        sk = _extract_sitekey(g.text) or RECAPTCHA_SITE_KEY
+        act = _extract_action(g.text)
+        log(f"site key: {sk[:25]}... | action detected: {act!r}")
+        soup = BeautifulSoup(g.text, "html.parser")
+        meta = soup.find("meta", {"name": "_csrf"})
+        inp = soup.find("input", {"name": "_csrf"})
+        csrf = (meta.get("content") if meta else "") or (inp.get("value") if inp else "")
+        log(f"csrf from meta: {'yes' if meta else 'no'} | from input: {'yes' if inp else 'no'} | len={len(csrf)}")
+        # what does the form's action attribute and method say?
+        form = soup.find("form")
+        if form:
+            log(f"form action={form.get('action')!r} method={form.get('method')!r} id={form.get('id')!r}")
+        # 2) solve captcha (session mode, empty action to match)
+        task = {"type": "ReCaptchaV3Task", "websiteURL": NIOS_URL, "websiteKey": sk,
+                "isSession": True, "pageAction": "" if act == "__NONE__" else (act or "")}
+        pf = _parse_proxy_fields(os.environ.get("CAPSOLVER_PROXY", "").strip())
+        if pf: task.update(pf)
+        tok, err = _capsolver_once(task)
+        ca_t = (_LAST_SOLVE or {}).get("ca_t") or ""
+        log(f"captcha: {'token '+str(len(tok))+' chars' if tok else 'FAILED '+err} | ca-t: {'yes '+str(len(ca_t))+'ch' if ca_t else 'none'}")
+        if not tok:
+            return out
+        if ca_t:
+            try: s.cookies.set("recaptcha-ca-t", ca_t, domain="sdmis.nios.ac.in")
+            except Exception: pass
+        # 3) POST in the SAME session
+        payload = {"_csrf": csrf, "CheckStatus[email]": "", "CheckStatus[reference_no]": reference_no,
+                   "CheckStatus[enrollment_no]": "",
+                   "CheckStatus[google_recaptcha_response]": tok,
+                   "CheckStatus[google_recapcha_response]": tok}
+        h = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded",
+             "Origin": "https://sdmis.nios.ac.in", "Referer": NIOS_URL,
+             "X-Requested-With": "XMLHttpRequest"}
+        p = s.post(NIOS_URL, data=payload, headers=h, timeout=25, allow_redirects=True)
+        log(f"POST: HTTP {p.status_code}, {len(p.text)} bytes, final URL: {p.url}")
+        log(f"redirects: {[r.status_code for r in p.history]} -> {p.status_code}")
+        low = p.text.lower()
+        has_result = "admission details" in low or "is__review-section" in low
+        is_form = "checkstatus[reference_no]" in low
+        log(f"result page: {has_result} | form page: {is_form}")
+        # any error/validation text
+        import re as _re
+        errs = _re.findall(r'(?:help-block|invalid-feedback|text-danger|alert)[^>]*>([^<]{3,120})', p.text)
+        log(f"inline errors: {errs[:3] if errs else '(none)'}")
+        # a peek at the very start of what came back
+        vis = BeautifulSoup(p.text, "html.parser").get_text(" ", strip=True)
+        log(f"body start: {vis[:200]}")
+    except Exception as e:
+        log(f"ERROR: {type(e).__name__}: {str(e)[:150]}")
+    return out

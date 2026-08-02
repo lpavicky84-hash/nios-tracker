@@ -1274,6 +1274,7 @@ function applySidebarPref(){
             <button class="btn-primary" onclick="diagnoseLogin()" style="padding:9px 16px">Run diagnostic</button>
             <button class="btn-primary" onclick="diagnoseStatus()" style="padding:9px 16px;background:#0F766E" title="Test the STATUS CHECK path (what a run uses) — needs only the Reference No">Test status check</button>
             <button class="btn-primary" onclick="diagnoseStatusDeep()" style="padding:9px 16px;background:#B45309" title="Try 6 captcha configurations at once and report which one makes NIOS return the result (~2-3 min)">Deep test (find working config)</button>
+            <button class="btn-primary" onclick="diagnoseStatusRaw()" style="padding:9px 16px;background:#7C3AED" title="Full raw trace of GET + captcha + POST — shows cookies, CSRF, redirects, and NIOS's exact response">Raw trace</button>
           </div>
           <pre id="dg-out" style="display:none;margin-top:10px;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto"></pre>
         </div>
@@ -2839,6 +2840,22 @@ async function syncToc(btn){
     loadNoToc(1);
   }catch(e){showToast("Error: "+e.message);}
   finally{if(btn){btn.disabled=false;btn.style.opacity="";btn.innerHTML=o;}}
+}
+async function diagnoseStatusRaw(){
+  var NL=String.fromCharCode(10);
+  var ref=(fval("dg-ref")||"").trim();
+  var out=document.getElementById("dg-out");
+  if(!ref){showToast("Enter the Reference No");return;}
+  out.style.display="block";
+  out.textContent="Running full raw trace (GET + captcha + POST)\u2026 ~20-40s";
+  try{
+    var q=new URLSearchParams({ref:ref});
+    var resp=await fetch(API+"/api/status-diagnose-raw?"+q.toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
+    var txt=await resp.text(); var r={}; try{r=JSON.parse(txt);}catch(e){}
+    if(!resp.ok){out.textContent="HTTP "+resp.status+NL+txt.slice(0,500);return;}
+    out.textContent="RAW STATUS TRACE  (reference "+(r.reference_no||ref)+")"+NL+NL+
+      (r.steps||[]).map(function(s,i){return (i+1)+". "+s;}).join(NL);
+  }catch(e){out.textContent="Failed: "+e.message;}
 }
 async function diagnoseStatusDeep(){
   var NL=String.fromCharCode(10);
@@ -8286,6 +8303,16 @@ def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=Depends(
         return diagnose_login((ref or "").strip(), (dob or "").strip(), (enr or "").strip())
     except Exception as e:
         return {"error": str(e)[:200]}
+
+@app.get("/api/status-diagnose-raw")
+def status_diagnose_raw(ref: str, user=Depends(verify_token)):
+    """Raw browser-like status diagnostic — dumps the full GET/solve/POST trace."""
+    try:
+        import scraper
+        return scraper.diagnose_status_raw(ref.strip())
+    except Exception as e:
+        return {"steps": [f"error: {type(e).__name__}: {str(e)[:150]}"]}
+
 
 @app.get("/api/status-diagnose-deep")
 def status_diagnose_deep(ref: str, user=Depends(verify_token)):
