@@ -1273,6 +1273,7 @@ function applySidebarPref(){
             <input id="dg-dob" placeholder="DOB (DD-MM-YYYY)" style="padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:13px">
             <button class="btn-primary" onclick="diagnoseLogin()" style="padding:9px 16px">Run diagnostic</button>
             <button class="btn-primary" onclick="diagnoseStatus()" style="padding:9px 16px;background:#0F766E" title="Test the STATUS CHECK path (what a run uses) — needs only the Reference No">Test status check</button>
+            <button class="btn-primary" onclick="diagnoseStatusDeep()" style="padding:9px 16px;background:#B45309" title="Try 6 captcha configurations at once and report which one makes NIOS return the result (~2-3 min)">Deep test (find working config)</button>
           </div>
           <pre id="dg-out" style="display:none;margin-top:10px;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto"></pre>
         </div>
@@ -2838,6 +2839,28 @@ async function syncToc(btn){
     loadNoToc(1);
   }catch(e){showToast("Error: "+e.message);}
   finally{if(btn){btn.disabled=false;btn.style.opacity="";btn.innerHTML=o;}}
+}
+async function diagnoseStatusDeep(){
+  var NL=String.fromCharCode(10);
+  var ref=(fval("dg-ref")||"").trim();
+  var out=document.getElementById("dg-out");
+  if(!ref){showToast("Enter the Reference No");return;}
+  out.style.display="block";
+  out.textContent="Trying 6 captcha configurations against NIOS\u2026 this takes ~2-3 minutes, please wait\u2026";
+  try{
+    var q=new URLSearchParams({ref:ref});
+    var resp=await fetch(API+"/api/status-diagnose-deep?"+q.toString(),{headers:{"Authorization":"Bearer "+TOKEN}});
+    var txt=await resp.text(); var r={}; try{r=JSON.parse(txt);}catch(e){}
+    if(!resp.ok){out.textContent="HTTP "+resp.status+NL+txt.slice(0,500);return;}
+    var lines=(r.trials||[]).map(function(t){return "  "+t;}).join(NL);
+    var winner=(r.trials||[]).find(function(t){return t.indexOf("RESULT")>=0;});
+    out.textContent=
+      "DEEP STATUS TEST  (reference "+(r.reference_no||ref)+")"+NL+
+      "Proxy configured: "+(r.proxy_configured?"yes":"NO")+NL+NL+
+      "Results of each configuration:"+NL+lines+NL+NL+
+      (winner ? ("WINNER: "+winner+NL+"-> I will lock the run to this configuration.")
+              : "None worked — NIOS rejected every configuration. This means the captcha score is too low regardless of settings (proxy/IP quality issue), or NIOS is blocking automated status checks entirely right now.");
+  }catch(e){out.textContent="Failed: "+e.message;}
 }
 async function diagnoseStatus(){
   var NL=String.fromCharCode(10);
@@ -8263,6 +8286,16 @@ def diagnose_login_ep(ref: str = "", dob: str = "", enr: str = "", user=Depends(
         return diagnose_login((ref or "").strip(), (dob or "").strip(), (enr or "").strip())
     except Exception as e:
         return {"error": str(e)[:200]}
+
+@app.get("/api/status-diagnose-deep")
+def status_diagnose_deep(ref: str, user=Depends(verify_token)):
+    """Try many captcha configs at once and report which makes NIOS return the result."""
+    try:
+        import scraper
+        return scraper.diagnose_status_deep(ref.strip())
+    except Exception as e:
+        return {"trials": [f"error: {type(e).__name__}: {str(e)[:150]}"]}
+
 
 @app.get("/api/status-diagnose")
 def status_diagnose(ref: str, user=Depends(verify_token)):

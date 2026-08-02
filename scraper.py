@@ -586,3 +586,70 @@ def diagnose_status_check(reference_no):
     except Exception as e:
         out["note"] = f"error: {type(e).__name__}: {str(e)[:120]}"
     return out
+
+
+def diagnose_status_deep(reference_no):
+    """Try MULTIPLE captcha configurations in ONE call and report which (if any) makes NIOS
+    return the result. This ends the guess-and-redeploy loop: it tests proxy vs proxyless,
+    with/without minScore, and empty vs 'submit' action, then tells us the winning combo."""
+    import time as _t
+    results = []
+    key = RECAPTCHA_SITE_KEY
+    capkey = CAPSOLVER_API_KEY
+    proxy = os.environ.get("CAPSOLVER_PROXY", "").strip()
+    pf = _parse_proxy_fields(proxy)
+
+    def _solve(task):
+        try:
+            r = requests.post(CAPSOLVER_CREATE, json={"clientKey": capkey, "task": task}, timeout=30).json()
+            if r.get("errorId") != 0:
+                return "", f"create-err:{r.get('errorCode')}"
+            tid = r.get("taskId")
+            for _ in range(25):
+                _t.sleep(2)
+                rr = requests.post(CAPSOLVER_RESULT, json={"clientKey": capkey, "taskId": tid}, timeout=30).json()
+                if rr.get("errorId") != 0:
+                    return "", f"res-err:{rr.get('errorCode')}"
+                if rr.get("status") == "ready":
+                    return rr.get("solution", {}).get("gRecaptchaResponse", ""), ""
+            return "", "timeout"
+        except Exception as e:
+            return "", str(e)[:50]
+
+    def _try(label, proxyless, use_minscore, action):
+        task = {"type": ("ReCaptchaV3TaskProxyLess" if proxyless else "ReCaptchaV3Task"),
+                "websiteURL": NIOS_URL, "websiteKey": key}
+        if use_minscore:
+            task["minScore"] = 0.3
+        if action is not None:
+            task["pageAction"] = action
+        if not proxyless and pf:
+            task.update(pf)
+        token, err = _solve(task)
+        if not token:
+            results.append(f"{label}: NO TOKEN ({err})")
+            return False
+        try:
+            s = requests.Session()
+            csrf = get_csrf(s)
+            payload = {"_csrf": csrf, "CheckStatus[email]": "", "CheckStatus[reference_no]": reference_no,
+                       "CheckStatus[enrollment_no]": "",
+                       "CheckStatus[google_recaptcha_response]": token,
+                       "CheckStatus[google_recapcha_response]": token}
+            resp = s.post(NIOS_URL, data=payload,
+                          headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}, timeout=25)
+            got = "admission details" in resp.text.lower() or "is__review-section" in resp.text.lower()
+            results.append(f"{label}: {'RESULT! (this works)' if got else 'bounced'}")
+            return got
+        except Exception as e:
+            results.append(f"{label}: post-err {str(e)[:40]}")
+            return False
+
+    # 6 combinations
+    _try("proxy + minScore + emptyAction", proxyless=False, use_minscore=True, action="")
+    _try("proxy + NO minScore + emptyAction", proxyless=False, use_minscore=False, action="")
+    _try("proxy + NO minScore + NO action", proxyless=False, use_minscore=False, action=None)
+    _try("proxyless + NO minScore + emptyAction", proxyless=True, use_minscore=False, action="")
+    _try("proxy + minScore + action=submit", proxyless=False, use_minscore=True, action="submit")
+    _try("proxyless + minScore + emptyAction", proxyless=True, use_minscore=True, action="")
+    return {"reference_no": reference_no, "proxy_configured": bool(pf), "trials": results}
