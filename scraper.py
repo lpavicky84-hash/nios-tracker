@@ -45,7 +45,7 @@ CAPSOLVER_RESULT  = "https://api.capsolver.com/getTaskResult"
 # A perfectly valid student can momentarily read as 'Fetch Error' (captcha flake, NIOS
 # hiccup, network blip). Auto-retry the status read a few times so the run self-heals
 # instead of needing a manual re-run. Only retries on FAILURE — a clean read costs 1 try.
-STATUS_MAX_TRIES = 3
+STATUS_MAX_TRIES = 5
 
 # Login-portal status fallback safety limits (per run): never let it drain the captcha balance.
 # Login-fallback: when the fast PUBLIC status page returns no readable status for a student,
@@ -113,53 +113,72 @@ def _parse_proxy_fields(proxy):
     except Exception:
         return None
 
-def solve_recaptcha_v3():
-    if not CAPSOLVER_API_KEY:
-        logger.error("CAPTCHA_API_KEY not set!")
-        return ""
+def _capsolver_once(task):
+    """Submit ONE CapSolver task and poll for its token. Returns (token, error_text)."""
     try:
-        proxy = os.environ.get("CAPSOLVER_PROXY", "").strip()
-        pf = _parse_proxy_fields(proxy)
-        if pf:
-            task = {"type": "ReCaptchaV3Task", "websiteURL": NIOS_URL,
-                    "websiteKey": _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY}
-            task.update(pf)
-        else:
-            task = {"type": "ReCaptchaV3TaskProxyLess", "websiteURL": NIOS_URL,
-                    "websiteKey": _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY}
-        try:
-            # reCAPTCHA v3 is score-based (0.0-1.0). The check-admission-status page does NOT
-            # declare a pageAction (its grecaptcha.execute() is called with no action), so
-            # forcing action "login" here MISMATCHED the page and made Google return a near-zero
-            # score -> NIOS rejected every solve -> every student went to Unknown. Demanding 0.9
-            # made it worse. Use a realistic floor and only send pageAction when the live page
-            # truly has one.
-            task["minScore"] = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.3"))
-        except Exception:
-            task["minScore"] = 0.3
-        _act = _SITEKEY_CACHE.get("action")
-        if _act:
-            task["pageAction"] = _act          # only when the page actually declares one
-        payload = {"clientKey": CAPSOLVER_API_KEY, "task": task}
-        r = requests.post(CAPSOLVER_CREATE, json=payload, timeout=30).json()
+        r = requests.post(CAPSOLVER_CREATE,
+                          json={"clientKey": CAPSOLVER_API_KEY, "task": task}, timeout=30).json()
         if r.get("errorId") != 0:
-            logger.error(f"CapSolver create error: {r.get('errorDescription')}")
-            return ""
+            return "", f"create: {r.get('errorDescription') or r.get('errorCode') or 'error'}"
         task_id = r.get("taskId")
         for _ in range(30):
             time.sleep(2)
             rr = requests.post(CAPSOLVER_RESULT,
-                               json={"clientKey": CAPSOLVER_API_KEY, "taskId": task_id},
-                               timeout=30).json()
+                              json={"clientKey": CAPSOLVER_API_KEY, "taskId": task_id},
+                              timeout=30).json()
             if rr.get("errorId") != 0:
-                logger.error(f"CapSolver result error: {rr.get('errorDescription')}")
-                return ""
+                return "", f"result: {rr.get('errorDescription') or rr.get('errorCode') or 'error'}"
             if rr.get("status") == "ready":
-                return rr.get("solution", {}).get("gRecaptchaResponse", "")
-        return ""
+                return rr.get("solution", {}).get("gRecaptchaResponse", ""), ""
+        return "", "timeout"
     except Exception as e:
-        logger.error(f"CapSolver error: {e}")
+        return "", f"{type(e).__name__}: {str(e)[:80]}"
+
+
+def solve_recaptcha_v3():
+    if not CAPSOLVER_API_KEY:
+        logger.error("CAPTCHA_API_KEY not set!")
         return ""
+    key = _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY
+    try:
+        min_score = float(os.environ.get("CAPSOLVER_MIN_SCORE", "0.3"))
+    except Exception:
+        min_score = 0.3
+    act = _SITEKEY_CACHE.get("action")
+    proxy = os.environ.get("CAPSOLVER_PROXY", "").strip()
+    pf = _parse_proxy_fields(proxy)
+
+    def _mk(proxyless):
+        t = {"type": ("ReCaptchaV3TaskProxyLess" if proxyless else "ReCaptchaV3Task"),
+             "websiteURL": NIOS_URL, "websiteKey": key, "minScore": min_score}
+        if act:
+            t["pageAction"] = act
+        if not proxyless and pf:
+            t.update(pf)
+        return t
+
+    # ATTEMPT 1: with the proxy (residential IP -> high reCAPTCHA v3 score, which NIOS needs).
+    if pf:
+        token, err = _capsolver_once(_mk(proxyless=False))
+        if token:
+            return token
+        # Proxy unreachable/flaky -> don't fail the student; fall back to CapSolver's own pool.
+        el = err.lower()
+        if any(w in el for w in ("proxy", "connect", "timeout", "timed out")):
+            logger.info(f"CapSolver: proxy attempt failed ({err}) — retrying proxyless")
+            token2, err2 = _capsolver_once(_mk(proxyless=True))
+            if token2:
+                return token2
+            logger.error(f"CapSolver proxyless fallback also failed: {err2}")
+            return ""
+        logger.error(f"CapSolver create/result error: {err}")
+        return ""
+
+    # No proxy configured -> proxyless (works, but reCAPTCHA v3 score is often lower).
+    token, err = _capsolver_once(_mk(proxyless=True))
+    if not token and err:
+        logger.error(f"CapSolver error: {err}")
+    return token
 
 def get_csrf(session):
     resp = session.get(NIOS_URL, headers=HEADERS, timeout=20)
