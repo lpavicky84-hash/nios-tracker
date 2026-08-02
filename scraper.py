@@ -27,15 +27,24 @@ def _extract_sitekey(html):
 
 def _extract_action(html):
     """Pull the reCAPTCHA v3 action the page uses. Token is bound to its action; a mismatch
-    makes NIOS reject the check. Returns '' if none."""
+    makes NIOS reject the check.
+    Returns the action string if the page sets one, the sentinel '__NONE__' if the page calls
+    grecaptcha.execute WITHOUT any action (NIOS's check-status page does exactly this — see the
+    live source: grecaptcha.execute("<sitekey>").then(...) with no {action:...}), or '' if we
+    couldn't tell. Sending an empty action to match NIOS's no-action call is what makes the
+    captcha score high enough to be accepted."""
     if not html:
         return ""
+    # explicit action?
     for pat in (r'grecaptcha\.execute\([^)]*\{\s*action\s*:\s*["\']([\w\-/]+)["\']',
                 r'["\']action["\']\s*:\s*["\']([\w\-/]+)["\']',
                 r'data-action=["\']([\w\-/]+)["\']'):
         m = re.search(pat, html)
         if m:
             return m.group(1)
+    # grecaptcha.execute("sitekey") with NO action object -> action is empty on NIOS's side.
+    if re.search(r'grecaptcha\.execute\(\s*["\'][\w\-]+["\']\s*\)', html):
+        return "__NONE__"
     return ""
 
 CAPSOLVER_API_KEY = os.environ.get("CAPTCHA_API_KEY", "")
@@ -151,7 +160,12 @@ def solve_recaptcha_v3():
     def _mk(proxyless):
         t = {"type": ("ReCaptchaV3TaskProxyLess" if proxyless else "ReCaptchaV3Task"),
              "websiteURL": NIOS_URL, "websiteKey": key, "minScore": min_score}
-        if act:
+        # act == '__NONE__' means NIOS called grecaptcha.execute() with NO action -> send an
+        # explicit EMPTY action so CapSolver's token matches (its default action would mismatch
+        # and NIOS would reject the score). A real action string is sent as-is.
+        if act == "__NONE__":
+            t["pageAction"] = ""
+        elif act:
             t["pageAction"] = act
         if not proxyless and pf:
             t.update(pf)
@@ -496,7 +510,9 @@ def diagnose_status_check(reference_no):
         csrf = get_csrf(session)
         out["csrf_found"] = bool(csrf)
         out["site_key"] = _SITEKEY_CACHE.get("key") or RECAPTCHA_SITE_KEY
-        out["action"] = _SITEKEY_CACHE.get("action") or "(none on page)"
+        _a = _SITEKEY_CACHE.get("action")
+        out["action"] = ("(none — execute() called with no action; solver now sends empty action to match)"
+                         if _a == "__NONE__" else (_a or "(none on page)"))
         token = solve_recaptcha_v3()
         out["captcha_token"] = ("obtained (%d chars)" % len(token)) if token else "NOT obtained"
         if not token:
