@@ -166,8 +166,31 @@ def format_dob(dob):
     # Strip ONLY a trailing time component (e.g. " 00:00:00", "T00:00:00.000Z"),
     # while preserving month-name dates like "8 August 2007".
     s = re.sub(r"[ T]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?$", "", s).strip()
+    # Ambiguous 3-part numeric dates like "11/24/06" or "24-11-06": if one of the first two
+    # parts is >12 it can only be the DAY, which tells us the order for certain. The MVS date
+    # picker often stores US-style MM/DD/YY, so handle that explicitly before the generic list
+    # (a bare strptime would silently mis-read "11/24/06" or fail on the 2-digit year, sending
+    # NIOS a bad DOB and bouncing the login).
+    mnum = re.match(r"^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2}|\d{4})$", s)
+    if mnum:
+        a, b, y = int(mnum.group(1)), int(mnum.group(2)), mnum.group(3)
+        yr = int(y)
+        if len(y) == 2:
+            yr = 2000 + yr if yr <= 30 else 1900 + yr   # 06 -> 2006, 95 -> 1995
+        day = mon = None
+        if a > 12 and b <= 12:          # a must be day  -> DD?MM
+            day, mon = a, b
+        elif b > 12 and a <= 12:        # b must be day  -> MM?DD (US style, e.g. 11/24/06)
+            day, mon = b, a
+        elif a <= 12 and b <= 12:       # truly ambiguous -> assume DD/MM (Indian default)
+            day, mon = a, b
+        if day and mon and 1 <= day <= 31 and 1 <= mon <= 12:
+            try:
+                return datetime(yr, mon, day).strftime("%d-%m-%Y")
+            except ValueError:
+                pass
     for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d",
-                "%d-%m-%y", "%m/%d/%Y", "%d.%m.%Y", "%Y.%m.%d",
+                "%d-%m-%y", "%m/%d/%Y", "%m/%d/%y", "%d.%m.%Y", "%Y.%m.%d",
                 "%d %m %Y", "%Y %m %d", "%d %B %Y", "%d %b %Y",
                 "%B %d %Y", "%b %d %Y"):
         try:
