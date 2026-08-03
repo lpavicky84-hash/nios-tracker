@@ -296,6 +296,14 @@ def send_for_student(student, only_number=None):
     Returns (ok, info)."""
     from links import short_doc_url as doc_file_url
     from excel_handler import normalize_toc
+    # Document links are built from the reference/enrollment + DOB. If either is missing the
+    # links can't be generated, so sending would deliver a broken/empty-document message and
+    # wrongly flag the student as "sent". Skip and let a later run send it once the data is fixed.
+    _has_ref = bool(str(student.get("reference_no") or "").strip()
+                    or str(student.get("enrollment_no") or "").strip())
+    _has_dob = bool(str(student.get("dob") or "").strip())
+    if not (_has_ref and _has_dob):
+        return False, "skipped: reference/DOB missing (documents can't be built yet)"
     group = group_of(student.get("session"))
     name = (str(student.get("student_name") or "Student").strip() or "Student")
     rk = student.get("row_key", "")
