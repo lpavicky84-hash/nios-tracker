@@ -105,7 +105,8 @@ def init_db():
             c.execute(f"ALTER TABLE run_logs ADD COLUMN {col} INTEGER DEFAULT 0")
         except Exception:
             pass
-    for col, decl in (("report_json", "TEXT"), ("report_label", "TEXT")):
+    for col, decl in (("report_json", "TEXT"), ("report_label", "TEXT"),
+                      ("progress_updated_at", "TEXT")):
         try:
             c.execute(f"ALTER TABLE run_logs ADD COLUMN {col} {decl}")
         except Exception:
@@ -210,8 +211,7 @@ def init_db():
                       ("toc_subjects", "TEXT"),
                       ("toc_mismatch", "INTEGER DEFAULT 0"),
                       ("toc_verified", "INTEGER DEFAULT 0"),
-                      ("toc_src", "TEXT"),
-                      ("edit_sync", "TEXT")):
+                      ("toc_src", "TEXT")):
         try:
             c.execute(f"ALTER TABLE student_status ADD COLUMN {col} {decl}")
         except Exception:

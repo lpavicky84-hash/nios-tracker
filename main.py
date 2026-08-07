@@ -717,7 +717,7 @@ function applySidebarPref(){
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
             <select id="s-toc" onchange="loadStudents(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
-            <select id="s-link" onchange="loadStudents(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option><option value="docsblocked">Documents blocked (ref/DOB missing)</option></select>
+            <select id="s-link" onchange="loadStudents(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="s-datepreset" onchange="onDatePreset('s',()=>loadStudents(1))">
@@ -881,7 +881,7 @@ function applySidebarPref(){
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-toc" onchange="loadConfirmed(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
-            <select id="c-link" onchange="loadConfirmed(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option><option value="docsblocked">Documents blocked (ref/DOB missing)</option></select>
+            <select id="c-link" onchange="loadConfirmed(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether ALL of the student's documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">All documents saved</option><option value="notsaved">Not fully saved (missing docs)</option></select>
@@ -1760,6 +1760,7 @@ async function pollProgress(){
       else if(secActive("failed"))loadFailed(1);
     }else{
       box.style.display="none";
+      if(d.recovered&&d.message){try{showToast(d.message);}catch(e){}}
       if(wasRunning){wasRunning=false;
         updateFailedBadge();
         if(secActive("dashboard"))loadDashboard();
@@ -4861,6 +4862,18 @@ def reschedule_jobs():
 @app.on_event("startup")
 async def startup():
     init_db()
+    # A run marked 'running' at boot means the previous process died mid-run (redeploy, crash,
+    # Railway restart). That worker thread no longer exists, so the run can never finish and
+    # would block every future run. Clear it so the tracker starts unlocked.
+    try:
+        _c = get_db()
+        _stuck = _c.execute("UPDATE run_logs SET status='failed' WHERE status='running'")
+        _c.commit()
+        if _stuck.rowcount:
+            logger.warning(f"Startup: cleared {_stuck.rowcount} stuck 'running' run(s) from a previous process.")
+        _c.close()
+    except Exception as _e:
+        logger.warning(f"Startup stuck-run cleanup skipped: {_e}")
     reschedule_jobs()
     # More worker threads for sync endpoints (default is 40). Students opening
     # documents + admin using the portal + background jobs all share this pool;
@@ -5205,11 +5218,6 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("COALESCE(student_id,'') = ''")
     elif lf == "linked":
         wc.append("COALESCE(student_id,'') != ''")
-    elif lf == "docsblocked":
-        # Confirmed (or any) student who can't get documents because reference/DOB is missing.
-        # These never hit 'Failed to Run' (NIOS was never tried — they came confirmed from the
-        # Portal), so this filter is the way to find and fix them.
-        wc.append("(COALESCE(dob,'')='' OR (COALESCE(reference_no,'')='' AND COALESCE(enrollment_no,'')=''))")
     # tocStatus filter: yes / no / blank (not set) / mismatch (unverified TOC error)
     tf = (toc_filter or "").strip().lower()
     if tf == "yes":
@@ -7326,12 +7334,46 @@ def cancel_run(run_id: int = Form(...), user=Depends(verify_token)):
 
 @app.get("/api/progress")
 def run_progress(user=Depends(verify_token)):
-    """Live progress of the currently running check (for the progress bar)."""
+    """Live progress of the currently running check (for the progress bar).
+    Also self-heals a STUCK run: if a run has been 'running' but its progress hasn't moved for
+    more than STUCK_MINUTES, the worker thread has died (crash / network hang / redeploy killed
+    it) while the DB still says 'running'. That would block every future run. So we mark it
+    failed here, which unlocks the tracker automatically — no manual intervention needed."""
+    import time as _t
+    STUCK_MINUTES = 10
     conn = get_db()
     row = conn.execute("SELECT id, group_type, run_at, progress_current, progress_total, "
                        "progress_changed, progress_same, progress_notchecked, progress_total_mvs, progress_done_mvs, "
-                       "progress_total_trk, progress_done_trk, retry_total, retry_done "
+                       "progress_total_trk, progress_done_trk, retry_total, retry_done, "
+                       "COALESCE(progress_updated_at,'') AS pupd "
                        "FROM run_logs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
+    if row:
+        # Has progress moved recently? Compare the stored 'last progress change' marker.
+        import json as _json
+        try:
+            _marker = _json.loads(row["pupd"]) if row["pupd"] else {}
+        except Exception:
+            _marker = {}
+        _cur = row["progress_current"] or 0
+        _nowts = _t.time()
+        _stuck = False
+        if _marker.get("cur") == _cur:
+            # progress unchanged since last check — how long ago was that?
+            if _nowts - float(_marker.get("ts", _nowts)) > STUCK_MINUTES * 60:
+                _stuck = True
+        if _stuck:
+            conn.execute("UPDATE run_logs SET status='failed' WHERE id=?", (row["id"],))
+            conn.commit()
+            conn.close()
+            logger.warning(f"Stuck run {row['id']} auto-recovered (no progress for >{STUCK_MINUTES} min) — tracker unlocked.")
+            return {"running": False, "recovered": True,
+                    "message": f"A stalled run was auto-cleared. You can start a new run now."}
+        else:
+            # refresh the marker if progress advanced (or first sighting)
+            if _marker.get("cur") != _cur:
+                conn.execute("UPDATE run_logs SET progress_updated_at=? WHERE id=?",
+                             (_json.dumps({"cur": _cur, "ts": _nowts}), row["id"]))
+                conn.commit()
     conn.close()
     if not row:
         return {"running": False}
