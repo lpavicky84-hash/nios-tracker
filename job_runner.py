@@ -256,8 +256,11 @@ def _drain_run_queue():
         nxt = RUN_QUEUE.pop(0)
     logger.info(f"Queue: starting the next waiting run -> {nxt['label']} "
                 f"({len(RUN_QUEUE)} still waiting)")
+    # Preserve the original manual/auto nature so a queued MANUAL run isn't treated as auto
+    # (which would let the pause-guard skip it). Manual runs the operator queued must still run.
+    _is_auto = not nxt.get("manual", False)
     t = threading.Thread(target=run_status_check,
-                         kwargs={**nxt["kwargs"], "is_auto": True}, daemon=True)
+                         kwargs={**nxt["kwargs"], "is_auto": _is_auto}, daemon=True)
     t.start()
 
 
@@ -319,21 +322,22 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
     if prev:
         conn.close()
         _label = _run_label(group_type, source_only, scope)
-        if is_auto:
-            with _QUEUE_LOCK:
-                # don't queue the same scheduled group twice
-                if any(q["label"] == _label for q in RUN_QUEUE):
-                    logger.info(f"Queue: '{_label}' is already waiting — not queued again")
-                    return {"queued": False, "already": True, "label": _label}
-                RUN_QUEUE.append({"label": _label,
-                                  "kwargs": {"group_type": group_type, "source_only": source_only,
-                                             "scope": scope, "only_keys": only_keys}})
-                pos = len(RUN_QUEUE)
-            logger.info(f"Queue: '{prev['group_type']}' is still running — "
-                        f"'{_label}' queued (position {pos}); it will start automatically")
-            return {"queued": True, "position": pos, "label": _label}
-        logger.info(f"Manual run refused — '{prev['group_type']}' is still running")
-        return {"refused": True, "running": prev["group_type"]}
+        # ONE run at a time. Anything arriving while busy WAITS in the queue and starts the
+        # moment the current run ends — manual and automatic alike. Nothing is refused, nothing
+        # is cancelled, no two runs ever overlap. (A run can still be cancelled by a human.)
+        with _QUEUE_LOCK:
+            # don't queue an identical job twice (same group/scope/source)
+            if any(q["label"] == _label for q in RUN_QUEUE):
+                logger.info(f"Queue: '{_label}' is already waiting — not queued again")
+                return {"queued": False, "already": True, "label": _label}
+            RUN_QUEUE.append({"label": _label,
+                              "kwargs": {"group_type": group_type, "source_only": source_only,
+                                         "scope": scope, "only_keys": only_keys},
+                              "manual": (not is_auto)})
+            pos = len(RUN_QUEUE)
+        logger.info(f"Queue: '{prev['group_type']}' is still running — "
+                    f"'{_label}' queued (position {pos}); it will start automatically when free")
+        return {"queued": True, "position": pos, "label": _label}
     run_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     _GL = {"all": "All", "regular": "On Demand + Stream 2", "ondemand": "On Demand",
            "stream2": "Stream 2", "public": "Public"}

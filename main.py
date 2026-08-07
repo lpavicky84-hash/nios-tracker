@@ -717,7 +717,7 @@ function applySidebarPref(){
             </select>
             <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
             <select id="s-toc" onchange="loadStudents(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
-            <select id="s-link" onchange="loadStudents(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
+            <select id="s-link" onchange="loadStudents(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option><option value="docsblocked">Documents blocked (ref/DOB missing)</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="s-source" onchange="loadStudents(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="s-datepreset" onchange="onDatePreset('s',()=>loadStudents(1))">
@@ -881,7 +881,7 @@ function applySidebarPref(){
             </select>
             <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
             <select id="c-toc" onchange="loadConfirmed(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
-            <select id="c-link" onchange="loadConfirmed(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option></select>
+            <select id="c-link" onchange="loadConfirmed(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option><option value="docsblocked">Documents blocked (ref/DOB missing)</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
             <select id="c-source" onchange="loadConfirmed(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <select id="c-saved" onchange="loadConfirmed(1)" title="Filter by whether ALL of the student's documents are saved in our database"><option value="">All (saved + not)</option><option value="saved">All documents saved</option><option value="notsaved">Not fully saved (missing docs)</option></select>
@@ -4399,7 +4399,19 @@ async function runChoice(kind,group){
     let ep=RUN_EP[kind]||RUN_EP.all;
     if((kind==="portal"||kind==="tracker")&&group)ep=RUN_EP[kind]+"?group="+encodeURIComponent(group);
     const r=await api(ep,"POST");
-    showToast(r.message+" — running in the background");
+    // A run may be QUEUED if another is already active — one runs at a time, the rest wait
+    // and start automatically. Show that clearly instead of implying it started now.
+    if(r&&r.queued===true){
+      showToast("A run is active — this one is queued (position "+(r.position||1)+") and will start automatically.");
+      if(btn){setTimeout(()=>{btn.dataset.busy="";btn.style.opacity="";btn.style.pointerEvents="";},4000);}
+      startProgressPoll();
+      return;
+    }
+    if(r&&r.queued===false&&r.already){
+      showToast("That run is already waiting in the queue.");
+      return;
+    }
+    showToast((r.message||"Run started")+" — running in the background");
     let lbl=RUN_LBL[kind]||"students";
     if((kind==="portal"||kind==="tracker")&&group){
       lbl=(kind==="portal"?"MVS Portal":"MVS Tracker")+" — "+(PORTAL_GRP_LBL[group]||group)+" students";
@@ -5218,6 +5230,11 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("COALESCE(student_id,'') = ''")
     elif lf == "linked":
         wc.append("COALESCE(student_id,'') != ''")
+    elif lf == "docsblocked":
+        # Confirmed (or any) student who can't get documents because reference/DOB is missing.
+        # These never hit 'Failed to Run' (NIOS was never tried — they came confirmed from the
+        # Portal), so this filter is the way to find and fix them.
+        wc.append("(COALESCE(dob,'')='' OR (COALESCE(reference_no,'')='' AND COALESCE(enrollment_no,'')=''))")
     # tocStatus filter: yes / no / blank (not set) / mismatch (unverified TOC error)
     tf = (toc_filter or "").strip().lower()
     if tf == "yes":
