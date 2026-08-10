@@ -4885,6 +4885,20 @@ async def startup():
         _c.commit()
         if _stuck.rowcount:
             logger.warning(f"Startup: cleared {_stuck.rowcount} stuck 'running' run(s) from a previous process.")
+        # One-time cleanup: the earlier 'no TOC table -> manual verify' approach left NEEDS CHECK
+        # rows and mismatch flags. TOC-table-absent now means No automatically, so drop those
+        # rows and clear the mismatch flag; the next run re-reads and sets No + pushes to Portal.
+        try:
+            _nc = _c.execute("DELETE FROM toc_fix_log WHERE new_toc='NEEDS CHECK'")
+            _c.execute("UPDATE student_status SET toc_mismatch=0 WHERE COALESCE(toc_mismatch,0)=1 "
+                       "AND remark LIKE 'TOC needs manual verification%'")
+            _c.execute("UPDATE student_status SET remark='' WHERE remark LIKE 'TOC needs manual verification%'")
+            _c.commit()
+            if _nc.rowcount:
+                logger.warning(f"Startup: cleared {_nc.rowcount} old 'NEEDS CHECK' TOC flag(s) — "
+                               f"table-absent now auto-sets No.")
+        except Exception as _e2:
+            logger.warning(f"Startup NEEDS-CHECK cleanup skipped: {_e2}")
         _c.close()
     except Exception as _e:
         logger.warning(f"Startup stuck-run cleanup skipped: {_e}")
