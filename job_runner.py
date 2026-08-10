@@ -846,15 +846,45 @@ def run_status_check(group_type="all", source_only=None, scope=None, only_keys=N
             # pushed), and the confirm flow below uses this value for the WhatsApp campaign.
             try:
                 _nt = (res.get("nios_toc") or "").lower()
-                if not _nt and res.get("nios_toc_absent"):
-                    # Page read fine, table absent. For April/October NIOS hides the table for
-                    # no-TOC students -> absence IS the answer: TOC = No. On Demand / Stream 2
-                    # always show the table, so absence there stays 'could not read'.
-                    import nios_login as _nl
-                    if _nl.is_public_session(res.get("session", "")):
-                        _nt = "no"
-                        res["toc_src"] = ("No Previous-Subject-Details table on the NIOS page — "
-                                          "for April/October sessions this means TOC = No")
+                _toc_absent = bool(res.get("nios_toc_absent"))
+                if not _nt and _toc_absent and res.get("success"):
+                    # The NIOS page loaded fine but has NO 'Previous Subject Details' table (only
+                    # the plain 'Subjects' table, no TOC column). We must NOT guess a value here:
+                    # absence is NOT proof of No. Flag the student for MANUAL TOC verification,
+                    # hold any WhatsApp, and leave the Portal untouched — so nothing wrong goes out.
+                    # A trusted yes/no only ever comes from a real TOC column below.
+                    c.execute(
+                        "UPDATE student_status SET toc_verified=0, toc_mismatch=1, "
+                        "toc_src=?, remark=? WHERE row_key=?",
+                        ("NIOS page has no 'Previous Subject Details' table (no TOC column) — "
+                         "TOC could NOT be auto-verified. Needs manual check.",
+                         "TOC needs manual verification — NIOS page did not show the TOC table",
+                         row_key))
+                    # Surface it in the TOC Status Error tab for manual verify (Edit -> yes/no),
+                    # but only once — don't pile duplicate rows on every run.
+                    _exists = c.execute(
+                        "SELECT id FROM toc_fix_log WHERE row_key=? AND new_toc='NEEDS CHECK'",
+                        (row_key,)).fetchone()
+                    if not _exists:
+                        _warow = c.execute("SELECT COALESCE(whatsapp_sent,0), COALESCE(current_status,''), "
+                                           "COALESCE(student_name,''), COALESCE(reference_no,''), "
+                                           "COALESCE(session,'') FROM student_status WHERE row_key=?",
+                                           (row_key,)).fetchone()
+                        _wa_sent = (_warow[0] if _warow else 0)
+                        _cur = (_warow[1] if _warow else "") or (res.get("label","") or "")
+                        _snm = res.get("student_name","") or (_warow[2] if _warow else "")
+                        _sref = res.get("reference_no","") or (_warow[3] if _warow else "")
+                        _sses = res.get("session","") or (_warow[4] if _warow else "")
+                        c.execute(
+                            "INSERT INTO toc_fix_log (row_key, reference_no, student_name, session, "
+                            "current_status, old_toc, new_toc, subjects, fixed_at, pushed, wa_sent_before) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,0,?)",
+                            (row_key, _sref, _snm, _sses, _cur,
+                             (toc_by_key.get(row_key, "") or "?"), "NEEDS CHECK", "",
+                             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), _wa_sent))
+                    logger.warning(f"  TOC UNVERIFIABLE for {row_key} — no 'Previous Subject Details' "
+                                   f"table on NIOS page; flagged for manual review (no auto-send, no push)")
+                    _nt = ""   # stays empty -> the yes/no block is skipped, WhatsApp held below
                 if _nt in ("yes", "no"):
                     run_toc_read[row_key] = _nt       # read from this run's own page fetch
                     _ptoc = (toc_by_key.get(row_key, "") or "").lower()
@@ -1640,15 +1670,17 @@ def final_toc_verify(row_key, reference_no="", enrollment_no="", dob="", session
         scrape_students([{"row_key": row_key, "reference_no": ref, "enrollment_no": enr,
                           "dob": d_o_b, "session": sess}], on_result=_cb)
         nt = (out.get("nios_toc") or "").lower()
-        if not nt and out.get("nios_toc_absent"):
-            import nios_login as _nl
-            if _nl.is_public_session(sess):
-                nt = "no"
-                out["toc_src"] = ("No Previous-Subject-Details table on the NIOS page — "
-                                  "for April/October sessions this means TOC = No")
+        # No 'Previous Subject Details' table = cannot verify. Do NOT guess 'no' — return empty
+        # so the caller holds the send and the student is flagged for manual TOC check.
         if nt not in ("yes", "no"):
-            logger.warning(f"Final TOC verify {row_key}: NIOS could not be read — keeping current value")
+            logger.warning(f"Final TOC verify {row_key}: no TOC table on NIOS page — "
+                           f"UNVERIFIED, holding (manual check needed)")
             return ""
+        if nt not in ("yes", "no"):
+            logger.warning(f"Final TOC verify {row_key}: NIOS could not be read — "
+                           f"returning UNVERIFIED so the send is held (never fall back to the "
+                           f"Portal value, which may be a wrong 'yes')")
+            return ""   # unverified -> caller holds the send; no documents on a stale value
         try:
             from main import _auto_fix_toc
             _auto_fix_toc(row_key, nt, out.get("toc_subjects") or [], out.get("toc_src") or "")
@@ -1658,7 +1690,8 @@ def final_toc_verify(row_key, reference_no="", enrollment_no="", dob="", session
         cur = conn.execute("SELECT COALESCE(toc_status,'') FROM student_status WHERE row_key=?",
                            (row_key,)).fetchone()
         conn.close()
-        final = (cur[0] or "").lower() if cur else nt
+        # Prefer the value NIOS just gave us; the DB read is only a sanity fallback.
+        final = nt if nt in ("yes", "no") else ((cur[0] or "").lower() if cur else "")
         logger.info(f"Final TOC verify {row_key}: NIOS={nt} -> using '{final}' for the campaign")
         return final
     except Exception as e:

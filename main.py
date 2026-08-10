@@ -3602,10 +3602,12 @@ async function loadTocErrors(page){
         '<td>'+(f.reference_no||"—")+'</td>'+
         '<td>'+(f.session||"—")+'</td>'+
         '<td style="font-size:12px">'+(f.current_status||"—")+'</td>'+
-        '<td><span style="font-weight:700;color:#B45309">'+((f.old_toc||"?")+"").toUpperCase()+'</span> '+
+        ((f.new_toc==="NEEDS CHECK")
+          ? '<td colspan="2" style="font-size:12px;color:#B45309;font-weight:600">NIOS page had no TOC table — verify manually (Edit &rarr; yes/no)</td>'
+          : ('<td><span style="font-weight:700;color:#B45309">'+((f.old_toc||"?")+"").toUpperCase()+'</span> '+
             '<span style="color:var(--muted)">&rarr;</span> '+
             '<span style="font-weight:700;color:#047857">'+((f.new_toc||"?")+"").toUpperCase()+'</span></td>'+
-        '<td style="font-size:12px">'+(f.subjects||"—")+'</td>'+
+            '<td style="font-size:12px">'+(f.subjects||"—")+'</td>'))+
         '<td style="font-size:12px;color:var(--muted)">'+(f.fixed_at||"—")+'</td>'+
         '<td>'+(f.pushed==1?'<span style="font-size:11.5px;font-weight:700;color:#047857;background:#D1FAE5;padding:2px 8px;border-radius:6px">pushed</span>'
                            :'<span style="font-size:11.5px;font-weight:700;color:#B45309;background:#FEF3C7;padding:2px 8px;border-radius:6px" title="Push will be retried automatically">pending</span>')+'</td>'+
