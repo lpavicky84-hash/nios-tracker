@@ -1755,6 +1755,12 @@ def auto_retry_failed_sweep(max_students=10, min_age_hours=6):
     try:
         if get_setting("auto_retry_failed", "1") != "1":
             return
+        # Respect the global pause: if every group timer is paused, the operator has stopped all
+        # background activity — the auto-retry sweep must stop too (this was the 'Selected students
+        # runs even though all timers are paused' bug).
+        if all(get_setting(f"paused_{g}", "") == "1" for g in ("ondemand", "stream2", "public", "portalnew")):
+            logger.info("Auto-retry sweep: all timers paused — skipping")
+            return
         conn = get_db()
         c = conn.cursor()
         # Never overlap a run — starting one would cancel the active run.
@@ -1782,6 +1788,7 @@ def auto_retry_failed_sweep(max_students=10, min_age_hours=6):
             logger.info("Auto-retry sweep: nothing eligible to retry")
             return
         logger.info(f"Auto-retry sweep: re-checking {len(keys)} failed/unknown student(s)")
-        run_status_check("all", None, "selected", keys)
+        # is_auto=True so this counts as an automatic run and the run-level pause-guard applies.
+        run_status_check("all", None, "selected", keys, is_auto=True)
     except Exception as e:
         logger.warning(f"Auto-retry sweep error: {e}")
