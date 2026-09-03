@@ -1560,6 +1560,7 @@ function applySidebarPref(){
 const API = window.location.origin;
 let TOKEN = "";
 let perPage = 20;
+let _studentsPage = 1, _confirmedPage = 1, _requiredPage = 1, _failedPage = 1;
 const SELECTED = new Set();   // hand-picked active students for a manual "Run Selected"
 const SEL_MAX = 20;
 function toggleSel(rk,cb){
@@ -1752,12 +1753,13 @@ async function pollProgress(){
         document.getElementById("pb-label").textContent="Checking "+g+" students…";
       }
       updateNavCounts();   // live badge updates as students move between tabs
-      // live filtering: refresh whatever view the counsellor is on, as it happens
+      // live filtering: refresh whatever view the counsellor is on, as it happens — but STAY on
+      // the page they're viewing (resetting to page 1 on every poll made paging impossible).
       if(secActive("dashboard"))loadDashboard();
-      else if(secActive("confirmed"))loadConfirmed(1);
-      else if(secActive("required"))loadRequired(1);
-      else if(secActive("students"))loadStudents(1);
-      else if(secActive("failed"))loadFailed(1);
+      else if(secActive("confirmed"))loadConfirmed(_confirmedPage);
+      else if(secActive("required"))loadRequired(_requiredPage);
+      else if(secActive("students"))loadStudents(_studentsPage);
+      else if(secActive("failed"))loadFailed(_failedPage);
     }else{
       box.style.display="none";
       if(d.recovered&&d.message){try{showToast(d.message);}catch(e){}}
@@ -2740,6 +2742,7 @@ function fillSessions(arr){
 
 async function loadStudents(page){
   page=page||1;
+  _studentsPage=page;   // remember the page so auto-refresh stays here, not back on page 1
   const dr=dateRange("s");
   const q=new URLSearchParams({page:page,per_page:perPage,view:"normal",
     search:document.getElementById("s-search").value,
@@ -2967,7 +2970,7 @@ function exportNoToc(){
     .catch(()=>showToast("Export failed"));
 }
 async function loadConfirmed(page){
-  page=page||1;
+  page=page||1; _confirmedPage=page;
   try{ if(!CACHE_POLL) startCachePoll(); }catch(e){}
   const dr=dateRange("c");
   const q=new URLSearchParams({page:page,per_page:perPage,view:"confirmed",
@@ -3343,7 +3346,7 @@ async function downloadSycHall(rowKey,btn){
 }
 
 async function loadRequired(page){
-  page=page||1;
+  page=page||1; _requiredPage=page;
   const q=new URLSearchParams({page:page,per_page:perPage,view:"required",
     search:document.getElementById("r-search").value,
     status_filter:(document.getElementById("r-status")?document.getElementById("r-status").value:""),
@@ -3408,7 +3411,7 @@ async function diagnoseReach(){
   }catch(e){ alert("Diagnose failed: "+e); }
 }
 async function loadFailed(page){
-  page=page||1;
+  page=page||1; _failedPage=page;
   const q=new URLSearchParams({page:page,per_page:perPage,
     search:(document.getElementById("f-search")?document.getElementById("f-search").value:""),
     source:fval("f-source")});
