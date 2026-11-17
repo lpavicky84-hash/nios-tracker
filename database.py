@@ -186,6 +186,7 @@ def init_db():
                       ("toc_status", "TEXT DEFAULT ''"),
                       ("whatsapp_sent_at", "TEXT"),
                       ("whatsapp_attempts", "INTEGER DEFAULT 0"),
+                      ("doc_wait_attempts", "INTEGER DEFAULT 0"),
                       ("whatsapp_delivery", "TEXT DEFAULT ''"),
                       ("whatsapp_delivery_at", "TEXT"),
                       ("enrollment_no", "TEXT"),

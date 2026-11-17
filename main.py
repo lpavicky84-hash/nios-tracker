@@ -900,8 +900,10 @@ function applySidebarPref(){
             <button class="btn btn-success btn-sm" id="cache-docs-btn" onclick="cacheDocsNow(this)" title="Fetch every confirmed student document from NIOS once and SAVE it in our database. After this, WhatsApp links open straight from our copy — no NIOS/CapSolver needed, and they keep working even if NIOS is down.">Save all documents to DB</button>
             <button class="btn btn-outline btn-sm" onclick="cacheDocsNow(this,true)" title="Re-fetch and OVERWRITE all saved documents (use if documents changed on NIOS).">Refresh all saved</button>
             <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C" onclick="stopCacheDocs(this)" title="Stop the auto-resume of the document save.">&#9632; Stop saving</button>
+            <button class="btn btn-outline btn-sm" onclick="waAudit(this)" title="Check how many confirmed students have never received their WhatsApp, and why — then retry the ones that are stuck.">Check WhatsApp pending</button>
             <span id="cache-docs-status" style="font-size:12px;color:var(--muted);align-self:center"></span>
           </div>
+          <div id="wa-audit-box" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px"></div>
           <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <span style="font-weight:700;font-size:13px"><span id="c-selcount">0</span> selected</span>
             <button class="btn btn-primary btn-sm" onclick="resendSelected(this)">Resend WhatsApp to selected</button>
@@ -3047,6 +3049,38 @@ async function autoSendNow(btn){
   }catch(e){showToast("Error: "+e.message);}
   finally{setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},2000);}
 }
+async function waAudit(btn){
+  var box=document.getElementById("wa-audit-box");
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    var a=await api("/api/wa-audit","GET");
+    var NL="";
+    var rows=
+      "<div style='font-weight:700;margin-bottom:6px'>WhatsApp pending audit (confirmed students who never received their message)</div>"+
+      "<div>Never received WhatsApp: <b>"+(a.never_sent_total||0)+"</b></div>"+
+      "<div style='margin-top:4px;color:#047857'>Will send on their own (in the normal sweep): <b>"+(a.will_send_normally||0)+"</b></div>"+
+      "<div style='margin-top:6px;font-weight:600'>Blocked \u2014 need a fix:</div>"+
+      "<div>&bull; No mobile number on record: <b>"+(a.no_mobile||0)+"</b> <span style='color:var(--muted)'>(add a number in Edit)</span></div>"+
+      "<div>&bull; Reference / DOB missing: <b>"+(a.ref_or_dob_missing||0)+"</b> <span style='color:var(--muted)'>(fix in Edit \u2014 documents can't be built without it)</span></div>"+
+      "<div>&bull; Held for TOC verification: <b>"+(a.held_toc_mismatch||0)+"</b> <span style='color:var(--muted)'>(verify in TOC Status Error)</span></div>"+
+      "<div style='margin-top:6px'>&bull; Stuck after repeated failures: <b>"+(a.attempt_cap_reached||0)+"</b></div>";
+    if((a.attempt_cap_reached||0)>0){
+      rows+="<div style='margin-top:8px'><button class='btn btn-primary btn-sm' onclick='waRetryStuck(this)'>Retry the "+(a.attempt_cap_reached)+" stuck student(s) now</button></div>";
+    }
+    box.innerHTML=rows; box.style.display="block";
+  }catch(e){ box.innerHTML="Could not load audit: "+e.message; box.style.display="block"; }
+  finally{ if(btn){btn.disabled=false;btn.style.opacity="";} }
+}
+async function waRetryStuck(btn){
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    var r=await api("/api/wa-retry-stuck","POST");
+    showToast(r.message||("Re-queued "+((r&&r.requeued)||0)+" student(s)"));
+    startWaProgressPoll();
+    setTimeout(function(){waAudit(null);},1500);
+  }catch(e){showToast("Error: "+e.message);}
+  finally{ if(btn){btn.disabled=false;btn.style.opacity="";} }
+}
 async function resendNoTocConfirmed(btn){
   if(!confirm("Re-send corrected documents to all CONFIRMED no-TOC students? They previously received the wrong documents \u2014 this sends the right ones via the no-TOC campaign, and their old links stop working.")) return;
   if(btn){btn.disabled=true;btn.style.opacity="0.6";}
@@ -4902,6 +4936,28 @@ async def startup():
                                f"table-absent now auto-sets No.")
         except Exception as _e2:
             logger.warning(f"Startup NEEDS-CHECK cleanup skipped: {_e2}")
+        # ONE-TIME RECOVERY: confirmed students stranded as 'pending WhatsApp' only because their
+        # documents hadn't saved used to burn whatsapp_attempts on every hold cycle and could cross
+        # the sweep's attempt cap (<8), so they never got picked up again. Doc-waits now use a
+        # separate counter, but existing stranded rows need a reset: for confirmed, not-sent,
+        # not-login-failed students whose last status was a doc-wait (never a real send failure),
+        # move their burnt attempts onto doc_wait_attempts (capped) and clear whatsapp_attempts so
+        # the sweep re-includes them. This never resets a genuine send failure.
+        try:
+            _rec = _c.execute(
+                "UPDATE student_status SET doc_wait_attempts=MIN(COALESCE(doc_wait_attempts,0)+1,5), "
+                "whatsapp_attempts=0 "
+                "WHERE is_confirmed=1 AND COALESCE(whatsapp_sent,0)=0 AND COALESCE(login_failed,0)=0 "
+                "AND COALESCE(deleted,0)=0 AND COALESCE(whatsapp_attempts,0) >= 4 "
+                "AND (COALESCE(whatsapp_info,'') LIKE 'Waiting%' "
+                "     OR COALESCE(whatsapp_info,'') LIKE '%saving documents%' "
+                "     OR COALESCE(whatsapp_info,'') = '')")
+            _c.commit()
+            if _rec.rowcount:
+                logger.warning(f"Startup: re-queued {_rec.rowcount} confirmed student(s) that were "
+                               f"stranded pending-WhatsApp due to unsaved documents.")
+        except Exception as _e3:
+            logger.warning(f"Startup pending-WhatsApp recovery skipped: {_e3}")
         _c.close()
     except Exception as _e:
         logger.warning(f"Startup stuck-run cleanup skipped: {_e}")
@@ -5277,8 +5333,17 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("COALESCE(current_status,'') != 'SYC'")
         wc.append("(session IS NULL OR session NOT LIKE '%syc%')")
     if search:
-        wc.append("(reference_no LIKE ? OR student_name LIKE ? OR email LIKE ?)")
-        params += [f"%{search}%", f"%{search}%", f"%{search}%"]
+        # Search across every identifier a counsellor might type: name, reference, email,
+        # enrollment number, mobile / alternate number (phone), and the MVS Portal Student ID.
+        # Phone search ignores spaces so "9876 543210" matches a stored "9876543210".
+        _s = f"%{search}%"
+        _sdigits = "".join(ch for ch in str(search) if ch.isdigit())
+        wc.append("(reference_no LIKE ? OR student_name LIKE ? OR email LIKE ? "
+                  "OR enrollment_no LIKE ? OR student_id LIKE ? "
+                  "OR REPLACE(COALESCE(mobile,''),' ','') LIKE ? "
+                  "OR REPLACE(COALESCE(alt_mobile,''),' ','') LIKE ?)")
+        _ph = f"%{_sdigits}%" if _sdigits else _s
+        params += [_s, _s, _s, _s, _s, _ph, _ph]
     if status_filter:
         wc.append("current_status = ?"); params.append(status_filter)
     if session_filter:
@@ -9387,11 +9452,18 @@ def _wa_send_one(row_key, verify=False, fresh_toc=False):
                              ("Held — TOC mismatch needs counsellor verification", row_key))
                 conn.commit(); conn.close()
                 return False, "TOC mismatch — waiting for counsellor to verify before sending", False
-            _att = (conn.execute("SELECT COALESCE(whatsapp_attempts,0) FROM student_status WHERE row_key=?",
-                                 (row_key,)).fetchone() or [0])[0]
-            if (not docs_all_cached(row_key)) and _att < 4:
+            # HOLD until documents are saved — but count these holds on a SEPARATE counter
+            # (doc_wait_attempts), NOT whatsapp_attempts. Reason: a doc still saving is not a
+            # failed send. Bumping whatsapp_attempts here used to push students past the sweep's
+            # attempt cap (<8), stranding them as 'pending forever'. Holding on a separate counter
+            # keeps them in the sweep; once docs finish saving the next sweep sends immediately.
+            # After many hold cycles we send anyway — the link live-fetches that one missing doc
+            # on demand, so a doc NIOS never returns can't block the message forever.
+            _dw = (conn.execute("SELECT COALESCE(doc_wait_attempts,0) FROM student_status WHERE row_key=?",
+                                (row_key,)).fetchone() or [0])[0]
+            if (not docs_all_cached(row_key)) and _dw < 6:
                 conn.execute("UPDATE student_status SET whatsapp_info=?, "
-                             "whatsapp_attempts=COALESCE(whatsapp_attempts,0)+1 WHERE row_key=?",
+                             "doc_wait_attempts=COALESCE(doc_wait_attempts,0)+1 WHERE row_key=?",
                              ("Waiting — saving documents before sending", row_key))
                 conn.commit(); conn.close()
                 return False, "documents not fully saved yet — will send once complete", False
@@ -9399,7 +9471,7 @@ def _wa_send_one(row_key, verify=False, fresh_toc=False):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if ok:
             conn.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=?, "
-                         "whatsapp_sent_at=?, whatsapp_delivery='' WHERE row_key=?",
+                         "whatsapp_sent_at=?, whatsapp_delivery='', doc_wait_attempts=0 WHERE row_key=?",
                          (str(info)[:180], now, row_key))
         else:
             conn.execute("UPDATE student_status SET whatsapp_info=?, "
@@ -9440,6 +9512,31 @@ def auto_send_pending_whatsapp(batch=None, label="Auto sweep"):
     except Exception:
         pass
     conn = get_db()
+    # PERIODIC STUCK RECOVERY (safety net): students who crossed the attempt cap after repeated
+    # failures would otherwise never be retried. Every few hours, give those who are still fully
+    # eligible (have a mobile, not login-failed, ref/DOB present) one fresh cycle by clearing
+    # their counters so this sweep picks them up. Throttled by a timestamp so it can't spam.
+    try:
+        _last = get_setting("wa_stuck_retry_at", "")
+        _due = True
+        if _last:
+            try:
+                _due = (datetime.now() - datetime.strptime(_last, "%Y-%m-%d %H:%M:%S")).total_seconds() > 6 * 3600
+            except Exception:
+                _due = True
+        if _due:
+            _r = conn.execute(
+                "UPDATE student_status SET whatsapp_attempts=0, doc_wait_attempts=0 "
+                "WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 AND COALESCE(whatsapp_sent,0)=0 "
+                "AND COALESCE(login_failed,0)=0 AND COALESCE(whatsapp_attempts,0) >= 8 "
+                "AND mobile IS NOT NULL AND TRIM(mobile) != '' "
+                "AND COALESCE(dob,'')!='' AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')")
+            conn.commit()
+            set_setting("wa_stuck_retry_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            if _r.rowcount:
+                logger.info(f"WhatsApp sweep: periodic recovery re-queued {_r.rowcount} stuck student(s).")
+    except Exception as _e:
+        logger.warning(f"periodic stuck-recovery skipped: {_e}")
     q = ("SELECT row_key FROM student_status WHERE is_confirmed=1 "
          "AND COALESCE(whatsapp_sent,0)=0 AND COALESCE(login_failed,0)=0 "
          "AND COALESCE(deleted,0)=0 AND COALESCE(whatsapp_attempts,0) < 8 "
@@ -9575,6 +9672,17 @@ def _cache_all_confirmed_worker(force=False):
                 set_setting("cache_docs_active", "0")
         except Exception:
             pass
+        # AUTO-WHATSAPP AFTER SAVE: the moment documents finish saving, send the pending WhatsApp
+        # for the confirmed students that were waiting only because their docs weren't cached yet.
+        # Previously the save worker did NOT trigger WhatsApp, so a student could stay 'saved but
+        # no message' until the next 10-min sweep (or forever, if they'd crossed the attempt cap).
+        # This closes that gap: saving >=1 doc this pass kicks the pending-WhatsApp sweep right now.
+        try:
+            if CACHE_PROGRESS.get("saved", 0) > 0 and get_setting("wa_enabled", "0") == "1":
+                threading.Thread(target=auto_send_pending_whatsapp,
+                                 kwargs={"label": "Auto after doc-save"}, daemon=True).start()
+        except Exception as _e:
+            logger.warning(f"post-save WhatsApp trigger skipped: {_e}")
 
 def _cache_watchdog():
     """Retries the bulk cache job while it's active (set by pressing 'Save all'), and keeps
@@ -9774,6 +9882,71 @@ async def wa_progress(user=Depends(verify_token)):
     p["remaining"] = max(0, p.get("total", 0) - p.get("done", 0))
     p["pct"] = int(round(100 * p.get("done", 0) / p["total"])) if p.get("total") else (100 if p.get("finished_at") else 0)
     return p
+
+@app.get("/api/wa-audit")
+def wa_audit(user=Depends(verify_token)):
+    """Audit: which CONFIRMED students have never received their WhatsApp, and WHY — so no
+    student is silently left out. Breaks them into actionable buckets. Read-only (no sends)."""
+    conn = get_db()
+    try:
+        base = ("FROM student_status WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 "
+                "AND COALESCE(whatsapp_sent,0)=0")
+        def _n(extra):
+            return conn.execute(f"SELECT COUNT(*) {base} AND {extra}").fetchone()[0]
+        out = {
+            # Total confirmed students who have never had a successful WhatsApp.
+            "never_sent_total": conn.execute(f"SELECT COUNT(*) {base}").fetchone()[0],
+            # Will be sent by the normal sweep on its own (in range, has mobile, not login-failed).
+            "will_send_normally": _n("COALESCE(login_failed,0)=0 AND COALESCE(whatsapp_attempts,0) < 8 "
+                                     "AND mobile IS NOT NULL AND TRIM(mobile) != ''"),
+            # Blocked: no mobile number on record -> message can never be delivered until a number is added.
+            "no_mobile": _n("(mobile IS NULL OR TRIM(mobile) = '')"),
+            # Blocked: reference/DOB missing -> document links can't be built (needs a data fix in Edit).
+            "ref_or_dob_missing": _n("(COALESCE(dob,'')='' OR (COALESCE(reference_no,'')='' "
+                                     "AND COALESCE(enrollment_no,'')=''))"),
+            # Stranded: crossed the sweep's attempt cap after repeated send failures.
+            "attempt_cap_reached": _n("COALESCE(login_failed,0)=0 AND COALESCE(whatsapp_attempts,0) >= 8 "
+                                      "AND mobile IS NOT NULL AND TRIM(mobile) != ''"),
+            # Held: a TOC mismatch is waiting for counsellor verification before sending.
+            "held_toc_mismatch": _n("COALESCE(toc_mismatch,0)=1 AND COALESCE(toc_verified,0)=0"),
+        }
+        # A small sample of the attempt-cap-reached ones so the counsellor can eyeball them.
+        out["attempt_cap_sample"] = [dict(r) for r in conn.execute(
+            "SELECT reference_no, student_name, mobile, whatsapp_attempts, "
+            "COALESCE(whatsapp_info,'') AS info " + base +
+            " AND COALESCE(login_failed,0)=0 AND COALESCE(whatsapp_attempts,0) >= 8 "
+            "AND mobile IS NOT NULL AND TRIM(mobile) != '' LIMIT 20").fetchall()]
+        return out
+    finally:
+        conn.close()
+
+@app.post("/api/wa-retry-stuck")
+def wa_retry_stuck(background_tasks: BackgroundTasks, user=Depends(verify_token)):
+    """Give every confirmed student who NEVER got WhatsApp but is NOT genuinely blocked a fresh
+    attempt: reset the attempt counters for those who crossed the cap (but have a mobile and are
+    not login-failed), then run the pending sweep. Students with no mobile or missing ref/DOB are
+    left out — those need a data fix first, so we never spam a dead number. Safe to run anytime."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT row_key FROM student_status WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 "
+            "AND COALESCE(whatsapp_sent,0)=0 AND COALESCE(login_failed,0)=0 "
+            "AND COALESCE(whatsapp_attempts,0) >= 8 "
+            "AND mobile IS NOT NULL AND TRIM(mobile) != '' "
+            "AND COALESCE(dob,'')!='' AND (COALESCE(reference_no,'')!='' OR COALESCE(enrollment_no,'')!='')"
+        ).fetchall()
+        keys = [r["row_key"] for r in rows]
+        if keys:
+            conn.executemany("UPDATE student_status SET whatsapp_attempts=0, doc_wait_attempts=0 "
+                             "WHERE row_key=?", [(k,) for k in keys])
+            conn.commit()
+    finally:
+        conn.close()
+    background_tasks.add_task(auto_send_pending_whatsapp, None, "Retry stuck pending")
+    return {"ok": True, "requeued": len(keys),
+            "message": (f"Re-queued {len(keys)} stuck confirmed student(s); sending now."
+                        if keys else "No stuck students to retry — all pending are either sending "
+                        "normally or need a data fix (no mobile / missing ref-DOB).")}
 
 @app.get("/api/debug-doc")
 def debug_doc(ref: str, dob: str, kind: str = "app_form", user=Depends(verify_token)):
@@ -10190,6 +10363,21 @@ def _fetch_doc_for(row_key, kind):
         if content is None:
             return None, (ctype or "could not load document")
         save_doc_cache(row_key, kind, content, ctype, filename)
+        # If opening this document just COMPLETED this student's document set, and their WhatsApp
+        # is still pending, send it now in the background. This covers the case where documents
+        # get saved lazily (someone opened a link) rather than by the bulk 'Save all' pass — the
+        # operator no longer has to remember to press Resend.
+        try:
+            if get_setting("wa_enabled", "0") == "1" and docs_all_cached(row_key):
+                _cc = get_db()
+                _wr = _cc.execute("SELECT COALESCE(is_confirmed,0), COALESCE(whatsapp_sent,0), "
+                                  "COALESCE(login_failed,0) FROM student_status WHERE row_key=?",
+                                  (row_key,)).fetchone()
+                _cc.close()
+                if _wr and _wr[0] == 1 and _wr[1] == 0 and _wr[2] == 0:
+                    threading.Thread(target=_wa_send_one, args=(row_key,), daemon=True).start()
+        except Exception as _e:
+            logger.warning(f"post-open WhatsApp trigger skipped {row_key}: {_e}")
         return (content, ctype, filename), None
     except Exception as e:
         logger.warning(f"doc fetch failed for {kind}: {e}")
