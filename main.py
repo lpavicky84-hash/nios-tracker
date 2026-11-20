@@ -904,6 +904,7 @@ function applySidebarPref(){
             <span id="cache-docs-status" style="font-size:12px;color:var(--muted);align-self:center"></span>
           </div>
           <div id="wa-audit-box" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px"></div>
+          <div id="doc-list-box" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px"></div>
           <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <span style="font-weight:700;font-size:13px"><span id="c-selcount">0</span> selected</span>
             <button class="btn btn-primary btn-sm" onclick="resendSelected(this)">Resend WhatsApp to selected</button>
@@ -3165,33 +3166,69 @@ function startCachePoll(){
     let d; try{ d=await api("/api/cache-docs-progress"); }catch(e){ return; }
     const p=(d&&d.progress)||{}; const active=!!(d&&d.auto_resume);
     const pct=p.total?Math.round((p.done/p.total)*100):0;
-    // small persistent summary line
-    if(el){ el.textContent="Saved in database: "+((d&&d.students_cached)||0)+" students \u00b7 "+((d&&d.total_cached)||0)+" documents \u00b7 Fully saved: "+((d&&d.fully_saved)||0)+" / "+((d&&d.confirmed_total)||0)+((d&&d.pending_docs)?(" \u00b7 "+d.pending_docs+" pending"):"")+(((d&&d.genuine_failed)||0)?(" \u00b7 "+d.genuine_failed+" need data fix"):""); }
-    // the progress bar box
+    // small persistent summary line \u2014 'pending' and 'need data fix' are clickable to list who.
+    if(el){
+      var sp="Saved in database: "+((d&&d.students_cached)||0)+" students \u00b7 "+((d&&d.total_cached)||0)+" documents \u00b7 Fully saved: "+((d&&d.fully_saved)||0)+" / "+((d&&d.confirmed_total)||0);
+      if(d&&d.pending_docs){ sp+=" \u00b7 <a href='#' onclick='showDocList(&quot;pending&quot;);return false' style='color:#B45309;font-weight:700;text-decoration:underline;cursor:pointer'>"+d.pending_docs+" pending</a>"; }
+      if(d&&d.genuine_failed){ sp+=" \u00b7 <a href='#' onclick='showDocList(&quot;needfix&quot;);return false' style='color:#B91C1C;font-weight:700;text-decoration:underline;cursor:pointer'>"+d.genuine_failed+" need data fix</a>"; }
+      el.innerHTML=sp;
+    }
+    // The progress box is shown ONLY while documents are actively being saved. When nothing is
+    // running there is no bar to show (auto-resume just waits quietly in the background), so the
+    // panel stays hidden instead of sitting at a confusing 'Auto-resume ON 0%'.
     if(box){
-      if(p.running||active){
+      if(p.running){
         box.style.display="block";
-        setTxt("cap-title", p.running?(p.phase==="saving"?"Saving documents to database":"Preparing\u2026"):"Auto-resume ON \u2014 will retry the rest shortly");
-        setTxt("cap-pct", p.running?pct:0);
-        var bar=document.getElementById("cap-bar"); if(bar)bar.style.width=(p.running?pct:100)+"%";
+        setTxt("cap-title", p.phase==="saving"?"Saving documents to database":"Preparing\u2026");
+        setTxt("cap-pct", pct);
+        var bar=document.getElementById("cap-bar"); if(bar)bar.style.width=pct+"%";
         setTxt("cap-done", p.done||0); setTxt("cap-total", p.total||0);
         setTxt("cap-saved", p.saved||0);
         setTxt("cap-retry", (d&&d.retrying)||0);
         setTxt("cap-genfail", (d&&d.genuine_failed)||0);
-        setTxt("cap-resume", active?"\u21bb auto-resume ON":"");
+        setTxt("cap-resume", "");
         var ce=document.getElementById("cap-err");
         if(ce){ if(p.last_error){ce.style.display="block";ce.textContent="Last issue: "+p.last_error;} else {ce.style.display="none";} }
       } else {
         box.style.display="none";
       }
     }
-    if(btn){ btn.disabled=(p.running||active); btn.style.opacity=(p.running||active)?"0.6":""; }
+    if(btn){ btn.disabled=p.running; btn.style.opacity=p.running?"0.6":""; }
     if(!p.running && !active){
       clearInterval(CACHE_POLL); CACHE_POLL=null;
       if(p.total){ showToast("All done \u2014 "+(p.saved||0)+" document(s) saved"); }
     }
   };
   tick(); CACHE_POLL=setInterval(tick,2500);
+}
+async function showDocList(kind){
+  var box=document.getElementById("doc-list-box");
+  if(!box)return;
+  var E=function(v){return (""+(v==null?"":v)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");};
+  // clicking the same open list again closes it
+  if(box.style.display!=="none" && box.dataset.kind===kind){ box.style.display="none"; box.dataset.kind=""; return; }
+  box.style.display="block"; box.dataset.kind=kind; box.innerHTML="Loading…";
+  let d; try{ d=await api("/api/cache-docs-pending-list"); }catch(e){ box.innerHTML="Could not load the list: "+E(e.message); return; }
+  var rows=(kind==="needfix")?(d.needfix||[]):(d.pending||[]);
+  var title=(kind==="needfix")
+      ? "Students that need a data fix ("+rows.length+") — documents cannot be saved until the data below is corrected"
+      : "Students still pending ("+rows.length+") — their documents will keep saving automatically";
+  var html="<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px'>"+
+           "<span style='font-weight:700'>"+title+"</span>"+
+           "<a href='#' onclick='document.getElementById(&quot;doc-list-box&quot;).style.display=&quot;none&quot;;return false' style='color:var(--muted);text-decoration:underline'>Close</a></div>";
+  if(!rows.length){ box.innerHTML=html+"<div style='color:var(--muted)'>None.</div>"; return; }
+  html+="<div style='overflow:auto;max-height:360px'><table style='width:100%;border-collapse:collapse;font-size:12.5px'>"+
+        "<thead><tr style='text-align:left;color:var(--muted)'><th style='padding:4px 8px'>#</th><th style='padding:4px 8px'>Reference</th><th style='padding:4px 8px'>Student</th><th style='padding:4px 8px'>Session</th><th style='padding:4px 8px'>Missing documents</th>"+(kind==="needfix"?"<th style='padding:4px 8px'>Why</th>":"")+"</tr></thead><tbody>";
+  rows.forEach(function(s,i){
+    html+="<tr style='border-top:1px solid var(--border)'><td style='padding:4px 8px'>"+(i+1)+"</td>"+
+          "<td style='padding:4px 8px;font-weight:600'>"+E(s.ref||"—")+"</td>"+
+          "<td style='padding:4px 8px'>"+E(s.name||"—")+"</td>"+
+          "<td style='padding:4px 8px'>"+E(s.session||"—")+"</td>"+
+          "<td style='padding:4px 8px'>"+E(s.docs||"—")+"</td>"+
+          (kind==="needfix"?("<td style='padding:4px 8px;color:#B91C1C'>"+E(s.reason||"")+"</td>"):"")+"</tr>";
+  });
+  html+="</tbody></table></div>";
+  box.innerHTML=html;
 }
 function renderWaProgress(p){
   document.getElementById("wap-title").textContent=(p.label||"Sending WhatsApp")+(p.running?"":" — done");
@@ -9917,40 +9954,89 @@ async def refresh_student_docs(body: dict, user=Depends(verify_token)):
             "message": (f"Refreshed {saved} document(s)" + (f", {failed} failed" if failed else "") if saved or failed
                         else "No documents to refresh for this student")}
 
+def _doc_buckets():
+    """Split the confirmed students that are NOT fully saved into two mutually exclusive, clickable
+    lists so the counts match everywhere:
+      * needfix  -> has a document stuck at the attempt cap (cannot be fetched until the student's
+                    data is fixed, e.g. reference/enrollment or DOB missing). Needs the operator.
+      * pending  -> still missing a document but fetchable, so auto-resume will save it on its own.
+    Returns (pending_list, needfix_list), each item {ref, name, session, docs[, reason]}."""
+    import whatsapp
+    conn = get_db()
+    confirmed = conn.execute(
+        "SELECT row_key, reference_no, enrollment_no, student_name, session, toc_status, dob "
+        "FROM student_status WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 "
+        "AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0").fetchall()
+    have_map = {}
+    for x in conn.execute("SELECT row_key, kind FROM document_cache").fetchall():
+        have_map.setdefault(x["row_key"], set()).add(x["kind"])
+    fail_map = {}
+    try:
+        for x in conn.execute("SELECT row_key, kind, last_error FROM cache_fail WHERE attempts >= ?",
+                              (_MAX_CACHE_ATTEMPTS,)).fetchall():
+            fail_map.setdefault(x["row_key"], []).append((x["kind"], x["last_error"] or ""))
+    except Exception:
+        pass
+    conn.close()
+    pending, needfix = [], []
+    for s in confirmed:
+        allowed = whatsapp.allowed_docs(s["session"], (s["toc_status"] or ""))
+        have = have_map.get(s["row_key"], set())
+        if not allowed or allowed.issubset(have):
+            continue                                    # fully saved
+        missing = sorted(allowed - have)
+        ident = (s["reference_no"] or s["enrollment_no"] or "").strip()
+        name = (s["student_name"] or "").strip()
+        sess = s["session"] or ""
+        stuck = [k for (k, _e) in fail_map.get(s["row_key"], []) if k in (allowed - have)]
+        if stuck:
+            no_ref = not ((s["reference_no"] or "").strip() or (s["enrollment_no"] or "").strip())
+            no_dob = not (s["dob"] or "").strip()
+            reasons = []
+            if no_ref: reasons.append("reference/enrollment number missing")
+            if no_dob: reasons.append("date of birth missing")
+            if not reasons:
+                le = next((e for (_k, e) in fail_map.get(s["row_key"], []) if e), "")
+                reasons.append(le[:120] if le else "could not be fetched from NIOS")
+            needfix.append({"ref": ident, "name": name, "session": sess,
+                            "docs": ", ".join(stuck), "reason": "; ".join(reasons)})
+        else:
+            pending.append({"ref": ident, "name": name, "session": sess,
+                            "docs": ", ".join(missing)})
+    return pending, needfix
+
 @app.get("/api/cache-docs-progress")
 def cache_docs_progress(user=Depends(verify_token)):
     conn = get_db()
     total_cached = conn.execute("SELECT COUNT(*) FROM document_cache").fetchone()[0]
     students_cached = conn.execute("SELECT COUNT(DISTINCT row_key) FROM document_cache").fetchone()[0]
     try:
-        genuine_failed = conn.execute("SELECT COUNT(DISTINCT row_key) FROM cache_fail WHERE attempts >= ?",
-                                      (_MAX_CACHE_ATTEMPTS,)).fetchone()[0]
         retrying = conn.execute("SELECT COUNT(*) FROM cache_fail WHERE attempts < ?",
                                 (_MAX_CACHE_ATTEMPTS,)).fetchone()[0]
     except Exception:
-        genuine_failed = retrying = 0
-    # How many CONFIRMED students have ALL their documents saved ("fully saved") vs still
-    # missing at least one ("pending"). Computed against each student's expected doc set so a
-    # student with 2 of 3 docs counts as pending, not done.
-    import whatsapp
-    confirmed = conn.execute("SELECT row_key, session, toc_status FROM student_status "
-                             "WHERE is_confirmed=1 AND COALESCE(deleted,0)=0 "
-                             "AND COALESCE(login_failed,0)=0 AND COALESCE(check_failed,0)=0").fetchall()
-    have_map = {}
-    for x in conn.execute("SELECT row_key, kind FROM document_cache").fetchall():
-        have_map.setdefault(x["row_key"], set()).add(x["kind"])
+        retrying = 0
+    total_conf = conn.execute("SELECT COUNT(*) FROM student_status WHERE is_confirmed=1 "
+                              "AND COALESCE(deleted,0)=0 AND COALESCE(login_failed,0)=0 "
+                              "AND COALESCE(check_failed,0)=0").fetchone()[0]
     conn.close()
-    total_conf = len(confirmed)
-    fully = 0
-    for s in confirmed:
-        allowed = whatsapp.allowed_docs(s["session"], (s["toc_status"] or ""))
-        if not allowed or allowed.issubset(have_map.get(s["row_key"], set())):
-            fully += 1
-    pending_docs = max(0, total_conf - fully)
+    # 'pending' (still saving) and 'need data fix' (stuck on bad data) as two separate, clickable
+    # buckets — so the numbers shown match exactly the students each list opens.
+    pending, needfix = _doc_buckets()
+    pending_docs = len(pending)
+    genuine_failed = len(needfix)
+    fully = max(0, total_conf - pending_docs - genuine_failed)
     active = (get_setting("cache_docs_active", "0") == "1")
     return {"progress": CACHE_PROGRESS, "total_cached": total_cached, "students_cached": students_cached,
             "genuine_failed": genuine_failed, "retrying": retrying, "auto_resume": active,
             "fully_saved": fully, "confirmed_total": total_conf, "pending_docs": pending_docs}
+
+@app.get("/api/cache-docs-pending-list")
+def cache_docs_pending_list(user=Depends(verify_token)):
+    """The exact students behind the 'N pending' and 'N need data fix' counts, so the operator can
+    click those numbers and see WHO still needs a document saved — and, for the stuck ones, why."""
+    pending, needfix = _doc_buckets()
+    return {"pending": pending, "needfix": needfix,
+            "pending_count": len(pending), "needfix_count": len(needfix)}
 
 @app.post("/api/wa-resend")
 async def wa_resend(body: dict, user=Depends(verify_token)):
