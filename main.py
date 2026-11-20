@@ -5635,11 +5635,90 @@ async def sync_toc(user=Depends(verify_token)):
         msg += f" {not_in_tracker} portal student(s) not on the Tracker yet (will arrive in a normal run)."
     return {"ok": True, "message": msg, "updated": updated, "no_count": no_count}
 
+_STUCK_RUN_MINUTES = 10
+
+def _auto_clear_stuck_run():
+    """Mark a wedged run (status='running' but no longer progressing) as failed so it can never
+    block new runs forever. A worker thread can die (crash, redeploy, network hang, or the old
+    document-save deadlock) while the DB row still says 'running' — then every future run was
+    refused until the next app restart. Two conservative signals, so a genuinely live run is
+    never killed mid-way:
+      * it has checked ZERO students and has been 'running' for > _STUCK_RUN_MINUTES (the worker
+        died before the very first student — exactly the deadlock/crash case); or
+      * its progress has not advanced for > _STUCK_RUN_MINUTES (tracked via a heartbeat marker).
+    Returns True if a stuck run was cleared."""
+    import json as _json, time as _t
+    conn = None
+    try:
+        conn = get_db()
+        row = conn.execute("SELECT id, run_at, COALESCE(progress_current,0) AS cur, "
+                           "COALESCE(progress_updated_at,'') AS pupd "
+                           "FROM run_logs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
+        if not row:
+            conn.close()
+            return False
+        now = _t.time()
+        cur = row["cur"] or 0
+        try:
+            run_age = now - datetime.strptime(row["run_at"], "%Y-%m-%d %H:%M:%S").timestamp()
+        except Exception:
+            run_age = 0
+        try:
+            marker = _json.loads(row["pupd"]) if row["pupd"] else {}
+        except Exception:
+            marker = {}
+        stuck = False
+        if cur == 0 and run_age > _STUCK_RUN_MINUTES * 60:
+            stuck = True                       # never checked a single student -> dead worker
+        elif marker.get("cur") == cur and (now - float(marker.get("ts", now))) > _STUCK_RUN_MINUTES * 60:
+            stuck = True                       # progress frozen for too long -> dead worker
+        if stuck:
+            conn.execute("UPDATE run_logs SET status='failed' WHERE id=?", (row["id"],))
+            conn.commit(); conn.close()
+            logger.warning(f"Stuck run {row['id']} auto-cleared (no progress for >{_STUCK_RUN_MINUTES} min) — tracker unlocked.")
+            return True
+        # Refresh the heartbeat marker whenever progress has advanced (or on first sighting) so the
+        # stalled-run check has a baseline even when nobody is watching the progress bar.
+        if marker.get("cur") != cur:
+            conn.execute("UPDATE run_logs SET progress_updated_at=? WHERE id=?",
+                         (_json.dumps({"cur": cur, "ts": now}), row["id"]))
+            conn.commit()
+        conn.close()
+        return False
+    except Exception:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+        return False
+
+def _stuck_run_watchdog():
+    """Self-heals a wedged run even if nobody is on the progress page: every couple of minutes it
+    clears a run that has stopped progressing, so 'Run Now' is never blocked by a dead run."""
+    import time as _t
+    _t.sleep(150)   # let the app boot first
+    while True:
+        try:
+            _t.sleep(120)
+            _auto_clear_stuck_run()
+        except Exception:
+            pass
+
+try:
+    _threading.Thread(target=_stuck_run_watchdog, daemon=True).start()
+except Exception:
+    pass
+
 def _block_if_running():
     """Manual runs must NEVER cancel a run that is already going. If one is active, refuse and
     tell the operator to cancel it first. (Scheduled/auto runs are queued instead — they wait.)"""
     from job_runner import run_is_active
     if run_is_active():
+        # A wedged run (crashed/deadlocked worker) must never block new runs forever. If the active
+        # run has stopped progressing, clear it automatically and let this new run start.
+        if _auto_clear_stuck_run():
+            return
         conn = get_db()
         r = conn.execute("SELECT group_type FROM run_logs WHERE status='running' "
                          "ORDER BY id DESC LIMIT 1").fetchone()
@@ -9676,14 +9755,24 @@ def _cache_all_confirmed_worker(force=False):
         CACHE_PROGRESS["confirmed"] = len(rows)
         # Group missing docs BY STUDENT so each student logs in once and reuses the session.
         # Skip docs that have already failed too many times (genuine data problem) unless forcing.
+        def _has_digit(v):
+            return bool(v) and any(ch.isdigit() for ch in str(v))
         students = []
         total_docs = 0
         for r in rows:
             allowed = whatsapp.allowed_docs(r["session"], (r["toc_status"] or ""))
+            # A document can only be fetched from NIOS with a usable reference/enrollment number
+            # AND a date of birth. If either is missing it can NEVER be saved, so don't retry it
+            # forever — park it as 'needs data fix' so auto-resume can finish and stop.
+            fetchable = (_has_digit(r["reference_no"]) or _has_digit(r["enrollment_no"])) and bool((r["dob"] or "").strip())
             kinds = []
             for k in allowed:
                 if load_doc_cache(r["row_key"], k) is not None:
                     continue                      # already saved
+                if not fetchable:
+                    _mark_doc_unfetchable(r["row_key"], k,
+                                          "reference/enrollment or DOB missing — cannot fetch from NIOS")
+                    continue                      # unsaveable -> needs a data fix, not a retry
                 if (not force) and _doc_fail_attempts(r["row_key"], k) >= _MAX_CACHE_ATTEMPTS:
                     continue                      # genuinely failing -> leave for manual fix
                 kinds.append(k)
@@ -10322,6 +10411,26 @@ def _clear_doc_fail(row_key, kind):
         with _DB_WRITE_LOCK:
             conn = get_db()
             conn.execute("DELETE FROM cache_fail WHERE row_key=? AND kind=?", (row_key, kind))
+            conn.commit(); conn.close()
+    except Exception:
+        pass
+
+def _mark_doc_unfetchable(row_key, kind, reason):
+    """Push a document straight to the 'needs data fix' bucket (attempts at the cap) when it can
+    NEVER be fetched — the student has no usable reference/enrollment number or no date of birth.
+    Without this the auto-resume worker retries them forever (one wasted NIOS login every 90s) and
+    the 'auto-resume ON' panel never clears even though nothing is actually savable. Parked here,
+    they move out of 'Retrying' into 'Needs data fix', savable count drops to zero, and auto-resume
+    switches itself off."""
+    try:
+        with _DB_WRITE_LOCK:
+            conn = get_db()
+            conn.execute("INSERT INTO cache_fail (row_key, kind, attempts, last_error, updated_at) "
+                         "VALUES (?,?,?,?,?) ON CONFLICT(row_key,kind) DO UPDATE SET "
+                         "attempts=MAX(cache_fail.attempts, excluded.attempts), "
+                         "last_error=excluded.last_error, updated_at=excluded.updated_at",
+                         (row_key, kind, _MAX_CACHE_ATTEMPTS, str(reason)[:200],
+                          datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             conn.commit(); conn.close()
     except Exception:
         pass
