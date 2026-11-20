@@ -3067,8 +3067,54 @@ async function waAudit(btn){
     if((a.attempt_cap_reached||0)>0){
       rows+="<div style='margin-top:8px'><button class='btn btn-primary btn-sm' onclick='waRetryStuck(this)'>Retry the "+(a.attempt_cap_reached)+" stuck student(s) now</button></div>";
     }
+    // Live send diagnostic + auto-WhatsApp on/off, so the counsellor can see exactly why a send
+    // fails and can pause/resume auto-sending without hunting in Settings.
+    rows+="<div style='margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:10px;flex-wrap:wrap;align-items:center'>"+
+          "<button class='btn btn-outline btn-sm' onclick='waDiagnose(this)'>Diagnose one send (see gateway reply)</button>"+
+          "<button class='btn btn-outline btn-sm' onclick='waToggleAuto(this)' id='wa-auto-toggle'>…</button>"+
+          "</div><div id='wa-diag-out' style='margin-top:8px;font-size:12px;white-space:pre-wrap;word-break:break-word'></div>";
     box.innerHTML=rows; box.style.display="block";
+    waRefreshAutoToggle();
   }catch(e){ box.innerHTML="Could not load audit: "+e.message; box.style.display="block"; }
+  finally{ if(btn){btn.disabled=false;btn.style.opacity="";} }
+}
+async function waRefreshAutoToggle(){
+  try{
+    var s=await api("/api/wa-settings","GET");
+    var b=document.getElementById("wa-auto-toggle");
+    if(b){ var on=!!(s&&s.enabled);
+      b.textContent=on?"Auto-WhatsApp: ON (click to turn OFF)":"Auto-WhatsApp: OFF (click to turn ON)";
+      b.style.background=on?"#DCFCE7":"#FEE2E2"; b.style.color=on?"#166534":"#991B1B"; }
+  }catch(e){}
+}
+async function waToggleAuto(btn){
+  if(btn){btn.disabled=true;}
+  try{
+    var s=await api("/api/wa-settings","GET");
+    var next=!(s&&s.enabled);
+    await api("/api/wa-settings","POST",{enabled:next});
+    showToast(next?"Auto-WhatsApp turned ON":"Auto-WhatsApp turned OFF");
+    await waRefreshAutoToggle();
+  }catch(e){showToast("Error: "+e.message);}
+  finally{ if(btn){btn.disabled=false;} }
+}
+async function waDiagnose(btn){
+  var out=document.getElementById("wa-diag-out");
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  out.textContent="Running a live test send… (~5-15s)";
+  try{
+    var d=await api("/api/wa-send-diagnose","GET");
+    if(!d.found){ out.textContent=d.note||"No pending student to test."; return; }
+    var NL=String.fromCharCode(10);
+    out.textContent=
+      "Student: "+(d.student||"?")+"  ("+(d.reference||"")+")"+NL+
+      "Session: "+(d.session||"?")+"   TOC: "+(d.toc||"?")+"   Mobile: "+(d.mobile||"?")+NL+
+      "Campaign used: "+(d.campaign_used||"(none)")+NL+
+      "Gateway HTTP status: "+(d.gateway_status||"?")+NL+
+      "Gateway reply: "+(d.gateway_body||"(none)")+NL+
+      "API key set: "+((d.env_configured&&d.env_configured.AISENSY_API_KEY)?"yes":"NO")+NL+NL+
+      "VERDICT: "+(d.verdict||"");
+  }catch(e){ out.textContent="Diagnose failed: "+e.message; }
   finally{ if(btn){btn.disabled=false;btn.style.opacity="";} }
 }
 async function waRetryStuck(btn){
@@ -9573,7 +9619,12 @@ try:
     _CACHE_WORKERS = max(1, min(10, int(os.environ.get("CACHE_WORKERS", "3"))))
 except Exception:
     _CACHE_WORKERS = 3
-_DB_WRITE_LOCK = _threading.Lock()
+# RLock (reentrant), NOT Lock: the doc-save path holds this lock and then calls save_doc_cache,
+# which on success calls _clear_doc_fail which takes the SAME lock again. A plain Lock is not
+# reentrant, so the same thread blocked forever on the first successful save — freezing the whole
+# document-save worker at 0/7 and, because every other DB-writing thread then waited behind the
+# stuck one, freezing the WhatsApp sweep too. RLock lets a thread re-acquire its own lock.
+_DB_WRITE_LOCK = _threading.RLock()
 
 def _cache_all_confirmed_worker(force=False):
     """Fetch + save every confirmed student's allowed documents into OUR database (in parallel),
@@ -9581,7 +9632,22 @@ def _cache_all_confirmed_worker(force=False):
     down). Documents of the SAME student are fetched together (one login reused). force=True
     re-fetches everything; else only missing ones."""
     if CACHE_PROGRESS["running"]:
-        return
+        # Stale-guard: a healthy worker moves off 0 within seconds. If it's been "running" with
+        # ZERO documents done for over 10 minutes, the previous pass is hung (a wedged fetch, say)
+        # — clear the flag so saving can resume instead of being blocked forever.
+        try:
+            _st = CACHE_PROGRESS.get("started_at", "")
+            if CACHE_PROGRESS.get("done", 0) == 0 and _st:
+                _age = (datetime.now() - datetime.strptime(_st, "%Y-%m-%d %H:%M:%S")).total_seconds()
+                if _age > 600:
+                    logger.warning("Doc saving: previous pass hung at 0 for >10 min — resetting and restarting.")
+                    CACHE_PROGRESS["running"] = False
+                else:
+                    return
+            else:
+                return
+        except Exception:
+            return
     # Never compete with an active RUN for NIOS/CapSolver — the watchdog retries
     # every 90s, so saving resumes automatically the moment the run finishes.
     try:
@@ -9919,6 +9985,57 @@ def wa_audit(user=Depends(verify_token)):
         return out
     finally:
         conn.close()
+
+@app.get("/api/wa-send-diagnose")
+def wa_send_diagnose(ref: str = "", user=Depends(verify_token)):
+    """Live WhatsApp send diagnostic for ONE student: picks the student (by reference, else the
+    first pending confirmed one), runs the real send, and returns the EXACT AiSensy gateway reply
+    (HTTP status + body + campaign + destination). This tells us WHY retries report failure —
+    wrong API key, missing campaign, bad number, or gateway rejection — instead of guessing."""
+    import whatsapp
+    conn = get_db()
+    try:
+        if ref.strip():
+            row = conn.execute(
+                "SELECT row_key, student_name, mobile, alt_mobile, session, reference_no, dob, "
+                "enrollment_no, toc_status FROM student_status WHERE "
+                "(reference_no=? OR enrollment_no=?) AND COALESCE(deleted,0)=0 LIMIT 1",
+                (ref.strip(), ref.strip())).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT row_key, student_name, mobile, alt_mobile, session, reference_no, dob, "
+                "enrollment_no, toc_status FROM student_status WHERE is_confirmed=1 "
+                "AND COALESCE(whatsapp_sent,0)=0 AND COALESCE(deleted,0)=0 "
+                "AND mobile IS NOT NULL AND TRIM(mobile)!='' LIMIT 1").fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"found": False, "note": "No matching pending student to test."}
+    whatsapp.LAST_SEND = {}
+    ok, info = whatsapp.send_for_student(dict(row))
+    ls = dict(whatsapp.LAST_SEND or {})
+    # Which env vars are configured (names only, never the secret values).
+    import os as _os
+    env_present = {k: bool(_os.environ.get(k, "").strip()) for k in
+                   ["AISENSY_API_KEY", "AISENSY_CAMPAIGN_ONDEMAND", "AISENSY_CAMPAIGN_STREAM2",
+                    "AISENSY_CAMPAIGN_PUBLIC", "AISENSY_CAMPAIGN_SYC"]}
+    return {
+        "found": True,
+        "student": row["student_name"], "reference": row["reference_no"],
+        "session": row["session"], "toc": row["toc_status"], "mobile": row["mobile"],
+        "send_ok": ok, "send_info": info,
+        "gateway_status": ls.get("status"), "gateway_body": ls.get("body"),
+        "campaign_used": ls.get("campaign"), "destination": ls.get("dest"),
+        "env_configured": env_present,
+        "verdict": (
+            "No campaign name/template mapped for this session — set the matching AISENSY_CAMPAIGN_* env var."
+            if info and "no campaign set" in str(info).lower() else
+            "AiSensy API key not set — set AISENSY_API_KEY in Railway." if info and "api_key not set" in str(info).lower().replace(' ','_') else
+            "Gateway REJECTED the message (see gateway_body) — usually a template name mismatch, a template not approved, or the number not opted in." if info and "gateway rejected" in str(info).lower() else
+            "Bad phone number for this student." if info and "bad number" in str(info).lower() else
+            "AiSensy ACCEPTED it (HTTP 200). It is queued — if it never arrives on WhatsApp, the issue is delivery-side (template approval / 24h window / opt-in), not the tracker." if ok else
+            f"Send failed: {info}")
+    }
 
 @app.post("/api/wa-retry-stuck")
 def wa_retry_stuck(background_tasks: BackgroundTasks, user=Depends(verify_token)):
