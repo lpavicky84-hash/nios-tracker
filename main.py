@@ -888,7 +888,9 @@ function applySidebarPref(){
             <button class="btn btn-primary btn-sm" onclick="examFeeRun('session',this)" title="Check only the students in the session chosen above.">Run this session</button>
             <button class="btn btn-success btn-sm" onclick="examFeeRun('selected',this)" title="Check only the students you ticked (no limit).">Run selected (<span id="ef-selcount">0</span>)</button>
             <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C" onclick="examFeeStop(this)" title="Stop after the students currently in progress finish.">Stop</button>
+            <button class="btn btn-outline btn-sm" onclick="examFeeLoginDebug(this)" title="Run ONE real NIOS login for the ticked student and show exactly what happened — the captcha the tracker read and the exact NIOS error. Use this when a student shows 'Login failed'.">Diagnose login (ticked student)</button>
           </div>
+          <div id="ef-debug" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:12.5px;white-space:pre-wrap;word-break:break-word"></div>
           <div id="ef-progress" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
             <div style="display:flex;justify-content:space-between;align-items:center;font-weight:700"><span id="ef-prog-title">Checking examination fees</span><span id="ef-prog-pct">0%</span></div>
             <div style="height:8px;background:var(--border);border-radius:6px;margin:8px 0;overflow:hidden"><div id="ef-prog-bar" style="height:100%;width:0;background:#6366F1;transition:width .3s"></div></div>
@@ -3399,6 +3401,29 @@ async function examFeeRun(scope,btn){
   finally{ setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},3000); }
 }
 async function examFeeStop(btn){ try{ await api("/api/exam-fee/stop","POST",{}); showToast("Stopping after current students…"); }catch(e){} }
+async function examFeeLoginDebug(btn){
+  var box=document.getElementById("ef-debug");
+  var rk=EF_SEL.size?Array.from(EF_SEL)[0]:null;
+  if(!rk){ showToast("Tick one student first, then click Diagnose login"); return; }
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  box.style.display="block"; box.textContent="Running one real NIOS login… (takes ~10-20s)";
+  try{
+    var d=await api("/api/exam-fee/login-debug?row_key="+encodeURIComponent(rk));
+    if(d.error){ box.textContent="Error: "+d.error; return; }
+    var NL=String.fromCharCode(10);
+    var lines=[
+      "Reference: "+(d.ref||"?")+"   DOB used: "+(d.dob_used||"?"),
+      "Captcha type on page: "+(d.captcha_mode||"?"),
+      "Captcha the tracker read (OCR): "+(d.ocr_text!=null?('"'+d.ocr_text+'"'):"(none)")+(d.ocr_error?("  [error: "+d.ocr_error+"]"):""),
+      "Page uses RSA encryption: "+(d.has_rsa_script?"YES":"no")+"   RSA public key present: "+(d.has_rsa_pubkey?"YES":"no"),
+      "Login fields on page: "+((d.login_field_names||[]).join(", ")||"?"),
+      "POST result: HTTP "+(d.post_http||"?")+"   logged in: "+(d.logged_in?"YES":"NO")+"   bounced to login: "+(d.bounced_to_login?"YES":"no"),
+      "NIOS error message(s): "+((d.nios_errors&&d.nios_errors.length)?d.nios_errors.join(" | "):"(none shown)")
+    ];
+    box.textContent=lines.join(NL);
+  }catch(e){ box.textContent="Error: "+(e.message||e); }
+  finally{ if(btn){btn.disabled=false;btn.style.opacity="";} }
+}
 function examFeePoll(){
   if(EF_POLL)clearInterval(EF_POLL);
   const tick=async()=>{
@@ -8972,6 +8997,26 @@ def exam_fee_receipt(row_key: str, fmt: str = "png", user=Depends(verify_token))
                             filename=f"exam_fee_receipt_{ref}.pdf")
     return FileResponse(path, media_type="image/png",
                         filename=f"exam_fee_receipt_{ref}.png")
+
+@app.get("/api/exam-fee/login-debug")
+def exam_fee_login_debug(ref: str = "", dob: str = "", row_key: str = "", user=Depends(verify_token)):
+    """One real NIOS login attempt with full detail — tells us WHY a login fails (OCR miss vs data/RSA
+    problem). Pass ref+dob directly, or a row_key to use that student's saved Reference No + DOB."""
+    import nios_login
+    r, d = (ref or "").strip(), (dob or "").strip()
+    if row_key and not (r and d):
+        conn = get_db()
+        row = conn.execute("SELECT reference_no, dob FROM student_status WHERE row_key=?", (row_key,)).fetchone()
+        conn.close()
+        if row:
+            r = r or (row["reference_no"] or "")
+            d = d or (row["dob"] or "")
+    if not r or not d:
+        return {"error": "Give a reference number and date of birth (or a row_key of a student that has them)."}
+    try:
+        return nios_login.login_debug(r, d)
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {str(e)[:170]}"}
 
 @app.post("/api/mvs-resync-numbers")
 def mvs_resync_numbers(body: dict = None, user=Depends(verify_token)):

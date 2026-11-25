@@ -663,6 +663,65 @@ def verify_login(reference_no, dob, enrollment_no=""):
     except Exception as e:
         return False, f"NIOS login error: {str(e)[:120]}"
 
+def login_debug(reference_no, dob, enrollment_no=""):
+    """Deep login diagnostic — performs ONE real login attempt and reports exactly what happened:
+    which captcha the live page uses, the OCR text we read from the image, whether RSA encryption is
+    on the page, whether the POST logged in or bounced, and the EXACT NIOS error message. This is how
+    we tell an OCR miss ('captcha code is incorrect') apart from a data/RSA problem ('Reference/DOB')."""
+    out = {"ref": reference_no, "dob_used": format_dob(dob), "steps": []}
+    if not CAPSOLVER_API_KEY:
+        out["error"] = "CAPTCHA_API_KEY not set"
+        return out
+    try:
+        session = requests.Session()
+        g = session.get(LOGIN_URL, headers=HEADERS, timeout=25)
+        html = g.text or ""
+        out["page_http"] = g.status_code
+        out["cookies_after_get"] = list(session.cookies.keys())
+        img = _find_image_captcha(html)
+        out["captcha_mode"] = "image" if img else ("recaptcha" if _extract_sitekey(html) else "none")
+        out["captcha_img_url"] = img
+        out["has_rsa_script"] = ("rsa-encrypt" in html.lower() or "jsencrypt" in html.lower())
+        out["has_rsa_pubkey"] = ("__rsapublickey" in html.lower())
+        out["login_field_names"] = re.findall(r'name=["\'](LoginForm\[[^"\']+\])["\']', html)
+        soup = BeautifulSoup(html, "html.parser")
+        meta = soup.find("meta", {"name": "_csrf"})
+        inp = soup.find("input", {"name": "_csrf"})
+        csrf = (meta.get("content") if meta else "") or (inp.get("value") if inp else "")
+        out["csrf_len"] = len(csrf)
+        payload = {"_csrf": csrf, "LoginForm[reference_no]": reference_no or "",
+                   "LoginForm[enrollment_no]": "", "LoginForm[application_no]": "",
+                   "LoginForm[date_of_birth]": format_dob(dob), "login-button": ""}
+        if img:
+            text, err = solve_image_captcha(session, img)
+            out["ocr_text"] = text
+            out["ocr_error"] = err
+            payload["LoginForm[captcha]"] = text
+        else:
+            tok = solve_recaptcha_v3(LOGIN_URL, current_login_action(), site_key=current_login_sitekey())
+            out["recaptcha_token_obtained"] = bool(tok)
+            payload["LoginForm[google_recaptcha_response]"] = tok
+            payload["LoginForm[google_recapcha_response]"] = tok
+        resp = session.post(LOGIN_URL, data=payload,
+                            headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded",
+                                     "Origin": BASE}, timeout=30, allow_redirects=True)
+        body = resp.text or ""
+        out["post_http"] = resp.status_code
+        out["final_url"] = str(resp.url)
+        out["logged_in"] = is_logged_in(body)
+        out["bounced_to_login"] = ("loginform[" in body.lower())
+        bs = BeautifulSoup(body, "html.parser")
+        errs = []
+        for e in bs.select("p.help-block-error, .help-block.help-block-error, .flash--message, .alert"):
+            t = e.get_text(" ", strip=True)
+            if t:
+                errs.append(t)
+        out["nios_errors"] = [e for e in errs if e][:10]
+        return out
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {str(e)[:170]}"
+        return out
+
 def flip_dob(dob):
     """Swap day<->month of a DOB, but ONLY when both are <=12 (an ambiguous date that
     Excel may have stored flipped, e.g. 10-01 vs 01-10). Returns the flipped 'DD-MM-YYYY',
