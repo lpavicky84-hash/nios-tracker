@@ -904,6 +904,7 @@ function applySidebarPref(){
             <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C" onclick="stopCacheDocs(this)" title="Stop the auto-resume of the document save.">&#9632; Stop saving</button>
             <button class="btn btn-outline btn-sm" onclick="waAudit(this)" title="Check how many confirmed students have never received their WhatsApp, and why — then retry the ones that are stuck.">Check WhatsApp pending</button>
             <button class="btn btn-outline btn-sm" onclick="mvsResyncNumbers(this)" title="Re-pull phone numbers from the MVS Portal for every student. Fills in any ALTERNATE number that was missed earlier, corrects a wrong primary, and resends the documents on WhatsApp to numbers that never received them.">Fix missing numbers (Portal re-sync)</button>
+            <button class="btn btn-outline btn-sm" onclick="showFixedList(this)" title="See exactly which students had an alternate number fixed and still need the documents on WhatsApp, then send to all of them in one click.">Fixed students: see &amp; resend WhatsApp</button>
             <span id="cache-docs-status" style="font-size:12px;color:var(--muted);align-self:center"></span>
           </div>
           <div id="wa-audit-box" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px"></div>
@@ -3287,7 +3288,7 @@ async function mvsResyncNumbers(btn){
     let s; try{ s=await api("/api/mvs-resync-status"); }catch(e){ return; }
     var line="Checked "+(s.scanned||0)+" Portal-matched students · alternate number added for <b>"+(s.alt_added||0)+
              "</b> · primary corrected for <b>"+(s.mobile_fixed||0)+"</b>";
-    if(s.to_resend){ line+=" · WhatsApp resent to <b>"+(s.resent||0)+"</b> / "+s.to_resend+" that needed it"; }
+    if(s.to_resend){ line+=" · <b>"+s.to_resend+"</b> now need the documents on their alternate number — use the ‘Fixed students: see &amp; resend WhatsApp’ button (auto-sending now if WhatsApp is ON)."; }
     if(s.error){ line="Re-sync error: "+s.error; }
     box.innerHTML=(s.running?"Working… ":"Done. ")+line+
       (s.done&&!s.error&&(s.alt_added||0)===0&&(s.mobile_fixed||0)===0
@@ -3296,6 +3297,65 @@ async function mvsResyncNumbers(btn){
     if(s.done){
       clearInterval(RESYNC_POLL);RESYNC_POLL=null;
       if(btn){btn.disabled=false;btn.style.opacity="";}
+      try{loadConfirmed(_confirmedPage||1);}catch(e){}
+    }
+  },2500);
+}
+// Show the students whose alternate number was fixed and still need the documents on WhatsApp,
+// with a one-click button to send to all of them.
+async function showFixedList(btn){
+  var box=document.getElementById("resync-box");
+  if(!box)return;
+  var E=function(v){return (""+(v==null?"":v)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");};
+  box.style.display="block";
+  box.innerHTML="Loading the list of fixed students…";
+  let d; try{ d=await api("/api/fixed-numbers-list"); }catch(e){ box.innerHTML="Could not load the list: "+E(e.message); return; }
+  var rows=d.students||[];
+  var head="<div style='display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px'>"+
+    "<span style='font-weight:700'>Students whose alternate number was fixed and still need WhatsApp: "+(d.count||0)+"</span>"+
+    "<span>"+
+      (d.count? "<button class='btn btn-success btn-sm' onclick='sendFixedWhatsApp(this)'>Send WhatsApp to all "+d.count+"</button> " : "")+
+      "<a href='#' onclick='document.getElementById(&quot;resync-box&quot;).style.display=&quot;none&quot;;return false' style='color:var(--muted);text-decoration:underline;margin-left:8px'>Close</a>"+
+    "</span></div>";
+  if(!d.wa_on){ head+="<div style='color:#B91C1C;margin-bottom:6px'>WhatsApp is OFF — turn it on in Settings before sending.</div>"; }
+  if(!rows.length){ box.innerHTML=head+"<div style='color:var(--muted)'>None pending. Everyone with an alternate number has already been sent the documents on both numbers.</div>"; return; }
+  var html=head+"<div style='overflow:auto;max-height:360px'><table style='width:100%;border-collapse:collapse;font-size:12.5px'>"+
+    "<thead><tr style='text-align:left;color:var(--muted)'><th style='padding:4px 8px'>#</th><th style='padding:4px 8px'>Reference</th><th style='padding:4px 8px'>Student</th><th style='padding:4px 8px'>Session</th><th style='padding:4px 8px'>Primary</th><th style='padding:4px 8px'>Alternate</th></tr></thead><tbody>";
+  rows.forEach(function(s,i){
+    html+="<tr style='border-top:1px solid var(--border)'><td style='padding:4px 8px'>"+(i+1)+"</td>"+
+      "<td style='padding:4px 8px;font-weight:600'>"+E(s.ref||"—")+"</td>"+
+      "<td style='padding:4px 8px'>"+E(s.name||"—")+"</td>"+
+      "<td style='padding:4px 8px'>"+E(s.session||"—")+"</td>"+
+      "<td style='padding:4px 8px'>"+E(s.mobile||"—")+"</td>"+
+      "<td style='padding:4px 8px;color:#6D28D9;font-weight:600'>"+E(s.alt||"—")+"</td></tr>";
+  });
+  html+="</tbody></table></div>";
+  box.innerHTML=html;
+}
+let FIXEDWA_POLL=null;
+async function sendFixedWhatsApp(btn){
+  var box=document.getElementById("resync-box");
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";btn.textContent="Sending…";}
+  try{
+    var r=await api("/api/send-fixed-whatsapp","POST",{});
+    if(r&&r.started===false){ showToast(r.message||"Already sending."); }
+  }catch(e){
+    if(box)box.innerHTML="Could not start sending: "+(e.message||e);
+    return;
+  }
+  if(FIXEDWA_POLL)clearInterval(FIXEDWA_POLL);
+  FIXEDWA_POLL=setInterval(async function(){
+    let s; try{ s=await api("/api/send-fixed-status"); }catch(e){ return; }
+    if(box){
+      var line="Sending documents to both numbers… sent <b>"+(s.sent||0)+"</b>";
+      if(s.failed){ line+=" · failed "+s.failed; }
+      line+=" / "+(s.total||0);
+      if(s.error){ line="Note: "+s.error; }
+      box.innerHTML=(s.running?"":"Done. ")+line;
+    }
+    if(s.done){
+      clearInterval(FIXEDWA_POLL);FIXEDWA_POLL=null;
+      showToast("Fixed students: WhatsApp sent to "+(s.sent||0)+(s.failed?(" ("+s.failed+" failed)"):""));
       try{loadConfirmed(_confirmedPage||1);}catch(e){}
     }
   },2500);
@@ -8394,7 +8454,6 @@ def _resync_numbers_worker(do_send):
     rows = c.execute("SELECT row_key, student_id, reference_no, enrollment_no, mobile, alt_mobile, "
                      "is_confirmed, whatsapp_delivery FROM student_status "
                      "WHERE COALESCE(deleted,0)=0").fetchall()
-    resend_full, resend_alt = [], []
     for r in rows:
         pnums = (by_sid.get(str(r["student_id"] or "").strip())
                  or by_rk.get(r["row_key"])
@@ -8412,64 +8471,112 @@ def _resync_numbers_worker(do_send):
         new_alt = want[1] if len(want) > 1 else ""
         if new_mob == dg(r["mobile"]) and new_alt == dg(r["alt_mobile"]):
             continue                                   # nothing changed
-        added = [n for n in want if n not in cur]      # numbers the tracker did NOT have before
         c.execute("UPDATE student_status SET mobile=?, alt_mobile=? WHERE row_key=?",
                   (new_mob, new_alt, r["row_key"]))
         if new_alt and dg(r["alt_mobile"]) != new_alt:
             _RESYNC_STATE["alt_added"] += 1
         if new_mob and dg(r["mobile"]) != new_mob:
             _RESYNC_STATE["mobile_fixed"] += 1
-        if r["is_confirmed"] == 1 and added:
-            deliv = ((r["whatsapp_delivery"] if "whatsapp_delivery" in r.keys() else "") or "").strip().lower()
-            if deliv in ("delivered", "read"):
-                resend_alt.append((r["row_key"], added))   # primary already got it -> only new number(s)
-            else:
-                resend_full.append(r["row_key"])           # never confirmed -> resend to both
     conn.commit(); conn.close()
-    _RESYNC_STATE["to_resend"] = len(resend_full) + len(resend_alt)
-
-    if do_send and get_setting("wa_enabled", "0") == "1":
-        conn = get_db(); c = conn.cursor()
-        for rk in resend_full:
-            r = c.execute("SELECT * FROM student_status WHERE row_key=?", (rk,)).fetchone()
-            if not r:
-                continue
-            try:
-                ok, info = whatsapp.send_for_student({
-                    "row_key": rk, "student_name": r["student_name"] or "",
-                    "mobile": r["mobile"] or "", "alt_mobile": (r["alt_mobile"] if "alt_mobile" in r.keys() else "") or "",
-                    "session": r["session"] or "", "reference_no": r["reference_no"] or "",
-                    "enrollment_no": r["enrollment_no"] or "",
-                    "toc_status": (r["toc_status"] if "toc_status" in r.keys() else "") or "",
-                    "dob": r["dob"] or ""})
-                if ok:
-                    _RESYNC_STATE["resent"] += 1
-                    c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
-                              (f"Resent to both numbers after Portal number re-sync", rk)); conn.commit()
-            except Exception as e:
-                logger.warning(f"Resync resend-full {rk}: {e}")
-        for rk, added in resend_alt:
-            r = c.execute("SELECT * FROM student_status WHERE row_key=?", (rk,)).fetchone()
-            if not r:
-                continue
-            for num in added:
-                try:
-                    ok, info = whatsapp.send_for_student({
-                        "row_key": rk, "student_name": r["student_name"] or "",
-                        "mobile": r["mobile"] or "", "alt_mobile": num,
-                        "session": r["session"] or "", "reference_no": r["reference_no"] or "",
-                        "enrollment_no": r["enrollment_no"] or "",
-                        "toc_status": (r["toc_status"] if "toc_status" in r.keys() else "") or "",
-                        "dob": r["dob"] or ""}, only_number=num)
-                    if ok:
-                        _RESYNC_STATE["resent"] += 1
-                        c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
-                                  (f"Documents sent to newly-added number {num}", rk)); conn.commit()
-                except Exception as e:
-                    logger.warning(f"Resync resend-alt {rk}->{num}: {e}")
-        conn.close()
+    # Who now needs the documents sent to their alternate number (see _FIXED_WA_SQL): students that
+    # have a second number but were never sent to BOTH numbers. This is the SAME set the 'Send
+    # WhatsApp to fixed students' button uses, so the count here matches what that button will send.
+    try:
+        cc = get_db()
+        _RESYNC_STATE["to_resend"] = cc.execute(
+            f"SELECT COUNT(*) FROM student_status WHERE {_FIXED_WA_SQL}").fetchone()[0]
+        cc.close()
+    except Exception:
+        _RESYNC_STATE["to_resend"] = 0
     _RESYNC_STATE.update(running=False, done=True)
     logger.info(f"Resync numbers done: {dict(_RESYNC_STATE)}")
+    # Auto-send right away (so a fix is delivered without a second click) when WhatsApp is ON.
+    if do_send and get_setting("wa_enabled", "0") == "1" and not _FIXED_WA_STATE.get("running"):
+        _send_fixed_worker()
+
+
+# A "fixed" student = confirmed, has a SECOND (alternate) number, and the documents were never sent
+# to both numbers yet (and delivery is not already confirmed). After a successful both-number send,
+# whatsapp_info contains "2 number", so the student automatically drops out of this set — which keeps
+# the list and the button self-maintaining with no extra flags to reset.
+_FIXED_WA_SQL = (
+    "is_confirmed=1 AND COALESCE(deleted,0)=0 AND COALESCE(login_failed,0)=0 "
+    "AND COALESCE(check_failed,0)=0 "
+    "AND TRIM(COALESCE(alt_mobile,'')) != '' AND TRIM(COALESCE(mobile,'')) != '' "
+    "AND REPLACE(COALESCE(alt_mobile,''),' ','') != REPLACE(COALESCE(mobile,''),' ','') "
+    "AND COALESCE(whatsapp_info,'') NOT LIKE '%2 number%' "
+    "AND LOWER(COALESCE(whatsapp_delivery,'')) NOT IN ('delivered','read')")
+
+_FIXED_WA_STATE = {"running": False, "done": False, "total": 0, "sent": 0, "failed": 0, "error": ""}
+
+def _send_fixed_worker():
+    """Send the documents on WhatsApp to BOTH numbers for every 'fixed' student (see _FIXED_WA_SQL):
+    confirmed students who now have an alternate number but were never sent to both numbers. Safe to
+    run repeatedly — a student drops out of the set the moment the both-number send succeeds, so the
+    same student is never messaged twice by this button."""
+    import whatsapp
+    if get_setting("wa_enabled", "0") != "1":
+        _FIXED_WA_STATE.update(running=False, done=True, error="WhatsApp is OFF — turn it on first.")
+        return
+    _FIXED_WA_STATE.update(running=True, done=False, total=0, sent=0, failed=0, error="")
+    conn = get_db(); c = conn.cursor()
+    rows = c.execute(f"SELECT * FROM student_status WHERE {_FIXED_WA_SQL}").fetchall()
+    _FIXED_WA_STATE["total"] = len(rows)
+    for r in rows:
+        try:
+            ok, info = whatsapp.send_for_student({
+                "row_key": r["row_key"], "student_name": r["student_name"] or "",
+                "mobile": r["mobile"] or "", "alt_mobile": (r["alt_mobile"] if "alt_mobile" in r.keys() else "") or "",
+                "session": r["session"] or "", "reference_no": r["reference_no"] or "",
+                "enrollment_no": r["enrollment_no"] or "",
+                "toc_status": (r["toc_status"] if "toc_status" in r.keys() else "") or "",
+                "dob": r["dob"] or ""})
+            if ok:
+                _FIXED_WA_STATE["sent"] += 1
+                # note from whatsapp contains "2 numbers" -> this student leaves the fixed set
+                c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
+                          (str(info)[:180] or "Sent to 2 numbers (own + alternate)", r["row_key"]))
+            else:
+                _FIXED_WA_STATE["failed"] += 1
+                c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                          (str(info)[:180], r["row_key"]))
+            conn.commit()
+        except Exception as e:
+            _FIXED_WA_STATE["failed"] += 1
+            logger.warning(f"Send-fixed {r['row_key']}: {e}")
+    conn.close()
+    _FIXED_WA_STATE.update(running=False, done=True)
+    logger.info(f"Send-fixed done: {dict(_FIXED_WA_STATE)}")
+
+@app.get("/api/fixed-numbers-list")
+def fixed_numbers_list(user=Depends(verify_token)):
+    """The students whose alternate number still needs the documents (the 'fixed' set). Lets the
+    operator SEE exactly who was fixed / will be messaged before clicking send."""
+    conn = get_db()
+    rows = conn.execute(
+        f"SELECT reference_no, enrollment_no, student_name, session, mobile, alt_mobile, "
+        f"COALESCE(whatsapp_info,'') AS info FROM student_status WHERE {_FIXED_WA_SQL} "
+        f"ORDER BY student_name").fetchall()
+    conn.close()
+    out = [{"ref": (r["reference_no"] or r["enrollment_no"] or "").strip(),
+            "name": (r["student_name"] or "").strip(), "session": r["session"] or "",
+            "mobile": r["mobile"] or "", "alt": r["alt_mobile"] or "", "info": r["info"]}
+           for r in rows]
+    return {"count": len(out), "students": out, "wa_on": get_setting("wa_enabled", "0") == "1"}
+
+@app.post("/api/send-fixed-whatsapp")
+def send_fixed_whatsapp(user=Depends(verify_token)):
+    """One click: send the documents to BOTH numbers for every student in the 'fixed' set."""
+    if get_setting("wa_enabled", "0") != "1":
+        raise HTTPException(status_code=400, detail="WhatsApp is OFF. Turn it on in Settings first.")
+    if _FIXED_WA_STATE.get("running"):
+        return {"ok": True, "started": False, "message": "Already sending to fixed students."}
+    _threading.Thread(target=_send_fixed_worker, daemon=True).start()
+    return {"ok": True, "started": True, "message": "Sending WhatsApp to fixed students in the background…"}
+
+@app.get("/api/send-fixed-status")
+def send_fixed_status(user=Depends(verify_token)):
+    return dict(_FIXED_WA_STATE)
 
 @app.post("/api/mvs-resync-numbers")
 def mvs_resync_numbers(body: dict = None, user=Depends(verify_token)):
