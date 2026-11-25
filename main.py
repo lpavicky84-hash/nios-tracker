@@ -715,7 +715,8 @@ function applySidebarPref(){
               <option>Document Required</option><option>Verified</option>
               <option>Approved</option><option>Rejected</option><option>Fetch Error</option><option>Unknown</option>
             </select>
-            <select id="s-session" onchange="loadStudents(1)"><option value="">All Sessions</option></select>
+            <select id="s-session" onchange="onSessChange('s',()=>loadStudents(1))"><option value="">All Sessions</option></select>
+            <select id="s-subsession" onchange="loadStudents(1)" style="display:none" title="Filter by the actual session inside this category"></select>
             <select id="s-toc" onchange="loadStudents(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
             <select id="s-link" onchange="loadStudents(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option><option value="docsblocked">Documents blocked (ref/DOB missing)</option></select>
             <select id="s-class" onchange="loadStudents(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
@@ -879,7 +880,8 @@ function applySidebarPref(){
               <option value="notsent">Not sent yet</option>
               <option value="failed">Failed</option>
             </select>
-            <select id="c-session" onchange="loadConfirmed(1)"><option value="">All Sessions</option></select>
+            <select id="c-session" onchange="onSessChange('c',()=>loadConfirmed(1))"><option value="">All Sessions</option></select>
+            <select id="c-subsession" onchange="loadConfirmed(1)" style="display:none" title="Filter by the actual session inside this category"></select>
             <select id="c-toc" onchange="loadConfirmed(1)" title="Filter by tocStatus"><option value="">All TOC</option><option value="yes">TOC: yes</option><option value="no">TOC: no</option><option value="blank">TOC: not set</option><option value="mismatch">TOC mismatch (error)</option></select>
             <select id="c-link" onchange="loadConfirmed(1)" title="Filter by Portal link — unlinked students have no MVS Student ID yet, so tracker edits cannot reach the Portal until they are linked (auto-linked by a run / Sync details, or manually via the Portal Student ID field in Edit)."><option value="">All Portal Link</option><option value="unlinked">Not linked to Portal</option><option value="linked">Linked to Portal</option><option value="docsblocked">Documents blocked (ref/DOB missing)</option></select>
             <select id="c-class" onchange="loadConfirmed(1)"><option value="">All Classes</option><option value="10">Class 10</option><option value="12">Class 12</option></select>
@@ -901,9 +903,11 @@ function applySidebarPref(){
             <button class="btn btn-outline btn-sm" onclick="cacheDocsNow(this,true)" title="Re-fetch and OVERWRITE all saved documents (use if documents changed on NIOS).">Refresh all saved</button>
             <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C" onclick="stopCacheDocs(this)" title="Stop the auto-resume of the document save.">&#9632; Stop saving</button>
             <button class="btn btn-outline btn-sm" onclick="waAudit(this)" title="Check how many confirmed students have never received their WhatsApp, and why — then retry the ones that are stuck.">Check WhatsApp pending</button>
+            <button class="btn btn-outline btn-sm" onclick="mvsResyncNumbers(this)" title="Re-pull phone numbers from the MVS Portal for every student. Fills in any ALTERNATE number that was missed earlier, corrects a wrong primary, and resends the documents on WhatsApp to numbers that never received them.">Fix missing numbers (Portal re-sync)</button>
             <span id="cache-docs-status" style="font-size:12px;color:var(--muted);align-self:center"></span>
           </div>
           <div id="wa-audit-box" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px"></div>
+          <div id="resync-box" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px"></div>
           <div id="doc-list-box" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px"></div>
           <div id="c-bulkbar" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <span style="font-weight:700;font-size:13px"><span id="c-selcount">0</span> selected</span>
@@ -996,7 +1000,8 @@ function applySidebarPref(){
               <option value="">All Statuses</option>
               <option>Document Required</option>
             </select>
-            <select id="r-session" onchange="loadRequired(1)"><option value="">All Sessions</option></select>
+            <select id="r-session" onchange="onSessChange('r',()=>loadRequired(1))"><option value="">All Sessions</option></select>
+            <select id="r-subsession" onchange="loadRequired(1)" style="display:none" title="Filter by the actual session inside this category"></select>
             <select id="r-source" onchange="loadRequired(1)"><option value="">All Data Types</option><option value="mvs_portal">MVS Portal</option><option value="mvs_tracker">MVS Tracker</option></select>
             <button class="btn btn-primary btn-sm" onclick="runRequired(this)">
               <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -2731,16 +2736,46 @@ async function downloadDoc(btn,ref,dob,kind,name){
     restore('100%');
   }catch(e){showToast("Error: "+e.message);restore();}
 }
-function fillSessions(arr){
-  if(!arr)return;
-  ["s-session","c-session","r-session","u-session","nt-session"].forEach(id=>{
-    const sel=document.getElementById(id);
-    if(!sel)return;
-    const cur=sel.value;
-    sel.length=1;  // keep only the first "All Sessions" option
-    arr.forEach(s=>{if(s){const o=document.createElement("option");o.value=s;o.textContent=s;sel.appendChild(o);}});
-    sel.value=cur; // restore previous selection
-  });
+let SESSION_SUBGROUPS={};
+function fillSessions(arr,subgroups){
+  if(subgroups&&typeof subgroups==="object")SESSION_SUBGROUPS=subgroups;
+  if(arr){
+    ["s-session","c-session","r-session","u-session","nt-session"].forEach(id=>{
+      const sel=document.getElementById(id);
+      if(!sel)return;
+      const cur=sel.value;
+      sel.length=1;  // keep only the first "All Sessions" option
+      arr.forEach(s=>{if(s){const o=document.createElement("option");o.value=s;o.textContent=s;sel.appendChild(o);}});
+      sel.value=cur; // restore previous selection
+    });
+  }
+  // keep the sub-session dropdowns (Public -> April 2027 / October 2027) in step with the data
+  ["s","c","r"].forEach(p=>refreshSubSession(p));
+}
+// Show a SECOND dropdown of the real sessions inside the chosen category (only when that category
+// actually spans more than one session, e.g. Public = April 2027 + October 2027). Auto-builds from
+// live data, so a brand-new session appears on its own with no code change.
+function refreshSubSession(prefix){
+  const main=document.getElementById(prefix+"-session");
+  const sub=document.getElementById(prefix+"-subsession");
+  if(!main||!sub)return;
+  const cat=main.value;
+  const subs=(cat&&SESSION_SUBGROUPS[cat])?SESSION_SUBGROUPS[cat]:[];
+  if(subs.length>1){
+    const cur=sub.value;
+    sub.innerHTML="";
+    const o0=document.createElement("option");o0.value="";o0.textContent="All "+cat+" sessions";sub.appendChild(o0);
+    subs.forEach(s=>{const o=document.createElement("option");o.value=s;o.textContent=s;sub.appendChild(o);});
+    sub.value=subs.indexOf(cur)>=0?cur:"";
+    sub.style.display="";
+  }else{
+    sub.innerHTML="";sub.value="";sub.style.display="none";
+  }
+}
+// main session changed -> rebuild its sub dropdown, then reload the list
+function onSessChange(prefix,reload){
+  refreshSubSession(prefix);
+  if(reload)reload();
 }
 
 async function loadStudents(page){
@@ -2751,13 +2786,14 @@ async function loadStudents(page){
     search:document.getElementById("s-search").value,
     status_filter:document.getElementById("s-status").value,
     session_filter:document.getElementById("s-session").value,
+    subsession_filter:fval("s-subsession"),
     class_filter:fval("s-class"),source_filter:fval("s-source"),date_from:dr.from,date_to:dr.to,
     toc_filter:fval("s-toc"),
     link_filter:fval("s-link"),
     check_state:(document.getElementById("s-checkstate")?document.getElementById("s-checkstate").value:"")});
   try{
     const d=await api("/api/students?"+q.toString());
-    fillSessions(d.sessions);
+    fillSessions(d.sessions,d.session_subgroups);
     document.getElementById("s-count").textContent="Showing "+d.students.length+" of "+d.total+" active students";
     const b=document.getElementById("s-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
@@ -2819,7 +2855,7 @@ async function loadNoToc(page){
     session_filter:document.getElementById("nt-session").value});
   try{
     const d=await api("/api/students?"+q.toString());
-    fillSessions(d.sessions);
+    fillSessions(d.sessions,d.session_subgroups);
     document.getElementById("nt-count").textContent="Showing "+d.students.length+" of "+d.total+" no-TOC students";
     const b=document.getElementById("nt-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
@@ -2981,6 +3017,7 @@ async function loadConfirmed(page){
     status_filter:(document.getElementById("c-status")?document.getElementById("c-status").value:""),
     wa_status:fval("c-wa"),
     session_filter:document.getElementById("c-session").value,
+    subsession_filter:fval("c-subsession"),
     class_filter:fval("c-class"),source_filter:fval("c-source"),
     toc_filter:fval("c-toc"),
     link_filter:fval("c-link"),
@@ -2988,7 +3025,7 @@ async function loadConfirmed(page){
     date_from:dr.from,date_to:dr.to});
   try{
     const d=await api("/api/students?"+q.toString());
-    fillSessions(d.sessions);
+    fillSessions(d.sessions,d.session_subgroups);
     document.getElementById("c-count").textContent=d.total+" confirmed students";
     const b=document.getElementById("c-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
@@ -3230,6 +3267,39 @@ async function showDocList(kind){
   html+="</tbody></table></div>";
   box.innerHTML=html;
 }
+let RESYNC_POLL=null;
+async function mvsResyncNumbers(btn){
+  var box=document.getElementById("resync-box");
+  if(!box)return;
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  box.style.display="block";
+  box.innerHTML="Re-syncing phone numbers from the MVS Portal… this reads every student, so it can take a minute.";
+  try{
+    var r=await api("/api/mvs-resync-numbers","POST",{send:true});
+    if(r&&r.started===false){ box.innerHTML=(r.message||"A re-sync is already running."); }
+  }catch(e){
+    box.innerHTML="Could not start the re-sync: "+(e.message||e);
+    if(btn){btn.disabled=false;btn.style.opacity="";}
+    return;
+  }
+  if(RESYNC_POLL)clearInterval(RESYNC_POLL);
+  RESYNC_POLL=setInterval(async function(){
+    let s; try{ s=await api("/api/mvs-resync-status"); }catch(e){ return; }
+    var line="Checked "+(s.scanned||0)+" Portal-matched students · alternate number added for <b>"+(s.alt_added||0)+
+             "</b> · primary corrected for <b>"+(s.mobile_fixed||0)+"</b>";
+    if(s.to_resend){ line+=" · WhatsApp resent to <b>"+(s.resent||0)+"</b> / "+s.to_resend+" that needed it"; }
+    if(s.error){ line="Re-sync error: "+s.error; }
+    box.innerHTML=(s.running?"Working… ":"Done. ")+line+
+      (s.done&&!s.error&&(s.alt_added||0)===0&&(s.mobile_fixed||0)===0
+        ? "<div style='margin-top:6px;color:var(--muted)'>No numbers changed. If a student still shows only one number, the Portal may not be sending the second one in its data — use the field check to confirm.</div>"
+        : "");
+    if(s.done){
+      clearInterval(RESYNC_POLL);RESYNC_POLL=null;
+      if(btn){btn.disabled=false;btn.style.opacity="";}
+      try{loadConfirmed(_confirmedPage||1);}catch(e){}
+    }
+  },2500);
+}
 function renderWaProgress(p){
   document.getElementById("wap-title").textContent=(p.label||"Sending WhatsApp")+(p.running?"":" — done");
   document.getElementById("wap-pct").textContent=p.pct||0;
@@ -3468,10 +3538,11 @@ async function loadRequired(page){
     search:document.getElementById("r-search").value,
     status_filter:(document.getElementById("r-status")?document.getElementById("r-status").value:""),
     session_filter:document.getElementById("r-session").value,
+    subsession_filter:fval("r-subsession"),
     source_filter:fval("r-source")});
   try{
     const d=await api("/api/students?"+q.toString());
-    fillSessions(d.sessions);
+    fillSessions(d.sessions,d.session_subgroups);
     document.getElementById("r-count").textContent=d.total+" students need documents";
     const b=document.getElementById("r-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>'<tr>'+
@@ -3590,7 +3661,7 @@ async function loadUnknown(page){
     session_filter:fval("u-session")});
   try{
     const d=await api("/api/unknown-students?"+q.toString());
-    if(d.sessions)fillSessions(d.sessions);
+    if(d.sessions)fillSessions(d.sessions,d.session_subgroups);
     document.getElementById("u-count").textContent=d.total+" student(s) with Unknown status";
     const b=document.getElementById("u-body");
     b.innerHTML=d.students.length?d.students.map(s=>{
@@ -4459,12 +4530,12 @@ function onDatePreset(prefix,reload){
   if(!custom&&reload)reload();
 }
 async function exportStudents(view){
-  let search="",status="",session="",cls="",from="",to="",source="",toc="",lnk="";
-  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");cls=fval("c-class");source=fval("c-source");toc=fval("c-toc");lnk=fval("c-link");const dr=dateRange("c");from=dr.from;to=dr.to;}
-  else if(view==="required"){search=fval("r-search");status=fval("r-status");session=fval("r-session");source=fval("r-source");}
-  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");cls=fval("s-class");source=fval("s-source");toc=fval("s-toc");lnk=fval("s-link");const dr=dateRange("s");from=dr.from;to=dr.to;}
+  let search="",status="",session="",cls="",from="",to="",source="",toc="",lnk="",subsess="";
+  if(view==="confirmed"){search=fval("c-search");status=fval("c-status");session=fval("c-session");subsess=fval("c-subsession");cls=fval("c-class");source=fval("c-source");toc=fval("c-toc");lnk=fval("c-link");const dr=dateRange("c");from=dr.from;to=dr.to;}
+  else if(view==="required"){search=fval("r-search");status=fval("r-status");session=fval("r-session");subsess=fval("r-subsession");source=fval("r-source");}
+  else{search=fval("s-search");status=fval("s-status");session=fval("s-session");subsess=fval("s-subsession");cls=fval("s-class");source=fval("s-source");toc=fval("s-toc");lnk=fval("s-link");const dr=dateRange("s");from=dr.from;to=dr.to;}
   const q=new URLSearchParams({view:view,search:search,status_filter:status,session_filter:session,
-    class_filter:cls,source_filter:source,toc_filter:toc,link_filter:lnk,date_from:from,date_to:to});
+    subsession_filter:subsess,class_filter:cls,source_filter:source,toc_filter:toc,link_filter:lnk,date_from:from,date_to:to});
   try{
     showToast("Preparing Excel...");
     const r=await fetch(API+"/api/export-students?"+q.toString(),{headers:{Authorization:"Bearer "+TOKEN}});
@@ -5326,6 +5397,41 @@ def _session_clause(cat):
         return "(" + " OR ".join(["LOWER(session) LIKE ?"] * len(p)) + ")", p
     return "session = ?", [cat]
 
+def _session_subgroups():
+    """The ACTUAL sessions present, grouped under each filter category, so the UI can offer a second
+    dropdown inside a category — e.g. Public -> 'April 2027' / 'October 2027'. Auto-grows: when a new
+    session (say 'April 2028') first appears in the data it shows up here on its own, no code change.
+    Returns {category: [clean session labels]} for On Demand / Public / Stream 2 / Stream 1 (never SYC)."""
+    from excel_handler import canonicalize_session
+    conn = get_db()
+    raws = [r["session"] for r in conn.execute(
+        "SELECT DISTINCT session FROM student_status WHERE TRIM(COALESCE(session,'')) != ''").fetchall()]
+    conn.close()
+    groups = {}
+    for raw in raws:
+        cat = normalize_session(raw)
+        if not cat or cat == "SYC":
+            continue
+        canon = canonicalize_session(raw) or (raw or "").strip()
+        if canon:
+            groups.setdefault(cat, set()).add(canon)
+    return {cat: sorted(labels) for cat, labels in groups.items()}
+
+def _subsession_clause(canon):
+    """SQL clause matching every raw session whose clean label equals `canon` (e.g. 'April 2027'),
+    so spelling variants ('apr-27') are included while different years ('April 2027' vs 'April 2028')
+    stay separate. Used for the second (sub-session) dropdown inside a category like Public."""
+    from excel_handler import canonicalize_session
+    conn = get_db()
+    raws = [r["session"] for r in conn.execute(
+        "SELECT DISTINCT session FROM student_status WHERE TRIM(COALESCE(session,'')) != ''").fetchall()]
+    conn.close()
+    vals = [r for r in raws if (canonicalize_session(r) or (r or "").strip()) == canon]
+    if not vals:
+        return "session = ?", [canon]      # unseen label -> strict exact match (never matches all)
+    ph = ",".join(["?"] * len(vals))
+    return f"session IN ({ph})", vals
+
 # Sessions that are On Demand or Stream 2 (everything else, except SYC, is "public").
 _OD_S2_SQL = ("(LOWER(COALESCE(session,'')) LIKE '%on demand%' OR LOWER(COALESCE(session,'')) LIKE '%ondemand%' "
               "OR LOWER(COALESCE(session,'')) LIKE '%on-demand%' OR LOWER(COALESCE(session,'')) LIKE '%odes%' "
@@ -5373,7 +5479,7 @@ def _fully_saved_keys():
 def _build_student_where(view, search, status_filter, session_filter,
                          class_filter="", date_from="", date_to="", source_filter="",
                          wa_status="", saved_filter="", check_state="", check_boundary=None,
-                         toc_filter="", link_filter=""):
+                         toc_filter="", link_filter="", subsession_filter=""):
     """Shared WHERE builder so the table and its Excel export stay perfectly in sync.
     NULL-safe so students with missing status/date are never silently hidden."""
     wc, params = [], []
@@ -5431,6 +5537,9 @@ def _build_student_where(view, search, status_filter, session_filter,
         wc.append("current_status = ?"); params.append(status_filter)
     if session_filter:
         clause, sp = _session_clause(session_filter)
+        wc.append(clause); params += sp
+    if subsession_filter:                  # a specific session inside the category (e.g. 'April 2027')
+        clause, sp = _subsession_clause(subsession_filter)
         wc.append(clause); params += sp
     if source_filter:                      # mvs_portal | mvs_tracker | both (Data Type)
         if source_filter == "both":
@@ -5544,7 +5653,7 @@ def get_students(page: int=1, per_page: int=50, search: str="",
                        class_filter: str="", date_from: str="", date_to: str="",
                        source_filter: str="", view: str="normal", wa_status: str="",
                        saved_filter: str="", check_state: str="", toc_filter: str="",
-                       link_filter: str="",
+                       link_filter: str="", subsession_filter: str="",
                        user=Depends(verify_token)):
     conn = get_db()
     offset = (page - 1) * per_page
@@ -5552,7 +5661,7 @@ def get_students(page: int=1, per_page: int=50, search: str="",
     where, params = _build_student_where(view, search, status_filter, session_filter,
                                          class_filter, date_from, date_to, source_filter,
                                          wa_status, saved_filter, check_state, boundary,
-                                         toc_filter, link_filter)
+                                         toc_filter, link_filter, subsession_filter)
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     students = conn.execute(
         f"SELECT * FROM student_status {where} ORDER BY student_name LIMIT ? OFFSET ?",
@@ -5575,7 +5684,7 @@ def get_students(page: int=1, per_page: int=50, search: str="",
     conn.close()
     return {"students": slist, "total": total, "page": page,
             "per_page": per_page, "pages": max(1, (total+per_page-1)//per_page),
-            "sessions": norm_sessions}
+            "sessions": norm_sessions, "session_subgroups": _session_subgroups()}
 
 @app.get("/api/failed-students")
 def failed_students(page: int = 1, per_page: int = 50, search: str = "",
@@ -6977,11 +7086,11 @@ def failed_count(user=Depends(verify_token)):
 def export_students(view: str="normal", search: str="", status_filter: str="",
                          session_filter: str="", class_filter: str="",
                          date_from: str="", date_to: str="", source_filter: str="",
-                         toc_filter: str="", link_filter: str="",
+                         toc_filter: str="", link_filter: str="", subsession_filter: str="",
                          user=Depends(verify_token)):
     """Export the CURRENTLY FILTERED list (active / confirmed / required) to .xlsx.
     Honours the exact same filters as the on-screen table (search, status, session,
-    class 10/12, data type, and date range)."""
+    sub-session, class 10/12, data type, and date range)."""
     import io, openpyxl
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -6989,7 +7098,8 @@ def export_students(view: str="normal", search: str="", status_filter: str="",
     conn = get_db()
     where, params = _build_student_where(view, search, status_filter, session_filter,
                                          class_filter, date_from, date_to, source_filter,
-                                         toc_filter=toc_filter, link_filter=link_filter)
+                                         toc_filter=toc_filter, link_filter=link_filter,
+                                         subsession_filter=subsession_filter)
     rows = conn.execute(f"SELECT * FROM student_status {where} ORDER BY student_name", params).fetchall()
     conn.close()
 
@@ -8217,6 +8327,168 @@ async def upload_alt_numbers(background_tasks: BackgroundTasks,
                 if wa_on else f" {len(send_keys)} are confirmed — turn ON WhatsApp in Settings to send to the alternate number.")
     return {"message": msg, "updated": updated, "not_found": not_found,
             "to_send": (len(send_keys) if wa_on else 0)}
+
+@app.get("/api/mvs-field-probe")
+def mvs_field_probe(ref: str = "", user=Depends(verify_token)):
+    """Audit helper: shows the RAW fields the Portal sends for a student, so we can confirm under
+    which key the second ('ALTERNATE CONTACT') number arrives — or prove the Portal isn't sending it
+    at all. If 'ref' is given, returns that student; otherwise the first few. Phone-like fields are
+    highlighted."""
+    import mvs_sync
+    if not mvs_sync.enabled():
+        return {"ok": False, "note": "MVS Portal integration is OFF."}
+    try:
+        raw = mvs_sync._trackerlist(None, True)
+    except Exception as e:
+        return {"ok": False, "note": f"Portal fetch failed: {e}"}
+    def is_phoneish(v):
+        d = "".join(ch for ch in str(v or "") if ch.isdigit())
+        return len(d) >= 10 and d[-10:][0] in "6789"
+    def pick(s):
+        phones = {k: v for k, v in s.items() if is_phoneish(v)}
+        return {"all_keys": sorted([str(k) for k in s.keys()]),
+                "phone_like_fields": phones,
+                "ref": s.get("referenceNo"), "name": s.get("name"),
+                "studentId": s.get("studentId")}
+    want = (ref or "").strip().lower()
+    out = []
+    for s in raw:
+        if want:
+            if want in str(s.get("referenceNo") or "").lower() or want in str(s.get("studentId") or "").lower():
+                out.append(pick(s))
+        elif len(out) < 3:
+            out.append(pick(s))
+        if want and len(out) >= 3:
+            break
+    return {"ok": True, "count": len(out), "students": out}
+
+
+_RESYNC_STATE = {"running": False, "done": False, "scanned": 0, "alt_added": 0,
+                 "mobile_fixed": 0, "resent": 0, "to_resend": 0, "error": ""}
+
+def _resync_numbers_worker(do_send):
+    """Re-pull phone numbers for every Portal-linked student with the fixed harvest, fill in any
+    alternate number that was missed before, correct a wrong primary, and (optionally) resend the
+    documents on WhatsApp for confirmed students whose delivery was never confirmed and who just
+    gained a number. Only touches students whose numbers actually change — never spams the rest."""
+    import whatsapp, mvs_sync
+    def dg(v):
+        return "".join(ch for ch in str(v or "") if ch.isdigit())[-10:]
+    _RESYNC_STATE.update(running=True, done=False, scanned=0, alt_added=0, mobile_fixed=0,
+                         resent=0, to_resend=0, error="")
+    try:
+        portal = mvs_sync.fetch_students_for_tracker(include_done=True)
+    except Exception as e:
+        logger.warning(f"Resync numbers: Portal fetch failed: {e}")
+        _RESYNC_STATE.update(running=False, done=True, error=str(e)[:200]); return
+    by_sid, by_rk, by_ref, by_enr = {}, {}, {}, {}
+    for p in portal:
+        nums = [n for n in (dg(p.get("mobile")), dg(p.get("alt_mobile"))) if len(n) == 10]
+        if not nums:
+            continue
+        if p.get("student_id"):   by_sid[str(p["student_id"]).strip()] = nums
+        if p.get("row_key"):      by_rk[p["row_key"]] = nums
+        if p.get("reference_no"): by_ref[str(p["reference_no"]).strip()] = nums
+        if p.get("enrollment_no"):by_enr[str(p["enrollment_no"]).strip()] = nums
+    conn = get_db(); c = conn.cursor()
+    rows = c.execute("SELECT row_key, student_id, reference_no, enrollment_no, mobile, alt_mobile, "
+                     "is_confirmed, whatsapp_delivery FROM student_status "
+                     "WHERE COALESCE(deleted,0)=0").fetchall()
+    resend_full, resend_alt = [], []
+    for r in rows:
+        pnums = (by_sid.get(str(r["student_id"] or "").strip())
+                 or by_rk.get(r["row_key"])
+                 or by_ref.get(str(r["reference_no"] or "").strip())
+                 or by_enr.get(str(r["enrollment_no"] or "").strip()))
+        if not pnums:
+            continue
+        _RESYNC_STATE["scanned"] += 1
+        cur = [n for n in (dg(r["mobile"]), dg(r["alt_mobile"])) if len(n) == 10]
+        want = []
+        for n in pnums + cur:
+            if n and n not in want:
+                want.append(n)
+        new_mob = want[0] if want else ""
+        new_alt = want[1] if len(want) > 1 else ""
+        if new_mob == dg(r["mobile"]) and new_alt == dg(r["alt_mobile"]):
+            continue                                   # nothing changed
+        added = [n for n in want if n not in cur]      # numbers the tracker did NOT have before
+        c.execute("UPDATE student_status SET mobile=?, alt_mobile=? WHERE row_key=?",
+                  (new_mob, new_alt, r["row_key"]))
+        if new_alt and dg(r["alt_mobile"]) != new_alt:
+            _RESYNC_STATE["alt_added"] += 1
+        if new_mob and dg(r["mobile"]) != new_mob:
+            _RESYNC_STATE["mobile_fixed"] += 1
+        if r["is_confirmed"] == 1 and added:
+            deliv = ((r["whatsapp_delivery"] if "whatsapp_delivery" in r.keys() else "") or "").strip().lower()
+            if deliv in ("delivered", "read"):
+                resend_alt.append((r["row_key"], added))   # primary already got it -> only new number(s)
+            else:
+                resend_full.append(r["row_key"])           # never confirmed -> resend to both
+    conn.commit(); conn.close()
+    _RESYNC_STATE["to_resend"] = len(resend_full) + len(resend_alt)
+
+    if do_send and get_setting("wa_enabled", "0") == "1":
+        conn = get_db(); c = conn.cursor()
+        for rk in resend_full:
+            r = c.execute("SELECT * FROM student_status WHERE row_key=?", (rk,)).fetchone()
+            if not r:
+                continue
+            try:
+                ok, info = whatsapp.send_for_student({
+                    "row_key": rk, "student_name": r["student_name"] or "",
+                    "mobile": r["mobile"] or "", "alt_mobile": (r["alt_mobile"] if "alt_mobile" in r.keys() else "") or "",
+                    "session": r["session"] or "", "reference_no": r["reference_no"] or "",
+                    "enrollment_no": r["enrollment_no"] or "",
+                    "toc_status": (r["toc_status"] if "toc_status" in r.keys() else "") or "",
+                    "dob": r["dob"] or ""})
+                if ok:
+                    _RESYNC_STATE["resent"] += 1
+                    c.execute("UPDATE student_status SET whatsapp_sent=1, whatsapp_info=? WHERE row_key=?",
+                              (f"Resent to both numbers after Portal number re-sync", rk)); conn.commit()
+            except Exception as e:
+                logger.warning(f"Resync resend-full {rk}: {e}")
+        for rk, added in resend_alt:
+            r = c.execute("SELECT * FROM student_status WHERE row_key=?", (rk,)).fetchone()
+            if not r:
+                continue
+            for num in added:
+                try:
+                    ok, info = whatsapp.send_for_student({
+                        "row_key": rk, "student_name": r["student_name"] or "",
+                        "mobile": r["mobile"] or "", "alt_mobile": num,
+                        "session": r["session"] or "", "reference_no": r["reference_no"] or "",
+                        "enrollment_no": r["enrollment_no"] or "",
+                        "toc_status": (r["toc_status"] if "toc_status" in r.keys() else "") or "",
+                        "dob": r["dob"] or ""}, only_number=num)
+                    if ok:
+                        _RESYNC_STATE["resent"] += 1
+                        c.execute("UPDATE student_status SET whatsapp_info=? WHERE row_key=?",
+                                  (f"Documents sent to newly-added number {num}", rk)); conn.commit()
+                except Exception as e:
+                    logger.warning(f"Resync resend-alt {rk}->{num}: {e}")
+        conn.close()
+    _RESYNC_STATE.update(running=False, done=True)
+    logger.info(f"Resync numbers done: {dict(_RESYNC_STATE)}")
+
+@app.post("/api/mvs-resync-numbers")
+def mvs_resync_numbers(body: dict = None, user=Depends(verify_token)):
+    """Fix missing/wrong phone numbers for existing students by re-pulling them from the Portal,
+    and (when send=true and WhatsApp is ON) resend the documents so numbers that were never captured
+    finally receive them. Runs in the background; poll /api/mvs-resync-status for the result."""
+    import mvs_sync
+    if not mvs_sync.enabled():
+        raise HTTPException(status_code=400, detail="MVS Portal integration is OFF.")
+    if _RESYNC_STATE.get("running"):
+        return {"ok": True, "started": False, "message": "A number re-sync is already running."}
+    do_send = bool((body or {}).get("send", True))
+    _threading.Thread(target=_resync_numbers_worker, args=(do_send,), daemon=True).start()
+    return {"ok": True, "started": True,
+            "message": "Re-syncing numbers from the Portal in the background…"}
+
+@app.get("/api/mvs-resync-status")
+def mvs_resync_status(user=Depends(verify_token)):
+    return dict(_RESYNC_STATE)
 
 @app.get("/api/intervals")
 async def get_intervals(user=Depends(verify_token)):

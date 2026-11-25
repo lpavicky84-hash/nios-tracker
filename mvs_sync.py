@@ -39,6 +39,56 @@ def _valid_ref(v):
     return bool(v) and ("@" not in v) and any(ch.isdigit() for ch in v)
 
 
+import re as _re
+
+def _all_numbers_from(s):
+    """Pull EVERY phone number the Portal sent for a student — under WHATEVER field name it used —
+    and return (mobile, alt_mobile).
+
+    Why this exists: the Portal labels the second number 'ALTERNATE CONTACT' and different Portal
+    builds have sent it as alternateContact / alternateNumber / alternateMobile / whatsappNumber /
+    guardianMobile, etc. The old code guessed a fixed short list of keys and MISSED 'alternateContact'
+    (the exact name the Portal UI uses), so a student with two numbers had only one pulled in — and
+    WhatsApp (which sends to both) could not reach the second number. Here we scan ALL fields,
+    keep every valid 10-digit Indian mobile, and keep both numbers, so this can never silently drop
+    the alternate again no matter what the Portal names the field."""
+    def digits10(v):
+        d = _re.sub(r"\D", "", str(v or ""))
+        if len(d) >= 10:
+            d = d[-10:]
+            if d and d[0] in "6789":        # a real Indian mobile (not a ref/ID/pincode/date)
+                return d
+        return ""
+    primary, alt, extra = [], [], []
+    for k, v in (s.items() if isinstance(s, dict) else []):
+        kl = _re.sub(r"[^a-z0-9]", "", str(k).lower())
+        if not kl:
+            continue
+        d = digits10(v)
+        if not d:
+            continue
+        looks_phone = any(h in kl for h in ("mobile", "mob", "phone", "contact",
+                                            "number", "whatsapp", "cell", "tel"))
+        looks_alt = (kl.startswith("alt") or kl.endswith("2")
+                     or any(h in kl for h in ("altern", "secondary", "guardian", "parent",
+                                              "father", "mother", "emergency")))
+        skip_idish = any(h in kl for h in ("ref", "enrol", "enroll", "aadh", "roll",
+                                           "pin", "fee", "amount", "order", "txn", "receipt"))
+        if looks_phone and looks_alt:
+            alt.append(d)
+        elif looks_phone:
+            primary.append(d)
+        elif not skip_idish:
+            extra.append(d)                 # key name gave no hint, but value is a real mobile
+    ordered = []
+    for d in primary + alt + extra:
+        if d and d not in ordered:
+            ordered.append(d)
+    mob  = ordered[0] if ordered else ""
+    altm = ordered[1] if len(ordered) > 1 else ""
+    return mob, altm
+
+
 def fetch_students_for_tracker(session=None, include_done=False):
     rows = []
     for s in _trackerlist(session, include_done):
@@ -67,12 +117,24 @@ def fetch_students_for_tracker(session=None, include_done=False):
             rk = "enr:" + enr
         else:
             continue
+        # Harvest BOTH numbers from whatever fields the Portal used. If the Portal explicitly sends
+        # a 'mobile' primary, keep it as the primary and let the harvest supply the alternate; this
+        # preserves the Portal's own primary/alternate order while never dropping the second number.
+        h_mob, h_alt = _all_numbers_from(s)
+        exp_mob = str(s.get("mobile") or "").strip()
+        _emob = "".join(ch for ch in exp_mob if ch.isdigit())[-10:]
+        if _emob and _emob[:1] in "6789":
+            mobile_val = exp_mob
+            alt_val = h_alt if ("".join(ch for ch in str(h_alt) if ch.isdigit())[-10:] != _emob) else h_mob
+            if "".join(ch for ch in str(alt_val) if ch.isdigit())[-10:] == _emob:
+                alt_val = ""
+        else:
+            mobile_val, alt_val = h_mob, h_alt
         rows.append({
             "row_index": 0, "reference_no": ref, "enrollment_no": enr, "email": email,
             "dob": str(s.get("dob") or "").strip(), "student_name": str(s.get("name") or "").strip(),
-            "mobile": str(s.get("mobile") or "").strip(), "class_level": str(s.get("class") or "").strip(),
-            "alt_mobile": str(s.get("alternateMobile") or s.get("alternateNumber") or s.get("altMobile")
-                              or s.get("whatsappNumber") or s.get("alternate_number") or "").strip(),
+            "mobile": str(mobile_val or "").strip(), "class_level": str(s.get("class") or "").strip(),
+            "alt_mobile": str(alt_val or "").strip(),
             "session": canonicalize_session(str(s.get("examSession") or "").strip()), "row_key": rk,
             "student_id": str(s.get("studentId") or "").strip(),
             "toc_status": normalize_toc(s.get("tocStatus") or s.get("tocstatus")
