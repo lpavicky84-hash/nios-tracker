@@ -136,47 +136,56 @@ def _clean(v):
     return (v or "").replace("\xa0", " ").strip()
 
 def render_receipt(pairs, student_name="", logo_bytes=None, status="PAID"):
-    """Reproduce the EXACT NIOS 'Online Payment Receipt' from the real receipt data — same logo,
-    same #56bdea title bar, same black-bordered details table, same Arial text (NIOS's own wording,
-    typos and all) — and return (png_bytes, pdf_bytes). Pillow only, so it is 100% reliable on the
-    server (no browser / weasyprint / system libraries)."""
+    """Reproduce the NIOS 'Online Payment Receipt' EXACTLY as it downloads/prints from the portal —
+    an A4 page, the real NIOS logo, the plain bold-black 'Online Payment Receipt' heading (NIOS's
+    printed receipt has NO colour bar — browsers don't print background colours), the black-bordered
+    details table and the same Arial text at NIOS's own point sizes (its wording and typos kept) —
+    and return (png_bytes, pdf_bytes). Pillow only, so it is 100% reliable on the server (no browser /
+    weasyprint / system libraries)."""
     from PIL import Image, ImageDraw
-    OUT = 60                       # outer white margin around the 'page'
-    CW = 1480                      # container width (NIOS 740px at 2x)
-    W = CW + 2 * OUT               # image width
-    CL = OUT                       # container left edge
-    CR = OUT + CW                  # container right edge
-    DARK = (51, 51, 51)            # #333
-    BLUE = (86, 189, 234)          # #56bdea (exact NIOS bar colour)
+    # --- A4 page at 200 DPI so PNG and PDF both come out exactly A4 (210mm x 297mm) like the portal.
+    DPI = 200
+    MM = DPI / 25.4                 # pixels per millimetre
+    W = int(210 * MM)              # A4 width  (1654 px)
+    A4H = int(297 * MM)            # A4 height (2339 px)
+    MARGIN = int(14 * MM)          # ~14mm page margin
+    CL = MARGIN                    # content left edge
+    CR = W - MARGIN                # content right edge
+    CW = CR - CL                   # content width
+    DARK = (51, 51, 51)            # #333 (NIOS body text colour)
     BLACK = (0, 0, 0)
 
-    f_bar = _font(30, True)
-    f_thanks = _font(24, False)
-    f_td = _font(26, True)
-    f_lbl = _font(26, True)
-    f_val = _font(26, False)
-    f_foot = _font(26, False)
-    f_foot_b = _font(26, True)
-    # Liberation Sans (our Arial) has no rupee sign, so the amount cell uses DejaVu, which does.
-    def _rupee_font(size):
+    def pt(p):                     # NIOS point size -> pixels at this DPI
+        return max(1, int(round(p * DPI / 72.0)))
+    f_title = _font(pt(11), True)  # "Online Payment Receipt" : 11pt bold
+    f_thanks = _font(pt(11), False)
+    f_td = _font(pt(11), True)     # "Transaction Details"
+    f_lbl = _font(pt(10), True)    # table label : 10pt bold
+    f_val = _font(pt(10), False)   # table value : 10pt
+    f_foot = _font(pt(11), False)
+    f_foot_b = _font(pt(11), True)
+    # Liberation Sans (our Arial) has no rupee sign, so any ₹ value uses DejaVu, which does.
+    def _rupee_font(size, bold=False):
         from PIL import ImageFont
-        for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
-            try:
-                return ImageFont.truetype(p, size)
-            except Exception:
-                continue
-        return f_val
-    f_rupee = _rupee_font(26)
+        cand = ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+                else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+        try:
+            return ImageFont.truetype(cand, size)
+        except Exception:
+            return f_val
+    f_rupee = _rupee_font(pt(10))
 
     scratch = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     def th(font, text="Hg"):
         b = scratch.textbbox((0, 0), text, font=font)
         return b[3] - b[1]
+    def tw_(font, text):
+        b = scratch.textbbox((0, 0), text, font=font)
+        return b[2] - b[0]
 
-    # ---- logo (the exact receipt logo), scaled to ~400px (2x) wide
+    # ---- logo (the real NIOS receipt logo), ~54% of the content width, centred, like the portal
     logo_im = None
-    logo_w = 760
+    logo_w = int(CW * 0.54)
     logo_h = 0
     if logo_bytes:
         try:
@@ -186,75 +195,74 @@ def render_receipt(pairs, student_name="", logo_bytes=None, status="PAID"):
         except Exception:
             logo_im = None
     if logo_im is None:
-        logo_h = 70
+        logo_h = pt(13)
 
-    pad_cell = 14
-    row_h = th(f_lbl) + 2 * pad_cell + 6
+    pad_cell = int(2 * MM)                    # NIOS cell padding = 2mm
+    row_h = th(f_lbl) + 2 * pad_cell + int(1.2 * MM)
+    bw = max(2, int(0.75 * DPI / 72.0))       # NIOS border 0.75pt
 
-    # ---- measure total height
-    y = 24
-    y += logo_h + 24
-    bar_h = th(f_bar) + 2 * 14
-    y += bar_h + 46
-    y += th(f_thanks) + 12 + th(f_td) + 46
+    # ---- measure the content block height
+    y = int(6 * MM)
+    y += logo_h + int(5 * MM)
+    y += th(f_title) + int(10 * MM)
+    y += th(f_thanks) + int(3 * MM) + th(f_td) + int(10 * MM)
     y += row_h * max(1, len(pairs))
-    y += 70
-    y += th(f_foot) + 14 + th(f_foot_b) + 20 + th(f_foot)
-    H = y + 40
+    y += int(16 * MM)
+    y += th(f_foot) + int(4 * MM) + th(f_foot_b) + int(6 * MM) + th(f_foot)
+    content_bottom = y + int(10 * MM)
+    H = max(A4H, content_bottom)              # always a full A4 page, taller only if it must
 
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
 
-    cy = 24
+    cy = int(6 * MM)
     if logo_im is not None:
         img.paste(logo_im, (CL + (CW - logo_w) // 2, cy), logo_im)
-        cy += logo_h + 24
+        cy += logo_h + int(5 * MM)
     else:
-        d.text(((CL + CR) // 2, cy + 30), "National Institute of Open Schooling",
+        d.text((W // 2, cy + pt(10)), "National Institute of Open Schooling",
                font=f_td, fill=(40, 40, 120), anchor="mm")
-        cy += logo_h + 24
+        cy += logo_h + int(5 * MM)
 
-    # ---- blue title bar (full container width)
-    d.rectangle([CL, cy, CR, cy + bar_h], fill=BLUE)
-    d.text(((CL + CR) // 2, cy + bar_h // 2), "Online Payment Receipt",
-           font=f_bar, fill=BLACK, anchor="mm")
-    cy += bar_h + 46
+    # ---- heading: plain bold black, centred (no colour bar — matches the printed receipt)
+    d.text((W // 2, cy), "Online Payment Receipt", font=f_title, fill=BLACK, anchor="ma")
+    cy += th(f_title) + int(10 * MM)
 
-    # ---- thank-you + Transaction Details (centered, NIOS's exact wording)
-    d.text(((CL + CR) // 2, cy),
+    # ---- thank-you + Transaction Details (centred, NIOS's exact wording)
+    d.text((W // 2, cy),
            "Thank You Please Quote this transaction reference number for any queries in future related to this transaction",
            font=f_thanks, fill=DARK, anchor="ma")
-    cy += th(f_thanks) + 12
-    d.text(((CL + CR) // 2, cy), "Transaction Details", font=f_td, fill=DARK, anchor="ma")
-    cy += th(f_td) + 46
+    cy += th(f_thanks) + int(3 * MM)
+    d.text((W // 2, cy), "Transaction Details", font=f_td, fill=DARK, anchor="ma")
+    cy += th(f_td) + int(10 * MM)
 
-    # ---- bordered details table: 80% width centred, bold label (60%) | value (40%)
+    # ---- bordered details table: 80% of content width, centred, bold label (60%) | value (40%)
     tw = int(CW * 0.8)
     tx0 = CL + (CW - tw) // 2
     tx1 = tx0 + tw
     split = tx0 + int(tw * 0.6)
     ty = cy
     for (label, value) in pairs:
-        d.rectangle([tx0, ty, tx1, ty + row_h], outline=BLACK, width=2)
-        d.line([split, ty, split, ty + row_h], fill=BLACK, width=2)
+        d.rectangle([tx0, ty, tx1, ty + row_h], outline=BLACK, width=bw)
+        d.line([split, ty, split, ty + row_h], fill=BLACK, width=bw)
         d.text((tx0 + pad_cell, ty + row_h // 2), _clean(label), font=f_lbl, fill=DARK, anchor="lm")
         vf = f_rupee if "₹" in (value or "") else f_val
         d.text((split + pad_cell, ty + row_h // 2), _clean(value), font=vf, fill=DARK, anchor="lm")
         ty += row_h
-    cy = ty + 70
+    cy = ty + int(16 * MM)
 
-    # ---- footer (left-aligned, NIOS's exact text incl. its own spelling)
+    # ---- footer (left-aligned at the page margin, NIOS's exact text incl. its own spelling)
     d.text((CL, cy), "Best Regards.", font=f_foot, fill=DARK)
-    cy += th(f_foot) + 14
+    cy += th(f_foot) + int(4 * MM)
     d.text((CL, cy), "National Institute of Open Schooing (NIOS)", font=f_foot_b, fill=DARK)
-    cy += th(f_foot_b) + 20
+    cy += th(f_foot_b) + int(6 * MM)
     d.text((CL, cy), "For futher assistance. call 1800-180-9393 for general queries.",
            font=f_foot, fill=DARK)
 
     png_buf = io.BytesIO()
-    img.save(png_buf, "PNG")
+    img.save(png_buf, "PNG", dpi=(DPI, DPI))
     pdf_buf = io.BytesIO()
-    img.convert("RGB").save(pdf_buf, "PDF", resolution=144.0)
+    img.convert("RGB").save(pdf_buf, "PDF", resolution=float(DPI))
     return png_buf.getvalue(), pdf_buf.getvalue()
 
 # ----------------------------------------------------------------------------- main entry

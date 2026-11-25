@@ -238,6 +238,29 @@ PORTAL_HTML = """<!DOCTYPE html>
   tbody tr:hover{background:var(--row-hover)}
   .ref-tag{background:var(--chip);padding:3px 8px;border-radius:6px;font-family:monospace;font-size:13px}
 
+  /* premium exam-fee buttons */
+  .ef-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:10px 18px;
+    border-radius:11px;font-size:13.5px;font-weight:650;cursor:pointer;border:1px solid transparent;
+    letter-spacing:.1px;transition:transform .12s ease,box-shadow .12s ease,filter .12s ease,background .12s ease}
+  .ef-btn:active{transform:translateY(1px)}
+  .ef-btn:disabled{opacity:.55;cursor:default;transform:none;box-shadow:none}
+  .ef-btn-primary{background:linear-gradient(180deg,#6d6ff5,#4f46e5);color:#fff;box-shadow:0 2px 8px rgba(79,70,229,.28)}
+  .ef-btn-primary:hover{filter:brightness(1.05);box-shadow:0 5px 16px rgba(79,70,229,.36);transform:translateY(-1px)}
+  .ef-btn-indigo{background:linear-gradient(180deg,#8b8ff7,#6366F1);color:#fff;box-shadow:0 2px 8px rgba(99,102,241,.26)}
+  .ef-btn-indigo:hover{filter:brightness(1.05);box-shadow:0 5px 16px rgba(99,102,241,.34);transform:translateY(-1px)}
+  .ef-btn-success{background:linear-gradient(180deg,#22c17b,#16a34a);color:#fff;box-shadow:0 2px 8px rgba(22,163,74,.26)}
+  .ef-btn-success:hover{filter:brightness(1.05);box-shadow:0 5px 16px rgba(22,163,74,.34);transform:translateY(-1px)}
+  .ef-btn-danger{background:var(--card);color:#dc2626;border:1px solid #fca5a5}
+  .ef-btn-danger:hover{background:#fef2f2;border-color:#f87171}
+  .ef-btn-ghost{background:var(--card);color:var(--primary);border:1px solid var(--border)}
+  .ef-btn-ghost:hover{background:var(--primary-light);border-color:var(--primary)}
+  .ef-rcpt{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;
+    font-size:12.5px;font-weight:650;cursor:pointer;border:1px solid var(--primary);
+    background:var(--primary-light);color:var(--primary);transition:.14s}
+  .ef-rcpt:hover{background:var(--primary);color:#fff}
+  .ef-saved{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#059669;margin-top:4px;font-weight:600}
+  .ef-saved-dot{width:6px;height:6px;border-radius:50%;background:#10b981;display:inline-block}
+
   .run-live{color:#2563EB;font-weight:700;font-size:13px}
   .run-done{color:#16A34A;font-weight:700;font-size:13px}
   .run-cancel{color:#94A3B8;font-weight:700;font-size:13px}
@@ -870,19 +893,22 @@ function applySidebarPref(){
             For a <b>paid</b> fee the official receipt is fetched and saved as both <b>PNG</b> and <b>PDF</b> — click to open instantly.
             Everyone starts as <b>Pending</b>; as fees are found paid they move to <b>Paid</b>.
           </p>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-            <input id="ef-search" placeholder="Search name / reference / phone..." oninput="debounceExamFee()" style="flex:1;min-width:240px">
-            <select id="ef-session" onchange="loadExamFee(1)" title="Filter by public exam session"><option value="">All public sessions</option></select>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+            <div style="flex:1;min-width:260px;position:relative;display:flex;align-items:center">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#9aa3b2" stroke-width="2.2" stroke-linecap="round" style="position:absolute;left:14px;pointer-events:none"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input id="ef-search" placeholder="Search name, reference or phone" oninput="debounceExamFee()" style="width:100%;padding:11px 14px 11px 40px;border:1px solid var(--border);border-radius:12px;font-size:14px;background:var(--card);box-shadow:0 1px 2px rgba(16,24,40,.04);outline:none" onfocus="this.style.borderColor='#6366F1';this.style.boxShadow='0 0 0 3px rgba(99,102,241,.14)'" onblur="this.style.borderColor='var(--border)';this.style.boxShadow='0 1px 2px rgba(16,24,40,.04)'">
+            </div>
+            <select id="ef-session" onchange="loadExamFee(1)" title="Filter by public exam session" style="padding:11px 14px;border:1px solid var(--border);border-radius:12px;font-size:14px;background:var(--card);min-width:190px;cursor:pointer;box-shadow:0 1px 2px rgba(16,24,40,.04)"><option value="">All public sessions</option></select>
             <input type="hidden" id="ef-status" value="">
           </div>
-          <div id="ef-chips" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;font-size:13px"></div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
-            <button class="btn btn-primary btn-sm" onclick="examFeeRun('all',this)" title="Check every public confirmed student (current session filter).">Run all public</button>
-            <button class="btn btn-primary btn-sm" onclick="examFeeRun('session',this)" title="Check only the students in the public session chosen above.">Run this session</button>
-            <button class="btn btn-success btn-sm" onclick="examFeeRun('selected',this)" title="Check only the students you ticked (no limit).">Run selected (<span id="ef-selcount">0</span>)</button>
-            <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C" onclick="examFeeStop(this)" title="Stop after the students currently in progress finish.">Stop</button>
+          <div id="ef-chips" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;font-size:13px"></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+            <button class="ef-btn ef-btn-primary" onclick="examFeeRun('all',this)" title="Check every public confirmed student (current session filter).">Run all public</button>
+            <button class="ef-btn ef-btn-indigo" onclick="examFeeRun('session',this)" title="Check only the students in the public session chosen above.">Run this session</button>
+            <button class="ef-btn ef-btn-success" onclick="examFeeRun('selected',this)" title="Check only the students you ticked (no limit).">Run selected (<span id="ef-selcount">0</span>)</button>
+            <button class="ef-btn ef-btn-danger" onclick="examFeeStop(this)" title="Stop after the students currently in progress finish.">Stop</button>
             <span style="flex:1"></span>
-            <button class="btn btn-outline btn-sm" onclick="examFeeLoginDebug(this)" title="Run ONE real NIOS login for the ticked student and show exactly what happened. Use this when a student shows 'Login failed'.">Diagnose login</button>
+            <button class="ef-btn ef-btn-ghost" onclick="examFeeLoginDebug(this)" title="Run ONE real NIOS login for the ticked student and show exactly what happened. Use this when a student shows 'Login failed'.">Diagnose login</button>
           </div>
           <div id="ef-debug" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:12.5px;white-space:pre-wrap;word-break:break-word"></div>
           <div id="ef-progress" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
@@ -3337,17 +3363,29 @@ async function loadExamFee(page){
     document.getElementById("ef-count").textContent="Showing "+d.students.length+" of "+d.total+" confirmed students";
     const b=document.getElementById("ef-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>{
-      let rc="—";
+      let rc="<span style='color:var(--muted)'>—</span>";
       if(s.has_png||s.has_pdf){
-        rc="";
-        if(s.has_png)rc+="<button class='btn btn-outline btn-sm' style='padding:3px 8px' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;png&quot;)'>PNG</button> ";
-        if(s.has_pdf)rc+="<button class='btn btn-outline btn-sm' style='padding:3px 8px' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;pdf&quot;)'>PDF</button>";
+        rc="<div style='display:flex;gap:6px;flex-wrap:wrap'>";
+        if(s.has_png)rc+="<span class='ef-rcpt' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;png&quot;)'>PNG</span>";
+        if(s.has_pdf)rc+="<span class='ef-rcpt' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;pdf&quot;)'>PDF</span>";
+        rc+="</div>";
+      }
+      // per-row saved tracker (like the Confirmed page) — shows this row IS saved in the database
+      var track="";
+      if(s.checked_at){
+        if(s.fee_status==="paid")
+          track="<div class='ef-saved'><span class='ef-saved-dot'></span>Saved in database &middot; receipt PNG + PDF</div>"+
+                "<div style='font-size:10.5px;color:var(--muted);margin-top:1px'>Checked "+escEf(s.checked_at)+"</div>";
+        else
+          track="<div style='font-size:10.5px;color:var(--muted);margin-top:4px'>Saved &middot; checked "+escEf(s.checked_at)+"</div>";
+      }else{
+        track="<div style='font-size:10.5px;color:var(--muted);margin-top:4px'>Not checked yet</div>";
       }
       return '<tr>'+
         '<td><input type="checkbox" class="ef-cb" value="'+s.row_key+'" onchange="onEfSel(this)" '+(EF_SEL.has(s.row_key)?'checked':'')+'></td>'+
         '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
         '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
-        '<td>'+(s.student_name||"—")+'</td>'+
+        '<td>'+(s.student_name||"—")+track+'</td>'+
         '<td style="font-size:13px">'+(s.session||"—")+'</td>'+
         '<td>'+efBadge(s.fee_status)+((s.remark&&s.fee_status!=="paid"&&s.fee_status!=="")?'<div style="font-size:11px;color:var(--muted);margin-top:3px">'+escEf(s.remark)+'</div>':'')+'</td>'+
         '<td>'+(s.amount||"—")+'</td>'+
@@ -3388,26 +3426,35 @@ function examFeeSelAll(cb){ document.querySelectorAll(".ef-cb").forEach(x=>{x.ch
 function updateEfSelCount(){ var e=document.getElementById("ef-selcount"); if(e)e.textContent=EF_SEL.size; }
 async function efDownload(rk,fmt){
   try{
-    showToast("Preparing "+fmt.toUpperCase()+"…");
-    const r=await fetch(API+"/api/exam-fee/receipt?row_key="+encodeURIComponent(rk)+"&fmt="+fmt,{headers:{Authorization:"Bearer "+TOKEN}});
+    showToast("Opening "+fmt.toUpperCase()+"…");
+    // cache-bust (&t=) + no-store so a freshly re-checked receipt is never served stale
+    const r=await fetch(API+"/api/exam-fee/receipt?row_key="+encodeURIComponent(rk)+"&fmt="+fmt+"&t="+Date.now(),
+      {headers:{Authorization:"Bearer "+TOKEN},cache:"no-store"});
     if(!r.ok){showToast("Receipt not found — run the check again");return;}
     const blob=await r.blob();const url=URL.createObjectURL(blob);
-    if(fmt==="png"){ window.open(url,"_blank"); }
+    window.open(url,"_blank");                 // instant view (PNG or PDF) in a new tab
     const a=document.createElement("a");a.href=url;a.download="exam_fee_receipt_"+rk.replace(/[^A-Za-z0-9]/g,"_")+"."+fmt;document.body.appendChild(a);a.click();a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),4000);
+    setTimeout(()=>URL.revokeObjectURL(url),8000);
   }catch(e){showToast("Error: "+e.message);}
 }
 async function examFeeRun(scope,btn){
   const body={scope:scope,session:"Public",subsession:fval("ef-session")};
   if(scope==="selected"){ if(!EF_SEL.size){showToast("Select at least one student first");return;} body.keys=Array.from(EF_SEL); }
-  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  // instant feedback — the panel shows the moment you click, before the server replies
+  if(btn){btn.disabled=true;}
+  var box=document.getElementById("ef-progress");
+  if(box){ box.style.display="block";
+    document.getElementById("ef-prog-title").textContent="Starting…";
+    document.getElementById("ef-prog-pct").textContent="";
+    document.getElementById("ef-prog-bar").style.width="6%";
+    document.getElementById("ef-prog-sub").textContent="Contacting NIOS…"; }
+  showToast("Starting examination-fee check…");
   try{
     const r=await api("/api/exam-fee/run","POST",body);
     showToast(r.message||(r.started===false?"Already running":"Started"));
-    document.getElementById("ef-progress").style.display="block";
     examFeePoll();
-  }catch(e){showToast("Error: "+e.message);}
-  finally{ setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},3000); }
+  }catch(e){ showToast("Error: "+e.message); if(box)box.style.display="none"; }
+  finally{ setTimeout(()=>{if(btn){btn.disabled=false;}},2500); }
 }
 async function examFeeStop(btn){ try{ await api("/api/exam-fee/stop","POST",{}); showToast("Stopping after current students…"); }catch(e){} }
 async function examFeeLoginDebug(btn){
@@ -9005,11 +9052,14 @@ def exam_fee_receipt(row_key: str, fmt: str = "png", user=Depends(verify_token))
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Receipt file not found — run the check again.")
     ref = (r["reference_no"] or row_key)
+    # Never let a browser/CDN serve a stale copy: when a student is re-checked the file at this same
+    # path is rebuilt, so the receipt must always be fetched fresh.
+    nocache = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"}
     if (fmt or "").lower() == "pdf":
         return FileResponse(path, media_type="application/pdf",
-                            filename=f"exam_fee_receipt_{ref}.pdf")
+                            filename=f"exam_fee_receipt_{ref}.pdf", headers=nocache)
     return FileResponse(path, media_type="image/png",
-                        filename=f"exam_fee_receipt_{ref}.png")
+                        filename=f"exam_fee_receipt_{ref}.png", headers=nocache)
 
 @app.get("/api/exam-fee/login-debug")
 def exam_fee_login_debug(ref: str = "", dob: str = "", row_key: str = "", user=Depends(verify_token)):
