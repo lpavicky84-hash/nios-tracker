@@ -576,6 +576,26 @@ def is_logged_in(html):
     return any(m in body for m in ["admission status", "my documents", "payment status",
                                     "logout", "enroll no", "i card", "dashboard"])
 
+def _bounce_reason(html):
+    """When a login BOUNCES, read NIOS's own error message to tell apart a captcha misread (worth
+    retrying with a fresh captcha) from a genuine wrong Reference/DOB (no point retrying — stop and
+    tell the operator to fix the data). Returns 'captcha' | 'data' | 'unknown'."""
+    try:
+        bs = BeautifulSoup(html or "", "html.parser")
+        errs = " ".join(e.get_text(" ", strip=True).lower()
+                        for e in bs.select("p.help-block-error, .help-block.help-block-error, "
+                                           ".flash--message, .alert")).strip()
+    except Exception:
+        errs = ""
+    if not errs:
+        return "unknown"
+    if "captcha" in errs:                 # "The captcha code is incorrect."
+        return "captcha"
+    if any(w in errs for w in ("reference", "date of birth", "enrollment", "application",
+                               "invalid", "incorrect", "not found", "mismatch", "does not")):
+        return "data"
+    return "unknown"
+
 # ── Document fetching (proxy download) ──
 DOC_URLS = {
     "id_card":     "/registration/id-card",
@@ -602,27 +622,40 @@ def get_logged_in_session(reference_no, dob, enrollment_no="", force=False):
         cached = _session_cache.get(key)
         if cached and cached[1] > now:
             return cached[0]
-    # A login "bounce" is usually a low reCAPTCHA v3 score, which is transient — a fresh solve
-    # often scores fine. So try a few times with a brand-new captcha each attempt before giving
-    # up. This is what turns an intermittent 60-70% success run into a near-100% one.
-    BOUNCE_RETRIES = 3
+    # A login "bounce" means the captcha was wrong (or, on the old reCAPTCHA page, a low score).
+    # Each retry uses a brand-new session + fresh captcha. NIOS now shows a VISIBLE text captcha and
+    # checks it CASE-SENSITIVELY, and OCR misreads it a fair share of the time — so the image captcha
+    # needs MANY more tries than the old reCAPTCHA (which only bounced on a rare low score). A fresh
+    # captcha each try means one of them is read correctly and the login succeeds.
+    RECAP_RETRIES = 3
+    IMG_RETRIES = max(4, int(os.environ.get("NIOS_CAPTCHA_RETRIES", "12")))
     resp = None
-    for _attempt in range(BOUNCE_RETRIES):
+    _attempt = 0
+    _max = RECAP_RETRIES
+    while _attempt < _max:
         session, resp = login_student(reference_no, dob, enrollment_no="")
+        if _LOGIN_CAPTCHA.get("mode") == "image":
+            _max = IMG_RETRIES       # live page uses the OCR captcha -> give it many more tries
         if resp is None:
             _LAST_FAIL_REASON = "captcha"   # no captcha token / gateway down — NOT a data problem
-            if _attempt < BOUNCE_RETRIES - 1:
+            if _attempt < _max - 1:
                 time.sleep(1)
+                _attempt += 1
                 continue
             return None
         if is_logged_in(resp.text):
             _session_cache[key] = (session, now + 300)
             return session
-        # Bounced. If it's the last try, fall through to report the bounce; otherwise retry
-        # with a completely fresh captcha + CSRF.
+        # Bounced. If NIOS says the Reference/DOB is wrong, retrying is pointless — stop now so a
+        # genuine data problem is reported fast (and no captcha credit is wasted). If it's a captcha
+        # misread (or unknown), retry with a completely fresh session + captcha.
+        if _bounce_reason(resp.text) == "data":
+            _LAST_FAIL_REASON = "data"
+            return None
         _LAST_FAIL_REASON = "bounce"
-        if _attempt < BOUNCE_RETRIES - 1:
-            time.sleep(1)
+        _attempt += 1
+        if _attempt < _max:
+            time.sleep(0.4)
     return None
 
 def verify_login(reference_no, dob, enrollment_no=""):

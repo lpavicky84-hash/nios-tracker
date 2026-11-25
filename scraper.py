@@ -122,7 +122,10 @@ CAPSOLVER_RESULT  = "https://api.capsolver.com/getTaskResult"
 # A perfectly valid student can momentarily read as 'Fetch Error' (captcha flake, NIOS
 # hiccup, network blip). Auto-retry the status read a few times so the run self-heals
 # instead of needing a manual re-run. Only retries on FAILURE — a clean read costs 1 try.
-STATUS_MAX_TRIES = 5
+# NIOS now shows a VISIBLE text captcha on the status page too, read case-sensitively via OCR, which
+# misses more often than the old invisible reCAPTCHA — so allow more fresh-captcha retries. Each retry
+# uses a brand-new session + captcha (see scrape_students). Configurable via env.
+STATUS_MAX_TRIES = max(5, int(os.environ.get("NIOS_STATUS_TRIES", "8")))
 
 # Login-portal status fallback safety limits (per run): never let it drain the captcha balance.
 # Login-fallback: when the fast PUBLIC status page returns no readable status for a student,

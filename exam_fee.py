@@ -264,8 +264,13 @@ def check_exam_fee(reference_no, dob, enrollment_no=""):
         if session is None:
             reason = getattr(nios_login, "_LAST_FAIL_REASON", "")
             res["status"] = "login_failed"
-            res["remark"] = ("captcha/login service busy — try again" if reason == "captcha"
-                             else f"NIOS login failed — check Reference No / DOB (used '{format_dob(dob)}')")
+            if reason == "captcha":
+                res["remark"] = "captcha/login service busy — run again"
+            elif reason == "data":
+                res["remark"] = f"NIOS says the Reference No / DOB is wrong (used '{format_dob(dob)}') — fix the data"
+            else:
+                res["remark"] = (f"captcha could not be read after several tries — run this student again "
+                                 f"(Reference/DOB look fine; DOB used '{format_dob(dob)}')")
             return res
         r = session.get(PAYMENT_HISTORY_URL, headers=HEADERS, timeout=45)
         low = (r.text or "").lower()
