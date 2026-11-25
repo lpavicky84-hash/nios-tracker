@@ -866,29 +866,23 @@ function applySidebarPref(){
         <div class="card">
           <h3 style="margin:0 0 4px">Examination Fees Checker</h3>
           <p style="color:var(--muted);font-size:13px;margin:0 0 14px">
-            Check each confirmed student's <b>examination fee</b> on the NIOS portal (logs in with Reference No + Date of Birth).
-            For a <b>paid</b> fee the official receipt is fetched and saved as both <b>PNG</b> and <b>PDF</b> — click to open instantly, no waiting next time.
+            Checks each <b>public</b> confirmed student's <b>examination fee</b> on the NIOS portal (logs in with Reference No + Date of Birth).
+            For a <b>paid</b> fee the official receipt is fetched and saved as both <b>PNG</b> and <b>PDF</b> — click to open instantly.
+            Everyone starts as <b>Pending</b>; as fees are found paid they move to <b>Paid</b>.
           </p>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-            <input id="ef-search" placeholder="Search name / reference / phone..." oninput="debounceExamFee()" style="flex:1;min-width:220px">
-            <select id="ef-session" onchange="onSessChange('ef',()=>loadExamFee(1))"><option value="">All Sessions</option></select>
-            <select id="ef-subsession" onchange="loadExamFee(1)" style="display:none" title="Filter by the actual session inside this category"></select>
-            <select id="ef-status" onchange="loadExamFee(1)" title="Filter by examination-fee result">
-              <option value="">All fee statuses</option>
-              <option value="paid">Paid</option>
-              <option value="failed">Failed (shown on portal, not paid)</option>
-              <option value="pending">Pending (no fee yet)</option>
-              <option value="not_checked">Not checked yet</option>
-              <option value="login_failed">Login failed / error</option>
-            </select>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+            <input id="ef-search" placeholder="Search name / reference / phone..." oninput="debounceExamFee()" style="flex:1;min-width:240px">
+            <select id="ef-session" onchange="loadExamFee(1)" title="Filter by public exam session"><option value="">All public sessions</option></select>
+            <input type="hidden" id="ef-status" value="">
           </div>
-          <div id="ef-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;font-size:12.5px"></div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-            <button class="btn btn-primary btn-sm" onclick="examFeeRun('all',this)" title="Check the examination fee for every confirmed student in the current filter.">Run all</button>
-            <button class="btn btn-primary btn-sm" onclick="examFeeRun('session',this)" title="Check only the students in the session chosen above.">Run this session</button>
+          <div id="ef-chips" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;font-size:13px"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+            <button class="btn btn-primary btn-sm" onclick="examFeeRun('all',this)" title="Check every public confirmed student (current session filter).">Run all public</button>
+            <button class="btn btn-primary btn-sm" onclick="examFeeRun('session',this)" title="Check only the students in the public session chosen above.">Run this session</button>
             <button class="btn btn-success btn-sm" onclick="examFeeRun('selected',this)" title="Check only the students you ticked (no limit).">Run selected (<span id="ef-selcount">0</span>)</button>
             <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C" onclick="examFeeStop(this)" title="Stop after the students currently in progress finish.">Stop</button>
-            <button class="btn btn-outline btn-sm" onclick="examFeeLoginDebug(this)" title="Run ONE real NIOS login for the ticked student and show exactly what happened — the captcha the tracker read and the exact NIOS error. Use this when a student shows 'Login failed'.">Diagnose login (ticked student)</button>
+            <span style="flex:1"></span>
+            <button class="btn btn-outline btn-sm" onclick="examFeeLoginDebug(this)" title="Run ONE real NIOS login for the ticked student and show exactly what happened. Use this when a student shows 'Login failed'.">Diagnose login</button>
           </div>
           <div id="ef-debug" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:12.5px;white-space:pre-wrap;word-break:break-word"></div>
           <div id="ef-progress" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
@@ -3330,13 +3324,16 @@ function efBadge(st){
 async function loadExamFee(page){
   page=page||1; _examfeePage=page;
   const q=new URLSearchParams({page:page,per_page:perPage,search:fval("ef-search"),
-    session_filter:fval("ef-session"),subsession_filter:fval("ef-subsession"),fee_status:fval("ef-status")});
+    subsession_filter:fval("ef-session"),fee_status:fval("ef-status")});
   try{
     const d=await api("/api/exam-fee/list?"+q.toString());
-    if(d.session_subgroups){SESSION_SUBGROUPS=d.session_subgroups;
+    if(d.session_subgroups){
+      // Only PUBLIC sessions (April 2027 / October 2027 / future) show here; On Demand & Stream 2 are excluded.
+      var pub=(d.session_subgroups&&d.session_subgroups["Public"])||[];
       const sel=document.getElementById("ef-session");const cur=sel.value;
-      sel.length=1;Object.keys(d.session_subgroups).sort().forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=k;sel.appendChild(o);});
-      sel.value=cur;refreshSubSession("ef");}
+      sel.innerHTML="<option value=''>All public sessions</option>";
+      pub.forEach(s=>{const o=document.createElement("option");o.value=s;o.textContent=s;sel.appendChild(o);});
+      sel.value=pub.indexOf(cur)>=0?cur:"";}
     document.getElementById("ef-count").textContent="Showing "+d.students.length+" of "+d.total+" confirmed students";
     const b=document.getElementById("ef-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>{
@@ -3364,15 +3361,27 @@ async function loadExamFee(page){
 }
 async function loadExamFeeCounts(){
   try{
-    const q=new URLSearchParams({session_filter:fval("ef-session"),subsession_filter:fval("ef-subsession")});
+    const q=new URLSearchParams({subsession_filter:fval("ef-session")});
     const c=await api("/api/exam-fee/counts?"+q.toString());
-    const chip=(lbl,n,bg,fg)=>"<span style='background:"+bg+";color:"+fg+";padding:4px 10px;border-radius:20px;font-weight:600'>"+lbl+": "+n+"</span>";
+    var cur=fval("ef-status");
+    // clickable chips: clicking one filters the list to that status (click again to clear)
+    const chip=(val,lbl,n,bg,fg)=>{
+      var on=(cur===val);
+      return "<span onclick='efChipFilter(&quot;"+val+"&quot;)' style='cursor:pointer;background:"+bg+";color:"+fg+
+        ";padding:5px 12px;border-radius:20px;font-weight:700;"+(on?"outline:2px solid "+fg+";outline-offset:1px;":"")+"'>"+lbl+": "+n+"</span>";
+    };
     document.getElementById("ef-chips").innerHTML=
-      chip("Total",c.total,"#EEF2FF","#3730A3")+chip("Paid",c.paid,"#DCFCE7","#166534")+
-      chip("Failed",c.failed,"#FEE2E2","#991B1B")+chip("Pending",c.pending,"#FEF3C7","#92400E")+
-      chip("Not checked",c.not_checked,"#E5E7EB","#4B5563")+
-      (c.login_failed?chip("Login failed",c.login_failed,"#FFEDD5","#9A3412"):"");
+      chip("","Total",c.total,"#EEF2FF","#3730A3")+
+      chip("paid","Paid",c.paid,"#DCFCE7","#166534")+
+      chip("pending","Pending",c.pending,"#FEF3C7","#92400E")+
+      chip("failed","Failed",c.failed,"#FEE2E2","#991B1B")+
+      (c.login_failed?chip("login_failed","Login failed",c.login_failed,"#FFEDD5","#9A3412"):"");
   }catch(e){}
+}
+function efChipFilter(val){
+  var s=document.getElementById("ef-status");
+  s.value=(s.value===val)?"":val;   // click the active chip again to clear the filter
+  loadExamFee(1);
 }
 function onEfSel(cb){ if(cb.checked)EF_SEL.add(cb.value); else EF_SEL.delete(cb.value); updateEfSelCount(); }
 function examFeeSelAll(cb){ document.querySelectorAll(".ef-cb").forEach(x=>{x.checked=cb.checked; if(cb.checked)EF_SEL.add(x.value); else EF_SEL.delete(x.value);}); updateEfSelCount(); }
@@ -3389,7 +3398,7 @@ async function efDownload(rk,fmt){
   }catch(e){showToast("Error: "+e.message);}
 }
 async function examFeeRun(scope,btn){
-  const body={scope:scope,session:fval("ef-session"),subsession:fval("ef-subsession")};
+  const body={scope:scope,session:"Public",subsession:fval("ef-session")};
   if(scope==="selected"){ if(!EF_SEL.size){showToast("Select at least one student first");return;} body.keys=Array.from(EF_SEL); }
   if(btn){btn.disabled=true;btn.style.opacity="0.6";}
   try{
@@ -8873,9 +8882,9 @@ def _examfee_worker(row_keys):
         logger.info(f"Exam-fee run done: {dict(EXAMFEE_PROGRESS)}")
 
 def _examfee_target_keys(scope, session_filter, subsession_filter, only_keys):
-    """Resolve which CONFIRMED students a run should cover: all, a hand-picked selection (no limit),
-    or everyone in a chosen session. Only students that actually have a Reference No + DOB (so NIOS
-    login is possible) are included."""
+    """Resolve which confirmed PUBLIC students a run should cover: all, a hand-picked selection (no
+    limit), or everyone in a chosen public session. Only students with a Reference No + DOB (so NIOS
+    login is possible) are included. On Demand / Stream 2 are never included here."""
     if scope == "selected" and only_keys:
         keys = [k for k in only_keys if k]
         if not keys:
@@ -8888,8 +8897,8 @@ def _examfee_target_keys(scope, session_filter, subsession_filter, only_keys):
             f"AND COALESCE(reference_no,'')!='' AND COALESCE(dob,'')!=''", keys).fetchall()
         conn.close()
         return [r["row_key"] for r in rows]
-    # all / session scope -> use the same confirmed + session/sub-session filter as the lists
-    where, params = _build_student_where("confirmed", "", "", session_filter, "", "", "", "",
+    # all / session scope -> confirmed PUBLIC only, optionally narrowed to one public session
+    where, params = _build_student_where("confirmed", "", "", "Public", "", "", "", "",
                                           toc_filter="", link_filter="", subsession_filter=subsession_filter)
     conn = get_db()
     rows = conn.execute(
@@ -8926,44 +8935,48 @@ def exam_fee_progress(user=Depends(verify_token)):
     return dict(EXAMFEE_PROGRESS)
 
 @app.get("/api/exam-fee/counts")
-def exam_fee_counts(session_filter: str = "", subsession_filter: str = "", user=Depends(verify_token)):
-    """Totals for the filter chips: how many confirmed students are paid / failed / pending / not yet
-    checked, within the chosen session."""
-    where, params = _build_student_where("confirmed", "", "", session_filter, "", "", "", "",
+def exam_fee_counts(subsession_filter: str = "", user=Depends(verify_token)):
+    """Totals for the filter chips — ONLY confirmed PUBLIC students (April / October / future public
+    sessions; never On Demand or Stream 2). 'Pending' means not-yet-paid: a student that was never
+    checked, or was checked and has no examination-fee payment on the portal, all count as pending.
+    So before any run everyone is pending, and as fees are found paid the pending count falls."""
+    # Always restrict to the Public category; an optional sub-session (e.g. 'April 2027') narrows it.
+    where, params = _build_student_where("confirmed", "", "", "Public", "", "", "", "",
                                           toc_filter="", link_filter="", subsession_filter=subsession_filter)
     conn = get_db()
     total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
     rows = conn.execute(
         f"SELECT COALESCE(e.status,'') AS st, COUNT(*) AS n FROM student_status s "
-        f"LEFT JOIN exam_fee e ON e.row_key=s.row_key {where.replace('WHERE','WHERE')} "
+        f"LEFT JOIN exam_fee e ON e.row_key=s.row_key {where} "
         f"GROUP BY COALESCE(e.status,'')", params).fetchall()
     conn.close()
     by = {r["st"]: r["n"] for r in rows}
     paid = by.get("paid", 0)
     failed = by.get("failed", 0)
-    pending = by.get("pending", 0)
     loginfail = by.get("login_failed", 0) + by.get("error", 0)
-    notchecked = by.get("", 0)
+    # pending = everyone NOT paid, not a failed payment, and not a login failure (i.e. not-checked
+    # + checked-with-no-fee). Initially this is everyone.
+    pending = max(0, total - paid - failed - loginfail)
     return {"total": total, "paid": paid, "failed": failed, "pending": pending,
-            "login_failed": loginfail, "not_checked": notchecked}
+            "login_failed": loginfail}
 
 @app.get("/api/exam-fee/list")
-def exam_fee_list(page: int = 1, per_page: int = 50, search: str = "", session_filter: str = "",
+def exam_fee_list(page: int = 1, per_page: int = 50, search: str = "",
                   subsession_filter: str = "", fee_status: str = "", user=Depends(verify_token)):
-    """Confirmed students with their examination-fee status + whether a receipt is saved."""
-    where, params = _build_student_where("confirmed", search, "", session_filter, "", "", "", "",
+    """Confirmed PUBLIC students (only) with their examination-fee status + whether a receipt is saved.
+    The 'pending' filter covers not-yet-checked AND checked-with-no-fee students together."""
+    where, params = _build_student_where("confirmed", search, "", "Public", "", "", "", "",
                                           toc_filter="", link_filter="", subsession_filter=subsession_filter)
     extra = ""
     fs = (fee_status or "").strip().lower()
     if fs == "paid": extra = " AND COALESCE(e.status,'')='paid'"
     elif fs == "failed": extra = " AND COALESCE(e.status,'')='failed'"
-    elif fs == "pending": extra = " AND COALESCE(e.status,'')='pending'"
+    elif fs == "pending": extra = " AND COALESCE(e.status,'') IN ('', 'pending')"   # not-checked + no-fee
     elif fs == "login_failed": extra = " AND COALESCE(e.status,'') IN ('login_failed','error')"
-    elif fs == "not_checked": extra = " AND COALESCE(e.status,'')=''"
     conn = get_db()
     offset = (page - 1) * per_page
     base = (f"FROM student_status s LEFT JOIN exam_fee e ON e.row_key=s.row_key "
-            f"{where.replace('WHERE','WHERE')}{extra}")
+            f"{where}{extra}")
     total = conn.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0]
     rows = conn.execute(
         f"SELECT s.row_key, s.reference_no, s.student_name, s.session, s.mobile, "

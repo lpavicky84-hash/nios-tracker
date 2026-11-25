@@ -106,14 +106,16 @@ def _font(size, bold=False):
     key = (size, bold)
     if key in _FONT_CACHE:
         return _FONT_CACHE[key]
+    # NIOS's receipt is Arial; Liberation Sans is the metric-compatible Arial clone (and has the
+    # rupee sign), so prefer it, then fall back to DejaVu.
     cands = ([
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     ] if bold else [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ])
     f = None
     for p in cands:
@@ -131,89 +133,128 @@ def _font(size, bold=False):
     return f
 
 def _clean(v):
-    # keep text drawable on any font: the rupee sign is not in every TTF, so show "Rs."
-    return (v or "").replace("₹", "Rs. ").replace("\xa0", " ").strip()
+    return (v or "").replace("\xa0", " ").strip()
 
 def render_receipt(pairs, student_name="", logo_bytes=None, status="PAID"):
-    """Draw a clean, official-looking NIOS payment receipt from the real receipt data and return
-    (png_bytes, pdf_bytes). Pillow only — no browser, no system renderer."""
+    """Reproduce the EXACT NIOS 'Online Payment Receipt' from the real receipt data — same logo,
+    same #56bdea title bar, same black-bordered details table, same Arial text (NIOS's own wording,
+    typos and all) — and return (png_bytes, pdf_bytes). Pillow only, so it is 100% reliable on the
+    server (no browser / weasyprint / system libraries)."""
     from PIL import Image, ImageDraw
-    W = 1000
-    pad = 48
-    # ---- measure needed height first
-    row_h = 46
-    n_rows = max(1, len(pairs))
-    header_h = 210
-    title_h = 70
-    thanks_h = 70
-    footer_h = 150
-    H = header_h + title_h + thanks_h + n_rows * row_h + footer_h + pad
+    OUT = 60                       # outer white margin around the 'page'
+    CW = 1480                      # container width (NIOS 740px at 2x)
+    W = CW + 2 * OUT               # image width
+    CL = OUT                       # container left edge
+    CR = OUT + CW                  # container right edge
+    DARK = (51, 51, 51)            # #333
+    BLUE = (86, 189, 234)          # #56bdea (exact NIOS bar colour)
+    BLACK = (0, 0, 0)
+
+    f_bar = _font(30, True)
+    f_thanks = _font(24, False)
+    f_td = _font(26, True)
+    f_lbl = _font(26, True)
+    f_val = _font(26, False)
+    f_foot = _font(26, False)
+    f_foot_b = _font(26, True)
+    # Liberation Sans (our Arial) has no rupee sign, so the amount cell uses DejaVu, which does.
+    def _rupee_font(size):
+        from PIL import ImageFont
+        for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                continue
+        return f_val
+    f_rupee = _rupee_font(26)
+
+    scratch = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    def th(font, text="Hg"):
+        b = scratch.textbbox((0, 0), text, font=font)
+        return b[3] - b[1]
+
+    # ---- logo (the exact receipt logo), scaled to ~400px (2x) wide
+    logo_im = None
+    logo_w = 760
+    logo_h = 0
+    if logo_bytes:
+        try:
+            logo_im = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
+            logo_h = int(logo_im.height * (logo_w / logo_im.width))
+            logo_im = logo_im.resize((logo_w, logo_h))
+        except Exception:
+            logo_im = None
+    if logo_im is None:
+        logo_h = 70
+
+    pad_cell = 14
+    row_h = th(f_lbl) + 2 * pad_cell + 6
+
+    # ---- measure total height
+    y = 24
+    y += logo_h + 24
+    bar_h = th(f_bar) + 2 * 14
+    y += bar_h + 46
+    y += th(f_thanks) + 12 + th(f_td) + 46
+    y += row_h * max(1, len(pairs))
+    y += 70
+    y += th(f_foot) + 14 + th(f_foot_b) + 20 + th(f_foot)
+    H = y + 40
+
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
 
-    blue = (33, 95, 160)
-    headbar = (108, 170, 220)
-    dark = (30, 30, 30)
-    grey = (90, 90, 90)
-    line = (200, 200, 200)
+    cy = 24
+    if logo_im is not None:
+        img.paste(logo_im, (CL + (CW - logo_w) // 2, cy), logo_im)
+        cy += logo_h + 24
+    else:
+        d.text(((CL + CR) // 2, cy + 30), "National Institute of Open Schooling",
+               font=f_td, fill=(40, 40, 120), anchor="mm")
+        cy += logo_h + 24
 
-    y = pad
-    # ---- logo (fetched from NIOS) or text header
-    logo_drawn = False
-    if logo_bytes:
-        try:
-            lg = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
-            lw = 360
-            lh = int(lg.height * (lw / lg.width))
-            lg = lg.resize((lw, lh))
-            img.paste(lg, ((W - lw) // 2, y), lg)
-            y += lh + 10
-            logo_drawn = True
-        except Exception:
-            logo_drawn = False
-    if not logo_drawn:
-        d.text((W // 2, y + 14), "National Institute of Open Schooling",
-               font=_font(30, True), fill=blue, anchor="mm")
-        d.text((W // 2, y + 54), "(An autonomous institution under Ministry of Education, Govt. of India)",
-               font=_font(16), fill=grey, anchor="mm")
-        y += 100
+    # ---- blue title bar (full container width)
+    d.rectangle([CL, cy, CR, cy + bar_h], fill=BLUE)
+    d.text(((CL + CR) // 2, cy + bar_h // 2), "Online Payment Receipt",
+           font=f_bar, fill=BLACK, anchor="mm")
+    cy += bar_h + 46
 
-    # ---- title bar
-    d.rectangle([pad, y, W - pad, y + 54], fill=headbar)
-    d.text((W // 2, y + 27), "Online Payment Receipt", font=_font(24, True), fill="white", anchor="mm")
-    y += 54 + 22
+    # ---- thank-you + Transaction Details (centered, NIOS's exact wording)
+    d.text(((CL + CR) // 2, cy),
+           "Thank You Please Quote this transaction reference number for any queries in future related to this transaction",
+           font=f_thanks, fill=DARK, anchor="ma")
+    cy += th(f_thanks) + 12
+    d.text(((CL + CR) // 2, cy), "Transaction Details", font=f_td, fill=DARK, anchor="ma")
+    cy += th(f_td) + 46
 
-    # ---- thank-you line
-    d.text((W // 2, y), "Thank You. Please quote this transaction reference number for any future query.",
-           font=_font(16), fill=dark, anchor="mm")
-    y += 28
-    d.text((W // 2, y), "Transaction Details", font=_font(18, True), fill=dark, anchor="mm")
-    y += 26
-
-    # ---- table
-    left = pad
-    right = W - pad
-    split = pad + 360
+    # ---- bordered details table: 80% width centred, bold label (60%) | value (40%)
+    tw = int(CW * 0.8)
+    tx0 = CL + (CW - tw) // 2
+    tx1 = tx0 + tw
+    split = tx0 + int(tw * 0.6)
+    ty = cy
     for (label, value) in pairs:
-        d.rectangle([left, y, right, y + row_h], outline=line, width=1)
-        d.line([split, y, split, y + row_h], fill=line, width=1)
-        d.text((left + 16, y + row_h // 2), _clean(label), font=_font(17, True), fill=dark, anchor="lm")
-        d.text((split + 16, y + row_h // 2), _clean(value), font=_font(17), fill=dark, anchor="lm")
-        y += row_h
-    y += 30
+        d.rectangle([tx0, ty, tx1, ty + row_h], outline=BLACK, width=2)
+        d.line([split, ty, split, ty + row_h], fill=BLACK, width=2)
+        d.text((tx0 + pad_cell, ty + row_h // 2), _clean(label), font=f_lbl, fill=DARK, anchor="lm")
+        vf = f_rupee if "₹" in (value or "") else f_val
+        d.text((split + pad_cell, ty + row_h // 2), _clean(value), font=vf, fill=DARK, anchor="lm")
+        ty += row_h
+    cy = ty + 70
 
-    # ---- footer
-    d.text((left, y), "Best Regards,", font=_font(16), fill=dark)
-    y += 26
-    d.text((left, y), "National Institute of Open Schooling (NIOS)", font=_font(16, True), fill=dark)
-    y += 30
-    d.text((left, y), "For further assistance, call 1800-180-9393 for general queries.",
-           font=_font(15), fill=grey)
+    # ---- footer (left-aligned, NIOS's exact text incl. its own spelling)
+    d.text((CL, cy), "Best Regards.", font=f_foot, fill=DARK)
+    cy += th(f_foot) + 14
+    d.text((CL, cy), "National Institute of Open Schooing (NIOS)", font=f_foot_b, fill=DARK)
+    cy += th(f_foot_b) + 20
+    d.text((CL, cy), "For futher assistance. call 1800-180-9393 for general queries.",
+           font=f_foot, fill=DARK)
 
     png_buf = io.BytesIO()
     img.save(png_buf, "PNG")
     pdf_buf = io.BytesIO()
-    img.convert("RGB").save(pdf_buf, "PDF", resolution=100.0)
+    img.convert("RGB").save(pdf_buf, "PDF", resolution=144.0)
     return png_buf.getvalue(), pdf_buf.getvalue()
 
 # ----------------------------------------------------------------------------- main entry
@@ -224,8 +265,8 @@ def _get_logo(session):
     if _LOGO_CACHE["tried"]:
         return _LOGO_CACHE["bytes"]
     _LOGO_CACHE["tried"] = True
-    for url in ("https://dq4kzxd7fbbni.cloudfront.net/static/dist/pdf/images/NIOSlogo_MoE_without_ISO_2025.png",
-                "https://dq4kzxd7fbbni.cloudfront.net/static/dist/images/favicon/android-icon-192x192.png"):
+    for url in ("https://dq4kzxd7fbbni.cloudfront.net/static/dist/images/nios-logo-main.png",
+                "https://dq4kzxd7fbbni.cloudfront.net/static/dist/pdf/images/NIOSlogo_MoE_without_ISO_2025.png"):
         try:
             r = session.get(url, headers=HEADERS, timeout=20)
             if r.ok and r.content[:4] == b"\x89PNG":
