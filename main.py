@@ -527,6 +527,7 @@ function applySidebarPref(){
   try{ if(localStorage.getItem("mvs_sidebar_min")==="1"){var a=document.getElementById("app");if(a)a.classList.add("sidebar-min");} }catch(e){}
 }
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -892,7 +893,7 @@ function applySidebarPref(){
           <h3 style="margin:0 0 4px">Examination Fees Checker</h3>
           <p style="color:var(--muted);font-size:13px;margin:0 0 14px">
             Checks each <b>public</b> confirmed student's <b>examination fee</b> on the NIOS portal (logs in with Reference No + Date of Birth).
-            For a <b>paid</b> fee the official receipt is fetched and saved as both <b>PNG</b> and <b>PDF</b> — click to open instantly.
+            For a <b>paid</b> fee the real NIOS receipt page is fetched and saved. Use <b>Open / Print</b> to open the exact official receipt (its Print button saves a perfect PDF), or <b>PNG</b> to save it as an image.
             Everyone starts as <b>Pending</b>; as fees are found paid they move to <b>Paid</b>.
           </p>
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
@@ -3366,18 +3367,17 @@ async function loadExamFee(page){
     const b=document.getElementById("ef-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>{
       let rc="<span style='color:var(--muted)'>—</span>";
-      if(s.has_html||s.has_png||s.has_pdf){
+      if(s.has_html||s.has_png){
         rc="<div style='display:flex;gap:6px;flex-wrap:wrap'>";
         if(s.has_html)rc+="<span class='ef-rcpt ef-rcpt-open' onclick='efOpenReceipt(&quot;"+s.row_key+"&quot;)' title='Open the real NIOS receipt page, then use its Print button to save a perfect PDF'>Open / Print</span>";
-        if(s.has_png)rc+="<span class='ef-rcpt' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;png&quot;)'>PNG</span>";
-        if(s.has_pdf)rc+="<span class='ef-rcpt' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;pdf&quot;)'>PDF</span>";
+        if(s.has_html||s.has_png)rc+="<span class='ef-rcpt' onclick='efReceiptPng(&quot;"+s.row_key+"&quot;,this)' title='Save a PNG image cropped straight from the real receipt page'>PNG</span>";
         rc+="</div>";
       }
       // per-row saved tracker (like the Confirmed page) — shows this row IS saved in the database
       var track="";
       if(s.checked_at){
         if(s.fee_status==="paid")
-          track="<div class='ef-saved'><span class='ef-saved-dot'></span>Saved in database &middot; receipt page + PNG + PDF</div>"+
+          track="<div class='ef-saved'><span class='ef-saved-dot'></span>Saved in database &middot; real receipt page</div>"+
                 "<div style='font-size:10.5px;color:var(--muted);margin-top:1px'>Checked "+escEf(s.checked_at)+"</div>";
         else
           track="<div style='font-size:10.5px;color:var(--muted);margin-top:4px'>Saved &middot; checked "+escEf(s.checked_at)+"</div>";
@@ -3439,6 +3439,42 @@ async function efDownload(rk,fmt){
     const a=document.createElement("a");a.href=url;a.download="exam_fee_receipt_"+rk.replace(/[^A-Za-z0-9]/g,"_")+"."+fmt;document.body.appendChild(a);a.click();a.remove();
     setTimeout(()=>URL.revokeObjectURL(url),8000);
   }catch(e){showToast("Error: "+e.message);}
+}
+async function efReceiptPng(rk,btn){
+  // PNG = an exact crop of the REAL receipt page (not a recreation): the saved receipt HTML is
+  // rendered off-screen and the receipt block is captured with html2canvas. Falls back to the saved
+  // server image if anything goes wrong, so a PNG is always produced.
+  var old = btn?btn.textContent:""; if(btn){btn.textContent="…";btn.style.pointerEvents="none";}
+  var ifr=null;
+  var done=function(){ if(ifr&&ifr.parentNode)ifr.parentNode.removeChild(ifr); if(btn){btn.textContent=old;btn.style.pointerEvents="";} };
+  try{
+    if(typeof html2canvas==="undefined"){ done(); return efDownload(rk,"png"); }
+    showToast("Preparing PNG…");
+    const r=await fetch(API+"/api/exam-fee/receipt?row_key="+encodeURIComponent(rk)+"&fmt=html&t="+Date.now(),
+      {headers:{Authorization:"Bearer "+TOKEN},cache:"no-store"});
+    if(!r.ok){ done(); return efDownload(rk,"png"); }
+    const html=await r.text();
+    ifr=document.createElement("iframe");
+    ifr.setAttribute("aria-hidden","true");
+    ifr.style.cssText="position:fixed;left:-99999px;top:0;width:820px;height:1300px;border:0;opacity:0";
+    document.body.appendChild(ifr);
+    const doc=ifr.contentDocument||ifr.contentWindow.document;
+    doc.open(); doc.write(html); doc.close();
+    await new Promise(res=>setTimeout(res,900));   // let the logo image + layout settle
+    ["__mvs_bar","__mvs_inapp"].forEach(id=>{var e=doc.getElementById(id);if(e)e.style.display="none";});
+    doc.querySelectorAll(".print-button,.d-print-none,.hidden-print").forEach(e=>{e.style.display="none";});
+    try{ doc.body.style.paddingTop="0"; doc.body.style.margin="0"; }catch(e){}
+    const target=doc.querySelector('div[style*="740px"]')||doc.body;
+    const canvas=await html2canvas(target,{scale:2,backgroundColor:"#ffffff",useCORS:true,logging:false});
+    canvas.toBlob(function(blob){
+      done();
+      if(!blob){ return efDownload(rk,"png"); }
+      const url=URL.createObjectURL(blob);
+      window.open(url,"_blank");
+      const a=document.createElement("a");a.href=url;a.download="exam_fee_receipt_"+rk.replace(/[^A-Za-z0-9]/g,"_")+".png";document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),8000);
+    },"image/png");
+  }catch(e){ done(); showToast("Using saved copy…"); return efDownload(rk,"png"); }
 }
 async function efOpenReceipt(rk){
   // Open the REAL NIOS receipt page (same as the ID card) in a new tab; its own Print button then

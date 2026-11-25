@@ -479,6 +479,13 @@ def check_exam_fee(reference_no, dob, enrollment_no=""):
             try:
                 html_doc = nios_login.inline_resources(receipt_html, session)
                 html_doc = nios_login._inject_banner(html_doc)
+                # a little more breathing room on screen between the top Print bar and the logo, so the
+                # receipt looks clean when opened (and clears the fixed bar for a screenshot)
+                gap = "<style>@media screen{body{padding-top:120px!important}}</style>"
+                if "</body>" in html_doc:
+                    html_doc = html_doc.replace("</body>", gap + "</body>", 1)
+                else:
+                    html_doc = html_doc + gap
                 res["html"] = html_doc.encode("utf-8")
             except Exception as e:
                 logger.warning(f"exam_fee inline receipt failed {ref}: {e}")
