@@ -101,6 +101,132 @@ def parse_receipt_fields(html):
 
 _FONT_CACHE = {}
 
+# --- Bundled amount font ----------------------------------------------------------------------
+# The rupee sign (U+20B9) is missing from Arial/Liberation and is NOT guaranteed to exist in any
+# system font on the server (that is why it showed as a box). So a tiny DejaVu subset that DOES
+# contain the rupee sign and the digits is embedded here as base64 and used for every value that
+# has a rupee sign. This makes the amount render correctly on ANY server, with no font installed.
+_AMT_FONT_B64 = (
+    "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"
+    "LwsFMA0DLwsDLi0JBS4QAy0JAywyAysqJQUrZAMqKRIFKiUDKRIDKCclBShBAyclAyYlCwUmDwMlCwMk/gMj/gMiDwMhARAFIRID"
+    "IGQDH/oDHh0NBR5kAx0NAxwRQgUc/gMb+gMaQgMZEUIFGf4DGGQDFxYZBRf+AxYBEAUWGQMV/gMU/gMT/gMSEUIFEv4DEQItBRFC"
+    "AxB9Aw9kAw7+Aw0MFgUN/gMMARAFDBYDC/4DChADCf4DCAItBQj+AwcUAwZkAwQBEAUE/gNAFQMCLQUD/gMCARAFAi0DARADAP4D"
+    "AbgBZIWNASsrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysr"
+    "KysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysr"
+    "KysrKysrKysrKysrKysrKysrKysrKwArKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysr"
+    "KysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysr"
+    "KysrKysrKysrKysrKysrKysrKysrKysrKysrKysrHQE1ALgAywDLAMEAqgCcAaYAuABmAAAAcQDLAKACsgCFAHUAuADDAcsBiQIt"
+    "AMsApgDwANMAqgCHAMsDqgQAAUoAMwDLAAAA2QUCAPQBVAC0AJwBOQEUATkHBgQABE4EtARSBLgE5wTNADcEcwTNBGAEcwEzA6IF"
+    "VgWmBVYFOQPFAhIAyQAfALgB3wBzALoD6QMzA7wERAQOAN8DzQOqAOUDqgQEAAAAywCPAKQAewC4ABQBbwB/AnsCUgCPAMcFzQCa"
+    "AJoAbwDLAM0BngHTAPAAugGDANUAmAMEAkgAngHVAMEAywD2AIMDVAJ/AAADMwJmANMAxwCkAM0AjwCaAHMEAAXVAQoA/gIrAKQA"
+    "tACcAAAAYgCcAAAAHQMtBdUF1QXVBfAAfwB7AFQApAa4BhQHIwHTALgAywCmAcMB7AaTAKAA0wNcA3ED2wGFBCMEqARIAI8BOQEU"
+    "ATkDYACPBdUBmgYUByMGZgF5BGAEYARgBHsAnAAAAncEYAGqAOkEYAdiAHsAxQB/AnsAAAC0AlIFzQBmALwAZgB3BhAAzQE7AYUD"
+    "iQCPAHsAAAAdAM0HSgQvAJwAnAAAB30AbwAAAG8DNQBqAG8AewCuALIALQOWAI8CewD2AIMDVAY3BfYAjwCcBOECZgCPAY0C9gDN"
+    "A0QAKQBmBO4AcwAAFAAAlgAAAAAAAAAGAAAAAwAAAAAAAP/YAFoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIACAAC//8AAwABAAAA"
+    "DAAAAAAAAAACAAEAAQAcAAEAAAABAAAACgAcAB4AAURGTFQACAAEAAAAAP//AAAAAAAAAAEAAAAKAJIAlAAUREZMVAB6YXJhYgCE"
+    "YXJtbgCEYnJhaQCEY2FucwCEY2hlcgCEY3lybACEZ2VvcgCEZ3JlawCEaGFuaQCEaGVicgCEa2FuYQCEbGFvIACEbGF0bgCEbWF0"
+    "aACEbmtvIACEb2dhbQCEcnVucgCEdGZuZwCEdGhhaQCEAAQAAAAA//8AAAAAAAAAAAAAAAAAAQAAAAoA4ADoAFAAPAwAB90AAAAA"
+    "AoIAAARgAAAF1QAAAAAAAARgAAAAAAAAAAAAAAAAAAAEYAAAAAAAAAFoAAAEYAAAAFUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAQ4AAAJ2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABaAAABDgAAAFoAAABaAAABDgAAAAAAAAAA"
+    "AAABDgAAAFoAAABaAAABDgAAAFoAAABaAAAAWgAAAXIAAABaAAAAWgAAAjgAAPuPAAAAPAAAAAAAAAAAACgADgAWAAIAAAAaAEIA"
+    "AQACAAIAAwABAAAABAAAAAAAAAADABkAAAAoCXUAAAAYACgAKAmNAAEAFwAoAAAJlgAAAAQAAAAAAAAAAwAcAAAAKAl1AAAAGwAo"
+    "ACgJjQABABoAKAAACZYAAAAA"
+)
+_AMT_FONT_BYTES = None
+_AMT_FONT_CACHE = {}
+def _amount_font(size):
+    """A font guaranteed to have the rupee sign, loaded from the bundled subset above."""
+    global _AMT_FONT_BYTES
+    from PIL import ImageFont
+    if size in _AMT_FONT_CACHE:
+        return _AMT_FONT_CACHE[size]
+    f = None
+    try:
+        if _AMT_FONT_BYTES is None:
+            import base64 as _b64
+            _AMT_FONT_BYTES = _b64.b64decode(_AMT_FONT_B64)
+        f = ImageFont.truetype(io.BytesIO(_AMT_FONT_BYTES), size)
+    except Exception:
+        # last resort: a system DejaVu if the bundled font somehow fails to load
+        for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",):
+            try:
+                f = ImageFont.truetype(p, size); break
+            except Exception:
+                continue
+    _AMT_FONT_CACHE[size] = f
+    return f
+
 def _font(size, bold=False):
     from PIL import ImageFont
     key = (size, bold)
@@ -136,56 +262,46 @@ def _clean(v):
     return (v or "").replace("\xa0", " ").strip()
 
 def render_receipt(pairs, student_name="", logo_bytes=None, status="PAID"):
-    """Reproduce the NIOS 'Online Payment Receipt' EXACTLY as it downloads/prints from the portal —
-    an A4 page, the real NIOS logo, the plain bold-black 'Online Payment Receipt' heading (NIOS's
-    printed receipt has NO colour bar — browsers don't print background colours), the black-bordered
-    details table and the same Arial text at NIOS's own point sizes (its wording and typos kept) —
-    and return (png_bytes, pdf_bytes). Pillow only, so it is 100% reliable on the server (no browser /
-    weasyprint / system libraries)."""
+    """Reproduce the NIOS 'Online Payment Receipt' EXACTLY as it looks on the NIOS portal — the real
+    NIOS logo, the #56bdea blue heading bar with 'Online Payment Receipt' in bold black, the centred
+    thank-you line, the black-bordered details table and the footer, all in Arial at NIOS's own point
+    sizes (its wording and typos kept). The image is cropped tight to the receipt (not a blank A4) and
+    rendered at 2x for a crisp, premium result. The rupee amount uses a bundled font so it ALWAYS
+    shows the rupee sign, never a box, on any server. Returns (png_bytes, pdf_bytes). Pillow only, so
+    it is 100% reliable on the server (no browser / weasyprint / system libraries)."""
     from PIL import Image, ImageDraw
-    # --- A4 page at 200 DPI so PNG and PDF both come out exactly A4 (210mm x 297mm) like the portal.
-    DPI = 200
-    MM = DPI / 25.4                 # pixels per millimetre
-    W = int(210 * MM)              # A4 width  (1654 px)
-    A4H = int(297 * MM)            # A4 height (2339 px)
-    MARGIN = int(14 * MM)          # ~14mm page margin
-    CL = MARGIN                    # content left edge
-    CR = W - MARGIN                # content right edge
-    CW = CR - CL                   # content width
-    DARK = (51, 51, 51)            # #333 (NIOS body text colour)
+    SC = 2                              # 2x the NIOS CSS pixels -> crisp output
+    PXMM = 96.0 / 25.4 * SC            # CSS px per millimetre, scaled (7.559)
+    def mm(v):
+        return int(round(v * PXMM))
+    def pt(p):                         # NIOS point size -> device px
+        return max(1, int(round(p * 96.0 / 72.0 * SC)))
+    CW = 740 * SC                      # NIOS container width (740px) at 2x
+    OUT = mm(5)                        # small white margin around the receipt
+    W = CW + 2 * OUT
+    CL = OUT
+    CR = OUT + CW
+    DARK = (51, 51, 51)                # #333 (NIOS body text colour)
     BLACK = (0, 0, 0)
+    BLUE = (86, 189, 234)              # #56bdea (exact NIOS heading-bar colour)
 
-    def pt(p):                     # NIOS point size -> pixels at this DPI
-        return max(1, int(round(p * DPI / 72.0)))
-    f_title = _font(pt(11), True)  # "Online Payment Receipt" : 11pt bold
+    f_title = _font(pt(11), True)      # "Online Payment Receipt" : 11pt bold
     f_thanks = _font(pt(11), False)
-    f_td = _font(pt(11), True)     # "Transaction Details"
-    f_lbl = _font(pt(10), True)    # table label : 10pt bold
-    f_val = _font(pt(10), False)   # table value : 10pt
+    f_td = _font(pt(11), True)         # "Transaction Details"
+    f_lbl = _font(pt(10), True)        # table label : 10pt bold
+    f_val = _font(pt(10), False)       # table value : 10pt
+    f_amt = _amount_font(pt(10))       # bundled font for ₹ values (always has the rupee sign)
     f_foot = _font(pt(11), False)
     f_foot_b = _font(pt(11), True)
-    # Liberation Sans (our Arial) has no rupee sign, so any ₹ value uses DejaVu, which does.
-    def _rupee_font(size, bold=False):
-        from PIL import ImageFont
-        cand = ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
-                else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
-        try:
-            return ImageFont.truetype(cand, size)
-        except Exception:
-            return f_val
-    f_rupee = _rupee_font(pt(10))
 
     scratch = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     def th(font, text="Hg"):
         b = scratch.textbbox((0, 0), text, font=font)
         return b[3] - b[1]
-    def tw_(font, text):
-        b = scratch.textbbox((0, 0), text, font=font)
-        return b[2] - b[0]
 
-    # ---- logo (the real NIOS receipt logo), ~54% of the content width, centred, like the portal
+    # ---- logo (the real NIOS receipt logo), 400px of the 740px container = 54%, centred
     logo_im = None
-    logo_w = int(CW * 0.54)
+    logo_w = int(CW * (400.0 / 740.0))
     logo_h = 0
     if logo_bytes:
         try:
@@ -195,48 +311,50 @@ def render_receipt(pairs, student_name="", logo_bytes=None, status="PAID"):
         except Exception:
             logo_im = None
     if logo_im is None:
-        logo_h = pt(13)
+        logo_h = pt(20)
 
-    pad_cell = int(2 * MM)                    # NIOS cell padding = 2mm
-    row_h = th(f_lbl) + 2 * pad_cell + int(1.2 * MM)
-    bw = max(2, int(0.75 * DPI / 72.0))       # NIOS border 0.75pt
+    pad_cell = mm(2)                               # NIOS cell padding = 2mm
+    row_h = th(f_lbl) + 2 * pad_cell + mm(1)
+    bw = max(2, int(round(0.75 * 96.0 / 72.0 * SC)))   # NIOS border 0.75pt
+    bar_h = th(f_title) + 2 * mm(2)                # blue bar: text + 2mm top/bottom
 
-    # ---- measure the content block height
-    y = int(6 * MM)
-    y += logo_h + int(5 * MM)
-    y += th(f_title) + int(10 * MM)
-    y += th(f_thanks) + int(3 * MM) + th(f_td) + int(10 * MM)
+    # ---- measure the content block height (crop tight to the receipt)
+    y = mm(3)
+    y += logo_h + mm(5)
+    y += bar_h + mm(7)
+    y += th(f_thanks) + mm(2) + th(f_td) + mm(7)
     y += row_h * max(1, len(pairs))
-    y += int(16 * MM)
-    y += th(f_foot) + int(4 * MM) + th(f_foot_b) + int(6 * MM) + th(f_foot)
-    content_bottom = y + int(10 * MM)
-    H = max(A4H, content_bottom)              # always a full A4 page, taller only if it must
+    y += mm(12)
+    y += th(f_foot) + mm(3) + th(f_foot_b) + mm(3) + th(f_foot)
+    H = y + mm(6)
 
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
 
-    cy = int(6 * MM)
+    cy = mm(3)
     if logo_im is not None:
         img.paste(logo_im, (CL + (CW - logo_w) // 2, cy), logo_im)
-        cy += logo_h + int(5 * MM)
+        cy += logo_h + mm(5)
     else:
-        d.text((W // 2, cy + pt(10)), "National Institute of Open Schooling",
-               font=f_td, fill=(40, 40, 120), anchor="mm")
-        cy += logo_h + int(5 * MM)
+        d.text((W // 2, cy), "National Institute of Open Schooling",
+               font=f_td, fill=(40, 40, 120), anchor="ma")
+        cy += logo_h + mm(5)
 
-    # ---- heading: plain bold black, centred (no colour bar — matches the printed receipt)
-    d.text((W // 2, cy), "Online Payment Receipt", font=f_title, fill=BLACK, anchor="ma")
-    cy += th(f_title) + int(10 * MM)
+    # ---- blue heading bar (full container width) with bold black text, exactly like the portal
+    d.rectangle([CL, cy, CR, cy + bar_h], fill=BLUE)
+    d.text(((CL + CR) // 2, cy + bar_h // 2), "Online Payment Receipt",
+           font=f_title, fill=BLACK, anchor="mm")
+    cy += bar_h + mm(7)
 
     # ---- thank-you + Transaction Details (centred, NIOS's exact wording)
     d.text((W // 2, cy),
            "Thank You Please Quote this transaction reference number for any queries in future related to this transaction",
            font=f_thanks, fill=DARK, anchor="ma")
-    cy += th(f_thanks) + int(3 * MM)
+    cy += th(f_thanks) + mm(2)
     d.text((W // 2, cy), "Transaction Details", font=f_td, fill=DARK, anchor="ma")
-    cy += th(f_td) + int(10 * MM)
+    cy += th(f_td) + mm(7)
 
-    # ---- bordered details table: 80% of content width, centred, bold label (60%) | value (40%)
+    # ---- bordered details table: 80% of container width, centred, bold label (60%) | value (40%)
     tw = int(CW * 0.8)
     tx0 = CL + (CW - tw) // 2
     tx1 = tx0 + tw
@@ -246,23 +364,23 @@ def render_receipt(pairs, student_name="", logo_bytes=None, status="PAID"):
         d.rectangle([tx0, ty, tx1, ty + row_h], outline=BLACK, width=bw)
         d.line([split, ty, split, ty + row_h], fill=BLACK, width=bw)
         d.text((tx0 + pad_cell, ty + row_h // 2), _clean(label), font=f_lbl, fill=DARK, anchor="lm")
-        vf = f_rupee if "₹" in (value or "") else f_val
+        vf = f_amt if "₹" in (value or "") else f_val
         d.text((split + pad_cell, ty + row_h // 2), _clean(value), font=vf, fill=DARK, anchor="lm")
         ty += row_h
-    cy = ty + int(16 * MM)
+    cy = ty + mm(12)
 
-    # ---- footer (left-aligned at the page margin, NIOS's exact text incl. its own spelling)
+    # ---- footer (left-aligned at the container left, NIOS's exact text incl. its own spelling)
     d.text((CL, cy), "Best Regards.", font=f_foot, fill=DARK)
-    cy += th(f_foot) + int(4 * MM)
+    cy += th(f_foot) + mm(3)
     d.text((CL, cy), "National Institute of Open Schooing (NIOS)", font=f_foot_b, fill=DARK)
-    cy += th(f_foot_b) + int(6 * MM)
+    cy += th(f_foot_b) + mm(3)
     d.text((CL, cy), "For futher assistance. call 1800-180-9393 for general queries.",
            font=f_foot, fill=DARK)
 
     png_buf = io.BytesIO()
-    img.save(png_buf, "PNG", dpi=(DPI, DPI))
+    img.save(png_buf, "PNG")
     pdf_buf = io.BytesIO()
-    img.convert("RGB").save(pdf_buf, "PDF", resolution=float(DPI))
+    img.convert("RGB").save(pdf_buf, "PDF", resolution=192.0)
     return png_buf.getvalue(), pdf_buf.getvalue()
 
 # ----------------------------------------------------------------------------- main entry
@@ -295,7 +413,7 @@ def check_exam_fee(reference_no, dob, enrollment_no=""):
     its status is not PAID. 'login_failed' = NIOS login did not go through (wrong Reference/DOB or the
     captcha service was busy) — a transient/data issue the operator can fix, never a wrong 'pending'."""
     res = {"status": "error", "amount": "", "date": "", "txn_id": "", "remark": "",
-           "png": None, "pdf": None}
+           "png": None, "pdf": None, "html": None}
     if nios_login is None:
         res["remark"] = "login module unavailable"
         return res
@@ -353,6 +471,17 @@ def check_exam_fee(reference_no, dob, enrollment_no=""):
             receipt_html = rr.text or ""
         except Exception as e:
             res["remark"] = f"paid, but receipt page failed: {e}"
+        # --- THE REAL NIOS RECEIPT PAGE (same as the ID card / application form) ------------------
+        # Inline the receipt page's own logo/CSS and add the Save-as-PDF / Print banner, exactly like
+        # a document. Opening this shows the genuine NIOS receipt (identical to the portal) and the
+        # Print button makes a perfect PDF that never breaks.
+        if receipt_html:
+            try:
+                html_doc = nios_login.inline_resources(receipt_html, session)
+                html_doc = nios_login._inject_banner(html_doc)
+                res["html"] = html_doc.encode("utf-8")
+            except Exception as e:
+                logger.warning(f"exam_fee inline receipt failed {ref}: {e}")
         pairs = parse_receipt_fields(receipt_html) if receipt_html else []
         if not pairs:
             # Fall back to the data we already have so a receipt is still produced.

@@ -258,6 +258,8 @@ PORTAL_HTML = """<!DOCTYPE html>
     font-size:12.5px;font-weight:650;cursor:pointer;border:1px solid var(--primary);
     background:var(--primary-light);color:var(--primary);transition:.14s}
   .ef-rcpt:hover{background:var(--primary);color:#fff}
+  .ef-rcpt-open{background:linear-gradient(180deg,#6d6ff5,#4f46e5);color:#fff;border-color:transparent;box-shadow:0 2px 6px rgba(79,70,229,.26)}
+  .ef-rcpt-open:hover{filter:brightness(1.06);color:#fff}
   .ef-saved{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#059669;margin-top:4px;font-weight:600}
   .ef-saved-dot{width:6px;height:6px;border-radius:50%;background:#10b981;display:inline-block}
 
@@ -3364,8 +3366,9 @@ async function loadExamFee(page){
     const b=document.getElementById("ef-body");
     b.innerHTML=d.students.length?d.students.map((s,i)=>{
       let rc="<span style='color:var(--muted)'>—</span>";
-      if(s.has_png||s.has_pdf){
+      if(s.has_html||s.has_png||s.has_pdf){
         rc="<div style='display:flex;gap:6px;flex-wrap:wrap'>";
+        if(s.has_html)rc+="<span class='ef-rcpt ef-rcpt-open' onclick='efOpenReceipt(&quot;"+s.row_key+"&quot;)' title='Open the real NIOS receipt page, then use its Print button to save a perfect PDF'>Open / Print</span>";
         if(s.has_png)rc+="<span class='ef-rcpt' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;png&quot;)'>PNG</span>";
         if(s.has_pdf)rc+="<span class='ef-rcpt' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;pdf&quot;)'>PDF</span>";
         rc+="</div>";
@@ -3374,7 +3377,7 @@ async function loadExamFee(page){
       var track="";
       if(s.checked_at){
         if(s.fee_status==="paid")
-          track="<div class='ef-saved'><span class='ef-saved-dot'></span>Saved in database &middot; receipt PNG + PDF</div>"+
+          track="<div class='ef-saved'><span class='ef-saved-dot'></span>Saved in database &middot; receipt page + PNG + PDF</div>"+
                 "<div style='font-size:10.5px;color:var(--muted);margin-top:1px'>Checked "+escEf(s.checked_at)+"</div>";
         else
           track="<div style='font-size:10.5px;color:var(--muted);margin-top:4px'>Saved &middot; checked "+escEf(s.checked_at)+"</div>";
@@ -3436,6 +3439,20 @@ async function efDownload(rk,fmt){
     const a=document.createElement("a");a.href=url;a.download="exam_fee_receipt_"+rk.replace(/[^A-Za-z0-9]/g,"_")+"."+fmt;document.body.appendChild(a);a.click();a.remove();
     setTimeout(()=>URL.revokeObjectURL(url),8000);
   }catch(e){showToast("Error: "+e.message);}
+}
+async function efOpenReceipt(rk){
+  // Open the REAL NIOS receipt page (same as the ID card) in a new tab; its own Print button then
+  // makes a perfect PDF that never breaks.
+  var tab=window.open("","_blank");           // open synchronously so the browser doesn't block it
+  if(tab){ try{ tab.document.write("<p style='font-family:sans-serif;padding:20px'>Opening receipt…</p>"); }catch(e){} }
+  try{
+    const r=await fetch(API+"/api/exam-fee/receipt?row_key="+encodeURIComponent(rk)+"&fmt=html&t="+Date.now(),
+      {headers:{Authorization:"Bearer "+TOKEN},cache:"no-store"});
+    if(!r.ok){ showToast("Receipt not found — run the check again"); if(tab)tab.close(); return; }
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    if(tab){ tab.location.href=url; } else { window.open(url,"_blank"); }
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }catch(e){ showToast("Error: "+e.message); if(tab)tab.close(); }
 }
 async function examFeeRun(scope,btn){
   const body={scope:scope,session:"Public",subsession:fval("ef-session")};
@@ -8839,7 +8856,7 @@ def _examfee_save(row_key, res):
     """Persist one student's exam-fee result (and, when paid, the receipt PNG + PDF) so it can be
     opened instantly later without touching NIOS again."""
     import re as _re, hashlib as _hl
-    png_path = pdf_path = ""
+    png_path = pdf_path = html_path = ""
     try:
         safe = _re.sub(r'[^A-Za-z0-9_.-]', '_', str(row_key))[:70]
         h = _hl.md5(str(row_key).encode("utf-8")).hexdigest()[:10]
@@ -8852,6 +8869,10 @@ def _examfee_save(row_key, res):
             pdf_path = base + ".pdf"
             with open(pdf_path, "wb") as f:
                 f.write(res["pdf"])
+        if res.get("html"):
+            html_path = base + ".html"
+            with open(html_path, "wb") as f:
+                f.write(res["html"])
     except Exception as e:
         logger.warning(f"examfee save file {row_key}: {e}")
     try:
@@ -8859,19 +8880,21 @@ def _examfee_save(row_key, res):
             conn = get_db()
             # keep an existing receipt path if this pass didn't produce a new one (e.g. a re-check
             # that only refreshed the status) so a saved receipt is never lost.
-            old = conn.execute("SELECT png_path, pdf_path FROM exam_fee WHERE row_key=?", (row_key,)).fetchone()
+            old = conn.execute("SELECT png_path, pdf_path, html_path FROM exam_fee WHERE row_key=?", (row_key,)).fetchone()
             if not png_path and old and old["png_path"]:
                 png_path = old["png_path"]
             if not pdf_path and old and old["pdf_path"]:
                 pdf_path = old["pdf_path"]
+            if not html_path and old and old["html_path"]:
+                html_path = old["html_path"]
             conn.execute(
-                "INSERT INTO exam_fee (row_key,status,amount,paid_date,txn_id,png_path,pdf_path,remark,checked_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(row_key) DO UPDATE SET "
+                "INSERT INTO exam_fee (row_key,status,amount,paid_date,txn_id,png_path,pdf_path,html_path,remark,checked_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(row_key) DO UPDATE SET "
                 "status=excluded.status, amount=excluded.amount, paid_date=excluded.paid_date, "
                 "txn_id=excluded.txn_id, png_path=excluded.png_path, pdf_path=excluded.pdf_path, "
-                "remark=excluded.remark, checked_at=excluded.checked_at",
+                "html_path=excluded.html_path, remark=excluded.remark, checked_at=excluded.checked_at",
                 (row_key, res.get("status", "error"), res.get("amount", ""), res.get("date", ""),
-                 res.get("txn_id", ""), png_path, pdf_path, (res.get("remark", "") or "")[:200],
+                 res.get("txn_id", ""), png_path, pdf_path, html_path, (res.get("remark", "") or "")[:200],
                  datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             conn.commit(); conn.close()
     except Exception as e:
@@ -9031,7 +9054,8 @@ def exam_fee_list(page: int = 1, per_page: int = 50, search: str = "",
         f"COALESCE(e.paid_date,'') AS paid_date, COALESCE(e.remark,'') AS remark, "
         f"COALESCE(e.checked_at,'') AS checked_at, "
         f"CASE WHEN COALESCE(e.png_path,'')!='' THEN 1 ELSE 0 END AS has_png, "
-        f"CASE WHEN COALESCE(e.pdf_path,'')!='' THEN 1 ELSE 0 END AS has_pdf "
+        f"CASE WHEN COALESCE(e.pdf_path,'')!='' THEN 1 ELSE 0 END AS has_pdf, "
+        f"CASE WHEN COALESCE(e.html_path,'')!='' THEN 1 ELSE 0 END AS has_html "
         f"{base} ORDER BY s.student_name LIMIT ? OFFSET ?", params + [per_page, offset]).fetchall()
     conn.close()
     return {"students": [dict(r) for r in rows], "total": total, "page": page,
@@ -9040,22 +9064,29 @@ def exam_fee_list(page: int = 1, per_page: int = 50, search: str = "",
 
 @app.get("/api/exam-fee/receipt")
 def exam_fee_receipt(row_key: str, fmt: str = "png", user=Depends(verify_token)):
-    """Serve a saved receipt (png or pdf) for a student, straight from our copy."""
+    """Serve a saved receipt for a student, straight from our copy.
+    fmt='html' serves the REAL NIOS receipt page (opens exactly like the ID card, with a Print /
+    Save-as-PDF button); fmt='pdf' / 'png' serve the rendered image copies."""
     conn = get_db()
-    r = conn.execute("SELECT png_path, pdf_path, reference_no FROM exam_fee e "
+    r = conn.execute("SELECT png_path, pdf_path, html_path, reference_no FROM exam_fee e "
                      "LEFT JOIN student_status s ON s.row_key=e.row_key WHERE e.row_key=?",
                      (row_key,)).fetchone()
     conn.close()
     if not r:
         raise HTTPException(status_code=404, detail="No receipt saved for this student.")
-    path = r["pdf_path"] if (fmt or "").lower() == "pdf" else r["png_path"]
+    f = (fmt or "").lower()
+    path = r["html_path"] if f == "html" else (r["pdf_path"] if f == "pdf" else r["png_path"])
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Receipt file not found — run the check again.")
     ref = (r["reference_no"] or row_key)
     # Never let a browser/CDN serve a stale copy: when a student is re-checked the file at this same
     # path is rebuilt, so the receipt must always be fetched fresh.
     nocache = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"}
-    if (fmt or "").lower() == "pdf":
+    if f == "html":
+        # inline so it opens as a page (the real NIOS receipt), not a download
+        return FileResponse(path, media_type="text/html; charset=utf-8",
+                            headers={**nocache, "Content-Disposition": "inline"})
+    if f == "pdf":
         return FileResponse(path, media_type="application/pdf",
                             filename=f"exam_fee_receipt_{ref}.pdf", headers=nocache)
     return FileResponse(path, media_type="image/png",

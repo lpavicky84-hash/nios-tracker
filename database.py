@@ -305,6 +305,7 @@ def init_db():
             txn_id TEXT,
             png_path TEXT,
             pdf_path TEXT,
+            html_path TEXT,
             remark TEXT,
             checked_at TEXT
         )
@@ -326,6 +327,13 @@ def init_db():
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('interval_public', '12')")
     # WhatsApp auto-send disabled until configured + turned on from the portal
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('wa_enabled', '0')")
+
+    # Safe migration: exam_fee.html_path (older DBs). Stores the real NIOS receipt page
+    # (inlined, with a Print / Save-as-PDF banner) so it opens exactly like the ID card.
+    try:
+        c.execute("ALTER TABLE exam_fee ADD COLUMN html_path TEXT")
+    except Exception:
+        pass
 
     # Safe migration: status_history.source (older DBs). Store source per history row
     # so the History page never has to guess via a fragile reference-no lookup.
