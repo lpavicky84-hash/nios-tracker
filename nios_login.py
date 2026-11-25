@@ -101,6 +101,58 @@ def _capsolver_solve(task, label):
         return "", str(e)
 
 
+_LOGIN_CAPTCHA = {"mode": "recaptcha", "img": ""}   # refreshed from the live login page each GET
+
+def _find_image_captcha(html):
+    """Return the Yii text/image captcha URL if the page shows one. NIOS switched the login and the
+    check-status pages from invisible reCAPTCHA v3 to a VISIBLE text captcha (an image of distorted
+    letters with a 'Captcha' box). Returns '' when the page still uses reCAPTCHA."""
+    if not html:
+        return ""
+    m = re.search(r'id=["\']captcha-image["\'][^>]*?\ssrc=["\']([^"\']+)["\']', html)
+    if m:
+        return m.group(1)
+    m = re.search(r'src=["\'](/auth/captcha[^"\']*)["\']', html)
+    return m.group(1) if m else ""
+
+def solve_image_captcha(session, img_path):
+    """Download the session-bound captcha image (the code lives in the SAME session that fetched the
+    page, so this must use that session) and read it with CapSolver's ImageToText. NIOS checks the
+    code case-sensitively, so we ask for a case-sensitive solve. Returns (text, error)."""
+    if not CAPSOLVER_API_KEY:
+        return "", "CAPTCHA_API_KEY not set"
+    try:
+        url = img_path if str(img_path).startswith("http") else urljoin(BASE, img_path)
+        ir = session.get(url, headers=HEADERS, timeout=30)
+        if not ir.ok or not ir.content:
+            return "", "could not load captcha image"
+        b64 = base64.b64encode(ir.content).decode("ascii")
+    except Exception as e:
+        return "", f"captcha image error: {e}"
+    task = {"type": "ImageToTextTask", "body": b64, "module": "common", "case": True}
+    try:
+        r = requests.post(CAPSOLVER_CREATE, json={"clientKey": CAPSOLVER_API_KEY, "task": task},
+                          timeout=40).json()
+        if r.get("errorId") not in (0, None):
+            return "", str(r.get("errorDescription") or r.get("errorCode") or "create failed")
+        sol = r.get("solution") or {}
+        if sol.get("text"):
+            return str(sol["text"]).strip(), ""
+        tid = r.get("taskId")
+        if tid:
+            for _ in range(30):
+                time.sleep(1)
+                rr = requests.post(CAPSOLVER_RESULT, json={"clientKey": CAPSOLVER_API_KEY, "taskId": tid},
+                                   timeout=30).json()
+                if rr.get("errorId") not in (0, None):
+                    return "", str(rr.get("errorDescription") or "solve failed")
+                if rr.get("status") == "ready":
+                    return str((rr.get("solution") or {}).get("text") or "").strip(), ""
+            return "", "timeout"
+        return "", "no solution"
+    except Exception as e:
+        return "", str(e)
+
 def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
     if not CAPSOLVER_API_KEY:
         logger.error("CAPTCHA_API_KEY not set!")
@@ -239,14 +291,20 @@ def current_login_action():
 def get_login_csrf(session):
     r = session.get(LOGIN_URL, headers=HEADERS, timeout=20)
     html = r.text or ""
-    sk = _extract_sitekey(html)          # keep the captcha key in sync with the live page
-    if sk:
-        if sk != _SITEKEY_CACHE.get("key"):
-            logger.info(f"NIOS login site-key updated -> {sk}")
-        _SITEKEY_CACHE["key"] = sk
-    act = _extract_action(html)          # and the reCAPTCHA action, if any
-    if act:
-        _SITEKEY_CACHE["action"] = act
+    # Detect which captcha the LIVE page uses and remember it, so login_student solves the right one.
+    img = _find_image_captcha(html)
+    if img:
+        _LOGIN_CAPTCHA["mode"] = "image"; _LOGIN_CAPTCHA["img"] = img
+    else:
+        _LOGIN_CAPTCHA["mode"] = "recaptcha"; _LOGIN_CAPTCHA["img"] = ""
+        sk = _extract_sitekey(html)          # keep the captcha key in sync with the live page
+        if sk:
+            if sk != _SITEKEY_CACHE.get("key"):
+                logger.info(f"NIOS login site-key updated -> {sk}")
+            _SITEKEY_CACHE["key"] = sk
+        act = _extract_action(html)          # and the reCAPTCHA action, if any
+        if act:
+            _SITEKEY_CACHE["action"] = act
     soup = BeautifulSoup(html, "html.parser")
     meta = soup.find("meta", {"name": "_csrf"})
     if meta and meta.get("content"):
@@ -261,24 +319,32 @@ def login_student(reference_no, dob, page_action=None, enrollment_no=""):
     IGNORED here. (Status-checking is separate and still supports enrollment — that page keeps it.)
     Returns (session, final_response)."""
     session = requests.Session()
-    csrf = get_login_csrf(session)   # also refreshes the live reCAPTCHA site key + action
-    token = solve_recaptcha_v3(LOGIN_URL, page_action or current_login_action(),
-                               site_key=current_login_sitekey())
-    if not token:
-        logger.error("Login captcha failed")
-        return session, None
+    csrf = get_login_csrf(session)   # also detects the live captcha type (image vs reCAPTCHA)
     payload = {
         "_csrf": csrf,
         "LoginForm[reference_no]": reference_no or "",
         "LoginForm[enrollment_no]": "",
         "LoginForm[application_no]": "",
         "LoginForm[date_of_birth]": format_dob(dob),
-        # NIOS fixed a typo in this field name (recapcha -> recaptcha). Send BOTH spellings so
-        # the token lands in whichever field the live form expects; the unused one is ignored.
-        "LoginForm[google_recaptcha_response]": token,
-        "LoginForm[google_recapcha_response]": token,
         "login-button": "",
     }
+    if _LOGIN_CAPTCHA.get("mode") == "image" and _LOGIN_CAPTCHA.get("img"):
+        # NEW: NIOS shows a visible text/image captcha. Read it with CapSolver ImageToText.
+        text, err = solve_image_captcha(session, _LOGIN_CAPTCHA["img"])
+        if not text:
+            logger.error(f"Login image-captcha failed: {err}")
+            return session, None
+        payload["LoginForm[captcha]"] = text
+    else:
+        # OLD: invisible reCAPTCHA v3 (kept as an automatic fallback if NIOS serves it again).
+        token = solve_recaptcha_v3(LOGIN_URL, page_action or current_login_action(),
+                                   site_key=current_login_sitekey())
+        if not token:
+            logger.error("Login reCAPTCHA failed")
+            return session, None
+        # NIOS has a typo in this field name on some builds (recapcha vs recaptcha); send both.
+        payload["LoginForm[google_recaptcha_response]"] = token
+        payload["LoginForm[google_recapcha_response]"] = token
     resp = session.post(LOGIN_URL, data=payload,
                         headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded",
                                  "Origin": BASE},

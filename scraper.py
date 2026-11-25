@@ -1,16 +1,83 @@
 import os
 import re
 import time
+import base64
 import logging
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
 
 NIOS_URL = "https://sdmis.nios.ac.in/registration/check-admission-status"
+NIOS_BASE = "https://sdmis.nios.ac.in"
 RECAPTCHA_SITE_KEY = "6Lc07T4iAAAAADsnW1ZXbEz0GUissRcasTnSS4Nj"
 _SITEKEY_CACHE = {"key": RECAPTCHA_SITE_KEY, "action": None}   # refreshed from the live check-status page
 _LAST_SOLVE = {"score": None, "err": ""}   # last CapSolver solve's reCAPTCHA score (for diagnostics)
+# The check-status page can use a VISIBLE text/image captcha (NIOS's newer build) instead of the
+# invisible reCAPTCHA v3. get_csrf() detects which, so fetch_status solves the right one.
+_LAST_CAPTCHA = {"mode": "recaptcha", "img": ""}
+
+def _find_image_captcha(html):
+    """Return the Yii text/image captcha URL if the page shows one, else '' (reCAPTCHA page)."""
+    if not html:
+        return ""
+    m = re.search(r'id=["\']captcha-image["\'][^>]*?\ssrc=["\']([^"\']+)["\']', html)
+    if m:
+        return m.group(1)
+    m = re.search(r'src=["\'](/auth/captcha[^"\']*)["\']', html)
+    return m.group(1) if m else ""
+
+def solve_image_captcha(session, img_path):
+    """Download the session-bound captcha image and OCR it with CapSolver ImageToText (case-sensitive,
+    since NIOS checks the code case-sensitively). Returns (text, error)."""
+    if not CAPSOLVER_API_KEY:
+        return "", "CAPTCHA_API_KEY not set"
+    try:
+        url = img_path if str(img_path).startswith("http") else urljoin(NIOS_BASE, img_path)
+        ir = session.get(url, headers=HEADERS, timeout=30)
+        if not ir.ok or not ir.content:
+            return "", "could not load captcha image"
+        b64 = base64.b64encode(ir.content).decode("ascii")
+    except Exception as e:
+        return "", f"captcha image error: {e}"
+    task = {"type": "ImageToTextTask", "body": b64, "module": "common", "case": True}
+    try:
+        r = requests.post(CAPSOLVER_CREATE, json={"clientKey": CAPSOLVER_API_KEY, "task": task},
+                          timeout=40).json()
+        if r.get("errorId") not in (0, None):
+            return "", str(r.get("errorDescription") or r.get("errorCode") or "create failed")
+        sol = r.get("solution") or {}
+        if sol.get("text"):
+            return str(sol["text"]).strip(), ""
+        tid = r.get("taskId")
+        if tid:
+            for _ in range(30):
+                time.sleep(1)
+                rr = requests.post(CAPSOLVER_RESULT, json={"clientKey": CAPSOLVER_API_KEY, "taskId": tid},
+                                   timeout=30).json()
+                if rr.get("errorId") not in (0, None):
+                    return "", str(rr.get("errorDescription") or "solve failed")
+                if rr.get("status") == "ready":
+                    return str((rr.get("solution") or {}).get("text") or "").strip(), ""
+            return "", "timeout"
+        return "", "no solution"
+    except Exception as e:
+        return "", str(e)
+
+def _solve_status_captcha(session):
+    """Return (captcha_fields_dict, error) for the check-status POST, auto-picking the live captcha.
+    Must be called right after get_csrf(session) on the SAME session so an image captcha matches."""
+    if _LAST_CAPTCHA.get("mode") == "image" and _LAST_CAPTCHA.get("img"):
+        text, err = solve_image_captcha(session, _LAST_CAPTCHA["img"])
+        if not text:
+            return None, (err or "image captcha failed")
+        return {"CheckStatus[captcha]": text}, ""
+    token = solve_recaptcha_v3()
+    if not token:
+        return None, "captcha token failed"
+    return {"CheckStatus[google_recaptcha_response]": token,
+            "CheckStatus[google_recapcha_response]": token}, ""
 
 def _extract_sitekey(html):
     """Pull the live reCAPTCHA site key out of the page. NIOS can rotate it; solving for a
@@ -205,14 +272,20 @@ def solve_recaptcha_v3():
 def get_csrf(session):
     resp = session.get(NIOS_URL, headers=HEADERS, timeout=20)
     html = resp.text or ""
-    sk = _extract_sitekey(html)          # keep captcha key in sync with the live page
-    if sk:
-        if sk != _SITEKEY_CACHE.get("key"):
-            logger.info(f"NIOS check-status site-key updated -> {sk}")
-        _SITEKEY_CACHE["key"] = sk
-    act = _extract_action(html)
-    if act:
-        _SITEKEY_CACHE["action"] = act
+    # Detect the live captcha type so fetch_status solves the right one on this same session.
+    img = _find_image_captcha(html)
+    if img:
+        _LAST_CAPTCHA["mode"] = "image"; _LAST_CAPTCHA["img"] = img
+    else:
+        _LAST_CAPTCHA["mode"] = "recaptcha"; _LAST_CAPTCHA["img"] = ""
+        sk = _extract_sitekey(html)          # keep captcha key in sync with the live page
+        if sk:
+            if sk != _SITEKEY_CACHE.get("key"):
+                logger.info(f"NIOS check-status site-key updated -> {sk}")
+            _SITEKEY_CACHE["key"] = sk
+        act = _extract_action(html)
+        if act:
+            _SITEKEY_CACHE["action"] = act
     soup = BeautifulSoup(html, "html.parser")
     meta = soup.find("meta", {"name": "_csrf"})
     if meta:
@@ -311,8 +384,10 @@ def _extract_remark(lines):
             best = l
     return best[:400]
 
-def fetch_status(session, ref_no, email, csrf, token):
-    """Check by reference if available else by email. Returns result dict."""
+def fetch_status(session, ref_no, email, csrf, captcha_fields):
+    """Check by reference if available else by email. `captcha_fields` is the solved captcha POST
+    data (either {'CheckStatus[captcha]': text} for the image captcha, or the reCAPTCHA token
+    fields). Returns result dict."""
     result = {
         "reference_no": ref_no, "email": email,
         "status": "Fetch Error", "remark": "", "raw_text": "", "success": False,
@@ -324,17 +399,18 @@ def fetch_status(session, ref_no, email, csrf, token):
             "CheckStatus[email]": email if (email and not ref_no) else "",
             "CheckStatus[reference_no]": ref_no if ref_no else "",
             "CheckStatus[enrollment_no]": "",
-            "CheckStatus[google_recaptcha_response]": token, "CheckStatus[google_recapcha_response]": token,
         }
+        payload.update(captcha_fields or {})
         headers = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
-        # Session-mode reCAPTCHA v3 (which NIOS uses) also checks a recaptcha-ca-t cookie that
-        # CapSolver returns alongside the token. Without it NIOS silently bounces to the form.
-        _cat = (_LAST_SOLVE or {}).get("ca_t") or ""
-        if _cat:
-            try:
-                session.cookies.set("recaptcha-ca-t", _cat, domain="sdmis.nios.ac.in")
-            except Exception:
-                pass
+        # Session-mode reCAPTCHA v3 (old path) also checks a recaptcha-ca-t cookie that CapSolver
+        # returns alongside the token. Only needed for reCAPTCHA, not the image captcha.
+        if _LAST_CAPTCHA.get("mode") != "image":
+            _cat = (_LAST_SOLVE or {}).get("ca_t") or ""
+            if _cat:
+                try:
+                    session.cookies.set("recaptcha-ca-t", _cat, domain="sdmis.nios.ac.in")
+                except Exception:
+                    pass
         resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25)
         soup = BeautifulSoup(resp.text, "html.parser")
         for tag in soup(["script", "style", "nav", "header", "footer", "meta", "link"]):
@@ -425,20 +501,27 @@ def scrape_students(students, should_cancel=None, progress_cb=None, on_result=No
             for attempt in range(STATUS_MAX_TRIES):
                 if should_cancel and should_cancel():
                     break
-                token = solve_recaptcha_v3()
-                if not token:
+                # The text/image captcha is single-use and tied to the session that loaded it, so
+                # give each attempt its OWN fresh session + captcha. (reCAPTCHA mode keeps reusing the
+                # one session exactly as before.)
+                if _LAST_CAPTCHA.get("mode") == "image":
+                    session = requests.Session()
+                    csrf = get_csrf(session)
+                cfields, cerr = _solve_status_captcha(session)
+                if not cfields:
                     res = {"reference_no": ref, "email": email, "status": "Fetch Error",
-                           "raw_text": "Captcha failed", "success": False, "remark": "",
+                           "raw_text": f"Captcha failed ({cerr})", "success": False, "remark": "",
                            "discovered_ref": ""}
                 else:
-                    res = fetch_status(session, ref, email, csrf, token)
+                    res = fetch_status(session, ref, email, csrf, cfields)
                 if res.get("success"):
                     break
                 if attempt < STATUS_MAX_TRIES - 1:
                     logger.info(f"  retry {attempt+1}/{STATUS_MAX_TRIES-1} for {ref or email} "
                                 f"(was {res.get('status')})")
                     time.sleep(3)
-                    csrf = get_csrf(session)   # refresh token context before retrying
+                    if _LAST_CAPTCHA.get("mode") != "image":
+                        csrf = get_csrf(session)   # reCAPTCHA: refresh token context before retrying
             res["attempts"] = attempt + 1
             # Fallback: the public check-admission-status page sometimes returns a page with NO
             # readable status for a valid student (low captcha score / newly confirmed). If we
@@ -493,15 +576,15 @@ def debug_full_response(reference_no):
         return "ERROR: CAPTCHA_API_KEY not set"
     session = requests.Session()
     csrf = get_csrf(session)
-    token = solve_recaptcha_v3()
-    if not token:
-        return "ERROR: captcha failed"
+    cfields, cerr = _solve_status_captcha(session)
+    if not cfields:
+        return f"ERROR: captcha failed ({cerr})"
     payload = {
         "_csrf": csrf, "CheckStatus[email]": "",
         "CheckStatus[reference_no]": reference_no,
         "CheckStatus[enrollment_no]": "",
-        "CheckStatus[google_recaptcha_response]": token, "CheckStatus[google_recapcha_response]": token,
     }
+    payload.update(cfields)
     resp = session.post(NIOS_URL, data=payload,
                         headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
                         timeout=25)
@@ -529,13 +612,15 @@ def diagnose_status_check(reference_no):
         _a = _SITEKEY_CACHE.get("action")
         out["action"] = ("(none — execute() called with no action; solver now sends empty action to match)"
                          if _a == "__NONE__" else (_a or "(none on page)"))
-        token = solve_recaptcha_v3()
-        out["captcha_token"] = ("obtained (%d chars)" % len(token)) if token else "NOT obtained"
+        out["captcha_mode"] = _LAST_CAPTCHA.get("mode")
+        cfields, cerr = _solve_status_captcha(session)
+        out["captcha_token"] = "obtained" if cfields else ("NOT obtained: " + str(cerr))
         _sc = _LAST_SOLVE.get("score")
         out["captcha_score"] = (str(_sc) if _sc is not None
-                                else ("(not returned) " + str(_LAST_SOLVE.get("err") or "")))
-        if not token:
-            out["note"] = "No captcha token — CapSolver/proxy problem (check the login diagnostic)."
+                                else ("(image captcha — no score)" if _LAST_CAPTCHA.get("mode") == "image"
+                                      else ("(not returned) " + str(_LAST_SOLVE.get("err") or ""))))
+        if not cfields:
+            out["note"] = f"No captcha solved ({cerr}) — CapSolver problem (check the login diagnostic)."
             return out
         # Exactly the real POST
         payload = {
@@ -543,9 +628,8 @@ def diagnose_status_check(reference_no):
             "CheckStatus[email]": "",
             "CheckStatus[reference_no]": reference_no,
             "CheckStatus[enrollment_no]": "",
-            "CheckStatus[google_recaptcha_response]": token,
-            "CheckStatus[google_recapcha_response]": token,
         }
+        payload.update(cfields)
         headers = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
         resp = session.post(NIOS_URL, data=payload, headers=headers, timeout=25,
                             allow_redirects=True)

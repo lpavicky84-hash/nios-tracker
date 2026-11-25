@@ -565,6 +565,8 @@ function applySidebarPref(){
     <div class="nav-item" data-page="pending" onclick="nav('pending')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span class="lbl">Pending Students</span>
       <span class="badge-count" id="nav-pending-badge" style="display:none;background:#B45309">0</span></div>
+    <div class="nav-item" data-page="examfee" onclick="nav('examfee')">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="15" x2="10" y2="15"/></svg></span><span class="lbl">Examination Fees</span></div>
     <div class="nav-sep">Activity</div>
     <div class="nav-item" data-page="history" onclick="nav('history')">
       <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg></span><span class="lbl">Change History</span></div>
@@ -857,6 +859,49 @@ function applySidebarPref(){
               <th>#</th><th>Student Name</th><th>Mobile</th><th>Session</th><th>Class</th><th>Reference on Portal</th><th>Why pending</th><th>Portal ID</th>
             </tr></thead><tbody id="pend-body"><tr><td colspan="8" class="empty">Open this page to load…</td></tr></tbody></table>
           </div>
+        </div>
+      </section>
+
+      <section id="sec-examfee" class="page-section">
+        <div class="card">
+          <h3 style="margin:0 0 4px">Examination Fees Checker</h3>
+          <p style="color:var(--muted);font-size:13px;margin:0 0 14px">
+            Check each confirmed student's <b>examination fee</b> on the NIOS portal (logs in with Reference No + Date of Birth).
+            For a <b>paid</b> fee the official receipt is fetched and saved as both <b>PNG</b> and <b>PDF</b> — click to open instantly, no waiting next time.
+          </p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+            <input id="ef-search" placeholder="Search name / reference / phone..." oninput="debounceExamFee()" style="flex:1;min-width:220px">
+            <select id="ef-session" onchange="onSessChange('ef',()=>loadExamFee(1))"><option value="">All Sessions</option></select>
+            <select id="ef-subsession" onchange="loadExamFee(1)" style="display:none" title="Filter by the actual session inside this category"></select>
+            <select id="ef-status" onchange="loadExamFee(1)" title="Filter by examination-fee result">
+              <option value="">All fee statuses</option>
+              <option value="paid">Paid</option>
+              <option value="failed">Failed (shown on portal, not paid)</option>
+              <option value="pending">Pending (no fee yet)</option>
+              <option value="not_checked">Not checked yet</option>
+              <option value="login_failed">Login failed / error</option>
+            </select>
+          </div>
+          <div id="ef-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;font-size:12.5px"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+            <button class="btn btn-primary btn-sm" onclick="examFeeRun('all',this)" title="Check the examination fee for every confirmed student in the current filter.">Run all</button>
+            <button class="btn btn-primary btn-sm" onclick="examFeeRun('session',this)" title="Check only the students in the session chosen above.">Run this session</button>
+            <button class="btn btn-success btn-sm" onclick="examFeeRun('selected',this)" title="Check only the students you ticked (no limit).">Run selected (<span id="ef-selcount">0</span>)</button>
+            <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C" onclick="examFeeStop(this)" title="Stop after the students currently in progress finish.">Stop</button>
+          </div>
+          <div id="ef-progress" style="display:none;margin-bottom:12px;background:var(--soft);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-weight:700"><span id="ef-prog-title">Checking examination fees</span><span id="ef-prog-pct">0%</span></div>
+            <div style="height:8px;background:var(--border);border-radius:6px;margin:8px 0;overflow:hidden"><div id="ef-prog-bar" style="height:100%;width:0;background:#6366F1;transition:width .3s"></div></div>
+            <div style="font-size:12.5px;color:var(--muted)"><span id="ef-prog-sub"></span></div>
+          </div>
+          <div id="ef-count" style="font-size:12.5px;color:var(--muted);margin-bottom:8px"></div>
+          <div style="overflow-x:auto">
+            <table class="tbl"><thead><tr>
+              <th style="width:34px"><input type="checkbox" id="ef-selall" onclick="examFeeSelAll(this)"></th>
+              <th>#</th><th>Reference</th><th>Student</th><th>Session</th><th>Fee Status</th><th>Amount</th><th>Paid On</th><th>Receipt</th>
+            </tr></thead><tbody id="ef-body"><tr><td colspan="9" class="empty">Open this page to load…</td></tr></tbody></table>
+          </div>
+          <div id="ef-pg" style="margin-top:12px"></div>
         </div>
       </section>
 
@@ -1849,7 +1894,7 @@ async function resumeIntervals(group,btn){
 
 const titles={dashboard:"Dashboard",students:"Active Students",confirmed:"Confirmed Students",
   syc:"SYC Students",
-  required:"Document Required",failed:"Failed to Run",unknown:"Unknown Status",docreq:"Document Requests",history:"Change History",runlogs:"Run Logs",transfers:"Transfer Data",upload:"Upload Excel",settings:"Settings"};
+  required:"Document Required",failed:"Failed to Run",unknown:"Unknown Status",docreq:"Document Requests",examfee:"Examination Fees",history:"Change History",runlogs:"Run Logs",transfers:"Transfer Data",upload:"Upload Excel",settings:"Settings"};
 function refreshPage(btn){
   // reload the data of whichever page is currently open (no full reload, stays logged in)
   if(btn){var ic=btn.querySelector("svg");if(ic){ic.style.transition="transform .6s";ic.style.transform="rotate(360deg)";
@@ -1877,6 +1922,7 @@ function nav(page){
   if(page==="notoc")loadNoToc(1);
   if(page==="tocerror")loadTocErrors();
   if(page==="pending")loadPending();
+  if(page==="examfee")loadExamFee(1);
   if(page==="docreq")loadDocReq();
   if(page==="history")loadHistory();
   if(page==="runlogs")loadRunLogs();
@@ -3267,6 +3313,116 @@ async function showDocList(kind){
   });
   html+="</tbody></table></div>";
   box.innerHTML=html;
+}
+// ============================= Examination Fees Checker =============================
+let EF_SEL=new Set(), _examfeePage=1, EF_POLL=null, efTimer=null;
+function escEf(v){return (""+(v==null?"":v)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function debounceExamFee(){clearTimeout(efTimer);efTimer=setTimeout(()=>loadExamFee(1),400);}
+function efBadge(st){
+  if(st==="paid")return "<span class='ref-tag' style='background:#DCFCE7;color:#166534'>Paid</span>";
+  if(st==="failed")return "<span class='ref-tag' style='background:#FEE2E2;color:#991B1B'>Failed</span>";
+  if(st==="pending")return "<span class='ref-tag' style='background:#FEF3C7;color:#92400E'>Pending</span>";
+  if(st==="login_failed"||st==="error")return "<span class='ref-tag' style='background:#FFEDD5;color:#9A3412'>Login failed</span>";
+  return "<span class='ref-tag' style='background:#E5E7EB;color:#4B5563'>Not checked</span>";
+}
+async function loadExamFee(page){
+  page=page||1; _examfeePage=page;
+  const q=new URLSearchParams({page:page,per_page:perPage,search:fval("ef-search"),
+    session_filter:fval("ef-session"),subsession_filter:fval("ef-subsession"),fee_status:fval("ef-status")});
+  try{
+    const d=await api("/api/exam-fee/list?"+q.toString());
+    if(d.session_subgroups){SESSION_SUBGROUPS=d.session_subgroups;
+      const sel=document.getElementById("ef-session");const cur=sel.value;
+      sel.length=1;Object.keys(d.session_subgroups).sort().forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=k;sel.appendChild(o);});
+      sel.value=cur;refreshSubSession("ef");}
+    document.getElementById("ef-count").textContent="Showing "+d.students.length+" of "+d.total+" confirmed students";
+    const b=document.getElementById("ef-body");
+    b.innerHTML=d.students.length?d.students.map((s,i)=>{
+      let rc="—";
+      if(s.has_png||s.has_pdf){
+        rc="";
+        if(s.has_png)rc+="<button class='btn btn-outline btn-sm' style='padding:3px 8px' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;png&quot;)'>PNG</button> ";
+        if(s.has_pdf)rc+="<button class='btn btn-outline btn-sm' style='padding:3px 8px' onclick='efDownload(&quot;"+s.row_key+"&quot;,&quot;pdf&quot;)'>PDF</button>";
+      }
+      return '<tr>'+
+        '<td><input type="checkbox" class="ef-cb" value="'+s.row_key+'" onchange="onEfSel(this)" '+(EF_SEL.has(s.row_key)?'checked':'')+'></td>'+
+        '<td style="color:var(--muted)">'+((page-1)*perPage+i+1)+'</td>'+
+        '<td><span class="ref-tag">'+(s.reference_no||"—")+'</span></td>'+
+        '<td>'+(s.student_name||"—")+'</td>'+
+        '<td style="font-size:13px">'+(s.session||"—")+'</td>'+
+        '<td>'+efBadge(s.fee_status)+((s.remark&&s.fee_status!=="paid"&&s.fee_status!=="")?'<div style="font-size:11px;color:var(--muted);margin-top:3px">'+escEf(s.remark)+'</div>':'')+'</td>'+
+        '<td>'+(s.amount||"—")+'</td>'+
+        '<td style="font-size:12px;color:var(--muted)">'+(s.paid_date||"—")+'</td>'+
+        '<td>'+rc+'</td></tr>';
+    }).join(""):'<tr><td colspan="9" class="empty">No students found</td></tr>';
+    renderPg("ef-pg",page,d.pages,"loadExamFee");
+    loadExamFeeCounts();
+    updateEfSelCount();
+  }catch(e){showToast("Error: "+e.message);}
+}
+async function loadExamFeeCounts(){
+  try{
+    const q=new URLSearchParams({session_filter:fval("ef-session"),subsession_filter:fval("ef-subsession")});
+    const c=await api("/api/exam-fee/counts?"+q.toString());
+    const chip=(lbl,n,bg,fg)=>"<span style='background:"+bg+";color:"+fg+";padding:4px 10px;border-radius:20px;font-weight:600'>"+lbl+": "+n+"</span>";
+    document.getElementById("ef-chips").innerHTML=
+      chip("Total",c.total,"#EEF2FF","#3730A3")+chip("Paid",c.paid,"#DCFCE7","#166534")+
+      chip("Failed",c.failed,"#FEE2E2","#991B1B")+chip("Pending",c.pending,"#FEF3C7","#92400E")+
+      chip("Not checked",c.not_checked,"#E5E7EB","#4B5563")+
+      (c.login_failed?chip("Login failed",c.login_failed,"#FFEDD5","#9A3412"):"");
+  }catch(e){}
+}
+function onEfSel(cb){ if(cb.checked)EF_SEL.add(cb.value); else EF_SEL.delete(cb.value); updateEfSelCount(); }
+function examFeeSelAll(cb){ document.querySelectorAll(".ef-cb").forEach(x=>{x.checked=cb.checked; if(cb.checked)EF_SEL.add(x.value); else EF_SEL.delete(x.value);}); updateEfSelCount(); }
+function updateEfSelCount(){ var e=document.getElementById("ef-selcount"); if(e)e.textContent=EF_SEL.size; }
+async function efDownload(rk,fmt){
+  try{
+    showToast("Preparing "+fmt.toUpperCase()+"…");
+    const r=await fetch(API+"/api/exam-fee/receipt?row_key="+encodeURIComponent(rk)+"&fmt="+fmt,{headers:{Authorization:"Bearer "+TOKEN}});
+    if(!r.ok){showToast("Receipt not found — run the check again");return;}
+    const blob=await r.blob();const url=URL.createObjectURL(blob);
+    if(fmt==="png"){ window.open(url,"_blank"); }
+    const a=document.createElement("a");a.href=url;a.download="exam_fee_receipt_"+rk.replace(/[^A-Za-z0-9]/g,"_")+"."+fmt;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+  }catch(e){showToast("Error: "+e.message);}
+}
+async function examFeeRun(scope,btn){
+  const body={scope:scope,session:fval("ef-session"),subsession:fval("ef-subsession")};
+  if(scope==="selected"){ if(!EF_SEL.size){showToast("Select at least one student first");return;} body.keys=Array.from(EF_SEL); }
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";}
+  try{
+    const r=await api("/api/exam-fee/run","POST",body);
+    showToast(r.message||(r.started===false?"Already running":"Started"));
+    document.getElementById("ef-progress").style.display="block";
+    examFeePoll();
+  }catch(e){showToast("Error: "+e.message);}
+  finally{ setTimeout(()=>{if(btn){btn.disabled=false;btn.style.opacity="";}},3000); }
+}
+async function examFeeStop(btn){ try{ await api("/api/exam-fee/stop","POST",{}); showToast("Stopping after current students…"); }catch(e){} }
+function examFeePoll(){
+  if(EF_POLL)clearInterval(EF_POLL);
+  const tick=async()=>{
+    let p; try{ p=await api("/api/exam-fee/progress"); }catch(e){ return; }
+    const box=document.getElementById("ef-progress");
+    const pct=p.total?Math.round((p.done/p.total)*100):0;
+    if(box&&(p.running||p.done)){
+      box.style.display="block";
+      document.getElementById("ef-prog-title").textContent=p.running?"Checking examination fees":"Done";
+      document.getElementById("ef-prog-pct").textContent=pct+"%";
+      document.getElementById("ef-prog-bar").style.width=pct+"%";
+      document.getElementById("ef-prog-sub").innerHTML=
+        (p.done||0)+" / "+(p.total||0)+" checked &middot; Paid "+(p.paid||0)+" &middot; Failed "+(p.failed||0)+
+        " &middot; Pending "+(p.pending||0)+(p.loginfail?(" &middot; Login failed "+p.loginfail):"")+
+        (p.last_error?("<div style='color:#B91C1C;margin-top:4px'>Last issue: "+escEf(p.last_error)+"</div>"):"");
+    }
+    if(!p.running){
+      clearInterval(EF_POLL);EF_POLL=null;
+      loadExamFee(_examfeePage||1);
+      if(p.total)showToast("Examination fees: "+(p.paid||0)+" paid, "+(p.failed||0)+" failed, "+(p.pending||0)+" pending");
+      setTimeout(()=>{var b=document.getElementById("ef-progress");if(b&&!EF_POLL)b.style.display="none";},8000);
+    }
+  };
+  tick(); EF_POLL=setInterval(tick,2500);
 }
 let RESYNC_POLL=null;
 async function mvsResyncNumbers(btn){
@@ -8577,6 +8733,245 @@ def send_fixed_whatsapp(user=Depends(verify_token)):
 @app.get("/api/send-fixed-status")
 def send_fixed_status(user=Depends(verify_token)):
     return dict(_FIXED_WA_STATE)
+
+# =========================================================================================
+# EXAMINATION FEES CHECKER
+# Logs into the NIOS portal (Reference No + DOB) for confirmed students, reads the EXAM_FEE
+# payment status, and for a PAID fee saves the receipt as PNG + PDF so the team can download
+# either straight from the tracker. Results are stored, so re-opening a receipt is instant.
+# =========================================================================================
+_EXAMFEE_LOCK = _threading.Lock()
+EXAMFEE_PROGRESS = {"running": False, "stop": False, "phase": "", "total": 0, "done": 0,
+                    "paid": 0, "failed": 0, "pending": 0, "loginfail": 0, "errors": 0,
+                    "last_error": "", "started_at": "", "finished_at": "", "label": ""}
+
+def _examfee_dir():
+    try:
+        from database import DATA_DIR as _DD
+    except Exception:
+        _DD = os.environ.get("DATA_DIR", ".")
+    d = os.path.join(_DD, "examfee")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _examfee_save(row_key, res):
+    """Persist one student's exam-fee result (and, when paid, the receipt PNG + PDF) so it can be
+    opened instantly later without touching NIOS again."""
+    import re as _re, hashlib as _hl
+    png_path = pdf_path = ""
+    try:
+        safe = _re.sub(r'[^A-Za-z0-9_.-]', '_', str(row_key))[:70]
+        h = _hl.md5(str(row_key).encode("utf-8")).hexdigest()[:10]
+        base = os.path.join(_examfee_dir(), f"{safe}_{h}")
+        if res.get("png"):
+            png_path = base + ".png"
+            with open(png_path, "wb") as f:
+                f.write(res["png"])
+        if res.get("pdf"):
+            pdf_path = base + ".pdf"
+            with open(pdf_path, "wb") as f:
+                f.write(res["pdf"])
+    except Exception as e:
+        logger.warning(f"examfee save file {row_key}: {e}")
+    try:
+        with _EXAMFEE_LOCK:
+            conn = get_db()
+            # keep an existing receipt path if this pass didn't produce a new one (e.g. a re-check
+            # that only refreshed the status) so a saved receipt is never lost.
+            old = conn.execute("SELECT png_path, pdf_path FROM exam_fee WHERE row_key=?", (row_key,)).fetchone()
+            if not png_path and old and old["png_path"]:
+                png_path = old["png_path"]
+            if not pdf_path and old and old["pdf_path"]:
+                pdf_path = old["pdf_path"]
+            conn.execute(
+                "INSERT INTO exam_fee (row_key,status,amount,paid_date,txn_id,png_path,pdf_path,remark,checked_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(row_key) DO UPDATE SET "
+                "status=excluded.status, amount=excluded.amount, paid_date=excluded.paid_date, "
+                "txn_id=excluded.txn_id, png_path=excluded.png_path, pdf_path=excluded.pdf_path, "
+                "remark=excluded.remark, checked_at=excluded.checked_at",
+                (row_key, res.get("status", "error"), res.get("amount", ""), res.get("date", ""),
+                 res.get("txn_id", ""), png_path, pdf_path, (res.get("remark", "") or "")[:200],
+                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            conn.commit(); conn.close()
+    except Exception as e:
+        logger.warning(f"examfee save db {row_key}: {e}")
+
+def _examfee_worker(row_keys):
+    """Check the examination fee for each given confirmed student, in parallel (one NIOS login each),
+    saving status + receipt as it goes. Safe to stop mid-way via the Stop button."""
+    import exam_fee
+    from concurrent.futures import ThreadPoolExecutor
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    EXAMFEE_PROGRESS.update({"running": True, "stop": False, "phase": "checking", "total": len(row_keys),
+                             "done": 0, "paid": 0, "failed": 0, "pending": 0, "loginfail": 0,
+                             "errors": 0, "last_error": "", "started_at": now, "finished_at": "",
+                             "label": "Examination fees"})
+    def _do(rk):
+        if EXAMFEE_PROGRESS.get("stop"):
+            return
+        try:
+            conn = get_db()
+            st = conn.execute("SELECT reference_no, enrollment_no, dob FROM student_status "
+                              "WHERE row_key=?", (rk,)).fetchone()
+            conn.close()
+            if not st:
+                return
+            res = exam_fee.check_exam_fee(st["reference_no"] or "", st["dob"] or "",
+                                          st["enrollment_no"] or "")
+            _examfee_save(rk, res)
+            with _EXAMFEE_LOCK:
+                s = res.get("status", "error")
+                if s == "paid": EXAMFEE_PROGRESS["paid"] += 1
+                elif s == "failed": EXAMFEE_PROGRESS["failed"] += 1
+                elif s == "pending": EXAMFEE_PROGRESS["pending"] += 1
+                elif s == "login_failed": EXAMFEE_PROGRESS["loginfail"] += 1
+                else: EXAMFEE_PROGRESS["errors"] += 1
+                if res.get("remark") and s not in ("paid", "pending"):
+                    EXAMFEE_PROGRESS["last_error"] = (res.get("remark") or "")[:120]
+        except Exception as e:
+            with _EXAMFEE_LOCK:
+                EXAMFEE_PROGRESS["errors"] += 1
+                EXAMFEE_PROGRESS["last_error"] = f"{type(e).__name__}: {str(e)[:100]}"
+            logger.warning(f"examfee worker {rk}: {e}")
+        finally:
+            with _EXAMFEE_LOCK:
+                EXAMFEE_PROGRESS["done"] += 1
+    try:
+        if row_keys:
+            with ThreadPoolExecutor(max_workers=_CACHE_WORKERS) as ex:
+                list(ex.map(_do, row_keys))
+    except Exception as e:
+        EXAMFEE_PROGRESS["last_error"] = f"worker: {str(e)[:110]}"
+    finally:
+        EXAMFEE_PROGRESS.update({"running": False, "phase": "done",
+                                 "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+        logger.info(f"Exam-fee run done: {dict(EXAMFEE_PROGRESS)}")
+
+def _examfee_target_keys(scope, session_filter, subsession_filter, only_keys):
+    """Resolve which CONFIRMED students a run should cover: all, a hand-picked selection (no limit),
+    or everyone in a chosen session. Only students that actually have a Reference No + DOB (so NIOS
+    login is possible) are included."""
+    if scope == "selected" and only_keys:
+        keys = [k for k in only_keys if k]
+        if not keys:
+            return []
+        conn = get_db()
+        ph = ",".join("?" * len(keys))
+        rows = conn.execute(
+            f"SELECT row_key FROM student_status WHERE row_key IN ({ph}) "
+            f"AND is_confirmed=1 AND COALESCE(deleted,0)=0 "
+            f"AND COALESCE(reference_no,'')!='' AND COALESCE(dob,'')!=''", keys).fetchall()
+        conn.close()
+        return [r["row_key"] for r in rows]
+    # all / session scope -> use the same confirmed + session/sub-session filter as the lists
+    where, params = _build_student_where("confirmed", "", "", session_filter, "", "", "", "",
+                                          toc_filter="", link_filter="", subsession_filter=subsession_filter)
+    conn = get_db()
+    rows = conn.execute(
+        f"SELECT row_key FROM student_status {where} "
+        f"AND COALESCE(reference_no,'')!='' AND COALESCE(dob,'')!=''", params).fetchall()
+    conn.close()
+    return [r["row_key"] for r in rows]
+
+@app.post("/api/exam-fee/run")
+def exam_fee_run(body: dict = None, user=Depends(verify_token)):
+    """Start an examination-fee check. body: {scope:'all'|'selected'|'session', session, subsession,
+    keys:[...]}. 'selected' has NO limit on how many students are picked."""
+    b = body or {}
+    if EXAMFEE_PROGRESS.get("running"):
+        return {"ok": True, "started": False, "message": "An examination-fee run is already going."}
+    if not os.environ.get("CAPTCHA_API_KEY") and not os.environ.get("CAPSOLVER_API_KEY"):
+        raise HTTPException(status_code=400, detail="CapSolver key not set — NIOS login is not possible.")
+    scope = (b.get("scope") or "all").strip()
+    keys = _examfee_target_keys(scope, b.get("session", "") or "", b.get("subsession", "") or "",
+                                b.get("keys") or [])
+    if not keys:
+        return {"ok": True, "started": False, "message": "No matching confirmed students (with Reference No + DOB) to check."}
+    _threading.Thread(target=_examfee_worker, args=(keys,), daemon=True).start()
+    return {"ok": True, "started": True, "count": len(keys),
+            "message": f"Checking examination fees for {len(keys)} student(s) in the background…"}
+
+@app.post("/api/exam-fee/stop")
+def exam_fee_stop(user=Depends(verify_token)):
+    EXAMFEE_PROGRESS["stop"] = True
+    return {"ok": True, "message": "Stopping after the current students finish."}
+
+@app.get("/api/exam-fee/progress")
+def exam_fee_progress(user=Depends(verify_token)):
+    return dict(EXAMFEE_PROGRESS)
+
+@app.get("/api/exam-fee/counts")
+def exam_fee_counts(session_filter: str = "", subsession_filter: str = "", user=Depends(verify_token)):
+    """Totals for the filter chips: how many confirmed students are paid / failed / pending / not yet
+    checked, within the chosen session."""
+    where, params = _build_student_where("confirmed", "", "", session_filter, "", "", "", "",
+                                          toc_filter="", link_filter="", subsession_filter=subsession_filter)
+    conn = get_db()
+    total = conn.execute(f"SELECT COUNT(*) FROM student_status {where}", params).fetchone()[0]
+    rows = conn.execute(
+        f"SELECT COALESCE(e.status,'') AS st, COUNT(*) AS n FROM student_status s "
+        f"LEFT JOIN exam_fee e ON e.row_key=s.row_key {where.replace('WHERE','WHERE')} "
+        f"GROUP BY COALESCE(e.status,'')", params).fetchall()
+    conn.close()
+    by = {r["st"]: r["n"] for r in rows}
+    paid = by.get("paid", 0)
+    failed = by.get("failed", 0)
+    pending = by.get("pending", 0)
+    loginfail = by.get("login_failed", 0) + by.get("error", 0)
+    notchecked = by.get("", 0)
+    return {"total": total, "paid": paid, "failed": failed, "pending": pending,
+            "login_failed": loginfail, "not_checked": notchecked}
+
+@app.get("/api/exam-fee/list")
+def exam_fee_list(page: int = 1, per_page: int = 50, search: str = "", session_filter: str = "",
+                  subsession_filter: str = "", fee_status: str = "", user=Depends(verify_token)):
+    """Confirmed students with their examination-fee status + whether a receipt is saved."""
+    where, params = _build_student_where("confirmed", search, "", session_filter, "", "", "", "",
+                                          toc_filter="", link_filter="", subsession_filter=subsession_filter)
+    extra = ""
+    fs = (fee_status or "").strip().lower()
+    if fs == "paid": extra = " AND COALESCE(e.status,'')='paid'"
+    elif fs == "failed": extra = " AND COALESCE(e.status,'')='failed'"
+    elif fs == "pending": extra = " AND COALESCE(e.status,'')='pending'"
+    elif fs == "login_failed": extra = " AND COALESCE(e.status,'') IN ('login_failed','error')"
+    elif fs == "not_checked": extra = " AND COALESCE(e.status,'')=''"
+    conn = get_db()
+    offset = (page - 1) * per_page
+    base = (f"FROM student_status s LEFT JOIN exam_fee e ON e.row_key=s.row_key "
+            f"{where.replace('WHERE','WHERE')}{extra}")
+    total = conn.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0]
+    rows = conn.execute(
+        f"SELECT s.row_key, s.reference_no, s.student_name, s.session, s.mobile, "
+        f"COALESCE(e.status,'') AS fee_status, COALESCE(e.amount,'') AS amount, "
+        f"COALESCE(e.paid_date,'') AS paid_date, COALESCE(e.remark,'') AS remark, "
+        f"COALESCE(e.checked_at,'') AS checked_at, "
+        f"CASE WHEN COALESCE(e.png_path,'')!='' THEN 1 ELSE 0 END AS has_png, "
+        f"CASE WHEN COALESCE(e.pdf_path,'')!='' THEN 1 ELSE 0 END AS has_pdf "
+        f"{base} ORDER BY s.student_name LIMIT ? OFFSET ?", params + [per_page, offset]).fetchall()
+    conn.close()
+    return {"students": [dict(r) for r in rows], "total": total, "page": page,
+            "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page),
+            "session_subgroups": _session_subgroups()}
+
+@app.get("/api/exam-fee/receipt")
+def exam_fee_receipt(row_key: str, fmt: str = "png", user=Depends(verify_token)):
+    """Serve a saved receipt (png or pdf) for a student, straight from our copy."""
+    conn = get_db()
+    r = conn.execute("SELECT png_path, pdf_path, reference_no FROM exam_fee e "
+                     "LEFT JOIN student_status s ON s.row_key=e.row_key WHERE e.row_key=?",
+                     (row_key,)).fetchone()
+    conn.close()
+    if not r:
+        raise HTTPException(status_code=404, detail="No receipt saved for this student.")
+    path = r["pdf_path"] if (fmt or "").lower() == "pdf" else r["png_path"]
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Receipt file not found — run the check again.")
+    ref = (r["reference_no"] or row_key)
+    if (fmt or "").lower() == "pdf":
+        return FileResponse(path, media_type="application/pdf",
+                            filename=f"exam_fee_receipt_{ref}.pdf")
+    return FileResponse(path, media_type="image/png",
+                        filename=f"exam_fee_receipt_{ref}.png")
 
 @app.post("/api/mvs-resync-numbers")
 def mvs_resync_numbers(body: dict = None, user=Depends(verify_token)):

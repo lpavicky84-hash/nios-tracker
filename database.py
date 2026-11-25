@@ -294,6 +294,21 @@ def init_db():
             PRIMARY KEY (row_key, kind)
         )
     """)
+    # Examination-fee checker: the latest EXAM_FEE result per student + where its receipt (PNG/PDF)
+    # is saved, so the team can open a paid receipt instantly without re-hitting NIOS.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS exam_fee (
+            row_key TEXT PRIMARY KEY,
+            status TEXT,
+            amount TEXT,
+            paid_date TEXT,
+            txn_id TEXT,
+            png_path TEXT,
+            pdf_path TEXT,
+            remark TEXT,
+            checked_at TEXT
+        )
+    """)
     # Indexes to keep list/filter queries fast as the data grows.
     for _ix in (
         "CREATE INDEX IF NOT EXISTS idx_ss_confirmed ON student_status(is_confirmed)",
@@ -302,6 +317,7 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_ss_status ON student_status(current_status)",
         "CREATE INDEX IF NOT EXISTS idx_ss_source ON student_status(source)",
         "CREATE INDEX IF NOT EXISTS idx_dc_rowkey ON document_cache(row_key)",
+        "CREATE INDEX IF NOT EXISTS idx_ef_status ON exam_fee(status)",
     ):
         try:
             c.execute(_ix)
