@@ -28,19 +28,34 @@ def _find_image_captcha(html):
     m = re.search(r'src=["\'](/auth/captcha[^"\']*)["\']', html)
     return m.group(1) if m else ""
 
-def solve_image_captcha(session, img_path):
-    """Download the session-bound captcha image and OCR it with CapSolver ImageToText (case-sensitive,
-    since NIOS checks the code case-sensitively). Returns (text, error)."""
+TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY", "").strip()
+
+def _twocaptcha_image(b64):
+    """Solve a text/image captcha with 2Captcha's HUMAN-powered Normal Captcha (far more accurate on
+    NIOS's case-sensitive captcha than AI/OCR). case=1 + regsense=1 keep the exact case."""
+    try:
+        r = requests.post("https://2captcha.com/in.php",
+                          data={"key": TWOCAPTCHA_API_KEY, "method": "base64", "body": b64,
+                                "case": 1, "regsense": 1, "json": 1}, timeout=30).json()
+        if str(r.get("status")) != "1":
+            return "", f"2captcha submit: {r.get('request')}"
+        cid = r.get("request")
+        for _ in range(40):
+            time.sleep(3)
+            rr = requests.get("https://2captcha.com/res.php",
+                              params={"key": TWOCAPTCHA_API_KEY, "action": "get", "id": cid, "json": 1},
+                              timeout=30).json()
+            if str(rr.get("status")) == "1":
+                return str(rr.get("request") or "").strip(), ""
+            if str(rr.get("request")) not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
+                return "", f"2captcha: {rr.get('request')}"
+        return "", "2captcha timeout"
+    except Exception as e:
+        return "", str(e)
+
+def _capsolver_image(b64):
     if not CAPSOLVER_API_KEY:
         return "", "CAPTCHA_API_KEY not set"
-    try:
-        url = img_path if str(img_path).startswith("http") else urljoin(NIOS_BASE, img_path)
-        ir = session.get(url, headers=HEADERS, timeout=30)
-        if not ir.ok or not ir.content:
-            return "", "could not load captcha image"
-        b64 = base64.b64encode(ir.content).decode("ascii")
-    except Exception as e:
-        return "", f"captcha image error: {e}"
     task = {"type": "ImageToTextTask", "body": b64, "module": "common", "case": True}
     try:
         r = requests.post(CAPSOLVER_CREATE, json={"clientKey": CAPSOLVER_API_KEY, "task": task},
@@ -64,6 +79,24 @@ def solve_image_captcha(session, img_path):
         return "", "no solution"
     except Exception as e:
         return "", str(e)
+
+def solve_image_captcha(session, img_path):
+    """Download the session-bound captcha image and read it — 2Captcha (human-powered, accurate) when
+    TWOCAPTCHA_API_KEY is set, else CapSolver OCR; falls back to CapSolver if 2Captcha errors."""
+    try:
+        url = img_path if str(img_path).startswith("http") else urljoin(NIOS_BASE, img_path)
+        ir = session.get(url, headers=HEADERS, timeout=30)
+        if not ir.ok or not ir.content:
+            return "", "could not load captcha image"
+        b64 = base64.b64encode(ir.content).decode("ascii")
+    except Exception as e:
+        return "", f"captcha image error: {e}"
+    if TWOCAPTCHA_API_KEY:
+        text, err = _twocaptcha_image(b64)
+        if text:
+            return text, ""
+        logger.info(f"2captcha image solve failed ({err}) — falling back to CapSolver")
+    return _capsolver_image(b64)
 
 def _solve_status_captcha(session):
     """Return (captcha_fields_dict, error) for the check-status POST, auto-picking the live captcha.

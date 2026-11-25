@@ -3413,8 +3413,8 @@ async function examFeeLoginDebug(btn){
     var NL=String.fromCharCode(10);
     var lines=[
       "Reference: "+(d.ref||"?")+"   DOB used: "+(d.dob_used||"?"),
-      "Captcha type on page: "+(d.captcha_mode||"?"),
-      "Captcha the tracker read (OCR): "+(d.ocr_text!=null?('"'+d.ocr_text+'"'):"(none)")+(d.ocr_error?("  [error: "+d.ocr_error+"]"):""),
+      "Captcha type on page: "+(d.captcha_mode||"?")+"   Solver: "+(d.captcha_solver||"?"),
+      "Captcha the tracker read: "+(d.ocr_text!=null?('"'+d.ocr_text+'"'):"(none)")+(d.ocr_error?("  [error: "+d.ocr_error+"]"):""),
       "Page uses RSA encryption: "+(d.has_rsa_script?"YES":"no")+"   RSA public key present: "+(d.has_rsa_pubkey?"YES":"no"),
       "Login fields on page: "+((d.login_field_names||[]).join(", ")||"?"),
       "POST result: HTTP "+(d.post_http||"?")+"   logged in: "+(d.logged_in?"YES":"NO")+"   bounced to login: "+(d.bounced_to_login?"YES":"no"),

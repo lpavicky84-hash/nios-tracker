@@ -115,20 +115,37 @@ def _find_image_captcha(html):
     m = re.search(r'src=["\'](/auth/captcha[^"\']*)["\']', html)
     return m.group(1) if m else ""
 
-def solve_image_captcha(session, img_path):
-    """Download the session-bound captcha image (the code lives in the SAME session that fetched the
-    page, so this must use that session) and read it with CapSolver's ImageToText. NIOS checks the
-    code case-sensitively, so we ask for a case-sensitive solve. Returns (text, error)."""
+TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY", "").strip()
+
+def _twocaptcha_image(b64):
+    """Solve a text/image captcha with 2Captcha's Normal-Captcha service. This is HUMAN-powered — a
+    real worker reads the image and types it — so it is far more accurate on NIOS's case-sensitive
+    mixed-case captcha than any AI/OCR. case=1 + regsense=1 ask the worker to keep the exact case.
+    Returns (text, error)."""
+    try:
+        r = requests.post("https://2captcha.com/in.php",
+                          data={"key": TWOCAPTCHA_API_KEY, "method": "base64", "body": b64,
+                                "case": 1, "regsense": 1, "json": 1}, timeout=30).json()
+        if str(r.get("status")) != "1":
+            return "", f"2captcha submit: {r.get('request')}"
+        cid = r.get("request")
+        for _ in range(40):                       # human solve usually lands in 10-25s
+            time.sleep(3)
+            rr = requests.get("https://2captcha.com/res.php",
+                              params={"key": TWOCAPTCHA_API_KEY, "action": "get", "id": cid, "json": 1},
+                              timeout=30).json()
+            if str(rr.get("status")) == "1":
+                return str(rr.get("request") or "").strip(), ""
+            if str(rr.get("request")) not in ("CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"):
+                return "", f"2captcha: {rr.get('request')}"
+        return "", "2captcha timeout"
+    except Exception as e:
+        return "", str(e)
+
+def _capsolver_image(b64):
+    """CapSolver ImageToText (AI/OCR). Fast + cheap, but weaker on case-sensitive captchas."""
     if not CAPSOLVER_API_KEY:
         return "", "CAPTCHA_API_KEY not set"
-    try:
-        url = img_path if str(img_path).startswith("http") else urljoin(BASE, img_path)
-        ir = session.get(url, headers=HEADERS, timeout=30)
-        if not ir.ok or not ir.content:
-            return "", "could not load captcha image"
-        b64 = base64.b64encode(ir.content).decode("ascii")
-    except Exception as e:
-        return "", f"captcha image error: {e}"
     task = {"type": "ImageToTextTask", "body": b64, "module": "common", "case": True}
     try:
         r = requests.post(CAPSOLVER_CREATE, json={"clientKey": CAPSOLVER_API_KEY, "task": task},
@@ -152,6 +169,26 @@ def solve_image_captcha(session, img_path):
         return "", "no solution"
     except Exception as e:
         return "", str(e)
+
+def solve_image_captcha(session, img_path):
+    """Download the session-bound captcha image (the code lives in the SAME session that fetched the
+    page) and read it. Uses 2Captcha (human-powered, far more accurate) when TWOCAPTCHA_API_KEY is
+    set, otherwise CapSolver's OCR; if 2Captcha errors it falls back to CapSolver. Returns (text,
+    error)."""
+    try:
+        url = img_path if str(img_path).startswith("http") else urljoin(BASE, img_path)
+        ir = session.get(url, headers=HEADERS, timeout=30)
+        if not ir.ok or not ir.content:
+            return "", "could not load captcha image"
+        b64 = base64.b64encode(ir.content).decode("ascii")
+    except Exception as e:
+        return "", f"captcha image error: {e}"
+    if TWOCAPTCHA_API_KEY:
+        text, err = _twocaptcha_image(b64)
+        if text:
+            return text, ""
+        logger.info(f"2captcha image solve failed ({err}) — falling back to CapSolver")
+    return _capsolver_image(b64)
 
 def solve_recaptcha_v3(page_url=LOGIN_URL, page_action=None, site_key=None):
     if not CAPSOLVER_API_KEY:
@@ -714,6 +751,7 @@ def login_debug(reference_no, dob, enrollment_no=""):
         img = _find_image_captcha(html)
         out["captcha_mode"] = "image" if img else ("recaptcha" if _extract_sitekey(html) else "none")
         out["captcha_img_url"] = img
+        out["captcha_solver"] = ("2captcha (human)" if TWOCAPTCHA_API_KEY else "capsolver (OCR)")
         out["has_rsa_script"] = ("rsa-encrypt" in html.lower() or "jsencrypt" in html.lower())
         out["has_rsa_pubkey"] = ("__rsapublickey" in html.lower())
         out["login_field_names"] = re.findall(r'name=["\'](LoginForm\[[^"\']+\])["\']', html)
